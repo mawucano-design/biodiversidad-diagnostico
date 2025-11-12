@@ -1,3 +1,0 @@
-libgdal-dev
-gdal-bin
-libatlas-base-dev
