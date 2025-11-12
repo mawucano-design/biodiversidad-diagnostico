@@ -1,34 +1,35 @@
-# Atlas de Biodiversidad (Metodología LE.MU + Shannon Index)
+# Atlas de Biodiversidad - Streamlit
 
-Aplicación interactiva online para el análisis de biodiversidad con métricas estandarizadas e integración geográfica y mapas satelitales.  
+Esta aplicación permite analizar y visualizar métricas básicas de biodiversidad usando simulaciones y archivos geográficos (KML o Shapefile).
 
-## Características
+## Cómo usar
 
-- Mide e interpreta índices clásicos de biodiversidad (Shannon, Simpson, Riqueza, Equitatividad).
-- Soporte para archivos geográficos: KML (Google Earth) y Shapefile (en ZIP).
-- Visualización en mapa con base satelital ESRI.
-- Exportación de resultados en CSV.
-- 100% online, sin instalaciones locales. Despliegue directo vía [Streamlit Cloud](https://streamlit.io/cloud).
-- Metodología basada en [LE.MU Atlas](https://www.le.mu/atlas/).
+- Subir archivo KML o ZIP con shapefile a la app.
+- O ajustar número de áreas simuladas para análisis.
+- Hacer click en "Ejecutar análisis".
+- Ver métricas, tabla y mapas satelitales de Esri integrados.
 
-## Uso
+## Requisitos
 
-1. Clona este repositorio o haz el fork en tu cuenta.
-2. Conéctalo a Streamlit Cloud para desplegar la app online.
-3. Sube tus archivos KML o ZIP con shapefiles en la interfaz para analizar zonas reales.
-4. Configura los parámetros y ejecuta el análisis.
-5. Visualiza resultados, métricas y mapas. Descarga los CSV para reportes.
+- Python 3.11 recomendado.
+- Streamlit Cloud para despliegue online.
+- Dependencias en requirements.txt.
 
-## Dependencias
+## Dependencias principales
 
-Ver `requirements.txt` para todas las librerías requeridas (Streamlit, pandas, numpy, folium, geopandas).
+- Streamlit 1.28
+- Pandas compatible 2.x
+- Numpy <=1.25.1 para evitar errores en build
+- Folium + streamlit-folium para mapas
+- Geopandas para manejo GIS
 
-## Visualización avanzada
+## Despliegue
 
-Para datos LiDAR y visualización 3D puedes extender usando [PyVista](https://docs.pyvista.org/) y [stpyvista](https://github.com/Marph82/stpyvista), integrable con un bloque adicional.
+Para desplegar, conecta tu repositorio a Streamlit Cloud y asegúrate de incluir:
 
-## Contacto y metodología
-
-Desarrollado siguiendo buenas prácticas de transparencia, trazabilidad de indicadores y usando la metodología LE.MU para gestión de datos de naturaleza.
+- `requirements.txt` con versiones compatibles
+- `runtime.txt` con `python-3.11.16` para evitar problemas de versión
 
 ---
+
+Este proyecto está basado en experiencias reales de despliegue que aseguran compatibilidad y buen rendimiento en Streamlit Cloud.
