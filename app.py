@@ -10,16 +10,12 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.express as px
 import plotly.graph_objects as go
+from io import BytesIO
 
 # Librerías para análisis geoespacial
 import folium
 from streamlit_folium import st_folium
 import pydeck as pdk
-import geopandas as gpd
-from shapely.geometry import Point, Polygon
-import rasterio
-from PIL import Image
-import json
 
 # ===============================
 # 🌿 CONFIGURACIÓN DE LA PÁGINA
@@ -39,7 +35,7 @@ st.set_page_config(
 st.title("🌍 Diagnóstico de Biodiversidad Ambiental de un Territorio")
 st.markdown("""
 **Sistema integral de evaluación ambiental** que combina la metodología **LE.MU Atlas** con  
-**Índices de Vegetación** y **Métricas de Biodiversidad** para un análisis completo del territorio.
+**Índices de Vegetación**, **Métricas de Biodiversidad** y **Visualización 3D LiDAR** para un análisis completo del territorio.
 """)
 
 # ===============================
@@ -325,12 +321,124 @@ class VegetationIndexAnalyzer:
         
         return spectral_data
 
+class LidarAnalyzer:
+    """Analizador de datos LiDAR para visualización 3D"""
+    
+    def __init__(self):
+        self.vegetation_heights = {
+            'Bosque Denso Primario': {'min': 20, 'max': 40},
+            'Bosque Secundario': {'min': 10, 'max': 25},
+            'Matorral Denso': {'min': 3, 'max': 8},
+            'Matorral Abierto': {'min': 1, 'max': 4},
+            'Herbazal Natural': {'min': 0.5, 'max': 2}
+        }
+    
+    def simulate_lidar_data(self, area_count, vegetation_type, center_lat=-14.0, center_lon=-60.0):
+        """Simular datos LiDAR para visualización 3D"""
+        lidar_data = []
+        
+        # Parámetros de vegetación
+        veg_params = self.vegetation_heights.get(vegetation_type, {'min': 5, 'max': 15})
+        
+        for area_idx in range(area_count):
+            # Generar coordenadas alrededor del punto central
+            lat = center_lat + np.random.uniform(-0.1, 0.1)
+            lon = center_lon + np.random.uniform(-0.1, 0.1)
+            
+            # Simular puntos de nube LiDAR
+            num_points = np.random.randint(500, 2000)
+            for point_idx in range(num_points):
+                # Coordenadas relativas al área
+                x_offset = np.random.uniform(-100, 100)  # metros
+                y_offset = np.random.uniform(-100, 100)  # metros
+                
+                # Altura basada en tipo de vegetación
+                if np.random.random() < 0.7:  # 70% de puntos son vegetación
+                    height = np.random.uniform(veg_params['min'], veg_params['max'])
+                    # Agregar variación para simular dosel
+                    if height > 10:
+                        height += np.random.normal(0, 3)
+                    color = [0, 128, 0, 160]  # Verde para vegetación
+                else:  # 30% son suelo
+                    height = np.random.uniform(0, 2)
+                    color = [139, 69, 19, 160]  # Marrón para suelo
+                
+                lidar_data.append({
+                    'x': lon + x_offset/111320,  # Convertir metros a grados
+                    'y': lat + y_offset/111320,
+                    'z': height,
+                    'color': color,
+                    'area': f"Área {area_idx + 1}"
+                })
+        
+        return lidar_data
+    
+    def create_3d_visualization(self, lidar_data, vegetation_type):
+        """Crear visualización 3D con PyDeck"""
+        if not lidar_data:
+            return None
+            
+        df = pd.DataFrame(lidar_data)
+        
+        # Configurar vista inicial
+        avg_lat = df['y'].mean()
+        avg_lon = df['x'].mean()
+        max_height = df['z'].max()
+        
+        # Capa de puntos LiDAR
+        point_cloud_layer = pdk.Layer(
+            "PointCloudLayer",
+            df,
+            get_position=['x', 'y', 'z'],
+            get_normal=[0, 0, 15],
+            get_color='color',
+            pickable=True,
+            auto_highlight=True,
+            point_size=2,
+        )
+        
+        # Configurar vista
+        view_state = pdk.ViewState(
+            longitude=avg_lon,
+            latitude=avg_lat,
+            zoom=14,
+            pitch=45,
+            bearing=0,
+            max_zoom=20,
+            min_zoom=5,
+            max_pitch=85,
+            min_pitch=0
+        )
+        
+        # Tooltip
+        tooltip = {
+            "html": """
+            <b>Altura:</b> {z} m<br/>
+            <b>Área:</b> {area}
+            """,
+            "style": {
+                "backgroundColor": "steelblue",
+                "color": "white"
+            }
+        }
+        
+        # Crear deck
+        deck = pdk.Deck(
+            layers=[point_cloud_layer],
+            initial_view_state=view_state,
+            tooltip=tooltip,
+            map_style='mapbox://styles/mapbox/satellite-v9'
+        )
+        
+        return deck
+
 class IntegratedAnalyzer:
     """Analizador integrado de biodiversidad y vegetación"""
     
     def __init__(self):
         self.bio_analyzer = BiodiversityAnalyzer()
         self.veg_analyzer = VegetationIndexAnalyzer()
+        self.lidar_analyzer = LidarAnalyzer()
     
     def comprehensive_analysis(self, area_count, vegetation_type, area_hectares=100):
         """Análisis integral combinando biodiversidad y vegetación"""
@@ -339,6 +447,9 @@ class IntegratedAnalyzer:
         
         # Simular datos de vegetación
         spectral_data = self.veg_analyzer.simulate_spectral_data(area_count, vegetation_type)
+        
+        # Simular datos LiDAR
+        lidar_data = self.lidar_analyzer.simulate_lidar_data(area_count, vegetation_type)
         
         # Calcular métricas de biodiversidad
         df_species = pd.DataFrame(species_data)
@@ -385,6 +496,7 @@ class IntegratedAnalyzer:
             'integrated_scores': integrated_scores,
             'species_data': species_data,
             'spectral_data': spectral_data,
+            'lidar_data': lidar_data,
             'raw_data': {
                 'species_df': df_species,
                 'spectral_df': df_spectral
@@ -627,31 +739,6 @@ def create_biodiversity_map(species_data, spectral_data):
     
     bio_group.add_to(m)
     
-    # Capa de conectividad
-    conn_group = folium.FeatureGroup(name='🔗 Conectividad')
-    if len(spectral_data) > 1:
-        # Crear polígono convexo para mostrar área de estudio
-        points = [(area['lat'], area['lon']) for area in spectral_data]
-        if len(points) >= 3:
-            from shapely.geometry import MultiPoint
-            multi_point = MultiPoint(points)
-            convex_hull = multi_point.convex_hull
-            
-            # Convertir el polígono a coordenadas para Folium
-            if hasattr(convex_hull, 'exterior'):
-                hull_coords = list(convex_hull.exterior.coords)
-                folium.Polygon(
-                    locations=hull_coords,
-                    popup="Área de Estudio",
-                    tooltip="Zona de análisis de conectividad",
-                    color='yellow',
-                    fillColor='yellow',
-                    fillOpacity=0.2,
-                    weight=2
-                ).add_to(conn_group)
-    
-    conn_group.add_to(m)
-    
     # Control de capas
     folium.LayerControl().add_to(m)
     
@@ -702,47 +789,6 @@ def create_ndvi_heatmap(spectral_data):
     </div>
     '''
     m.get_root().html.add_child(folium.Element(legend_html))
-    
-    return m
-
-def create_species_richness_map(species_data):
-    """Crear mapa de riqueza de especies"""
-    m = folium.Map(location=[-14.0, -60.0], zoom_start=4)
-    
-    species_df = pd.DataFrame(species_data)
-    if not species_df.empty:
-        area_richness = species_df.groupby('area').agg({
-            'species': 'nunique',
-            'lat': 'first',
-            'lon': 'first'
-        }).reset_index()
-        
-        for _, area_data in area_richness.iterrows():
-            richness = area_data['species']
-            
-            # Tamaño del marcador basado en riqueza
-            size = max(5, min(20, richness * 2))
-            
-            # Color basado en riqueza
-            if richness > 8:
-                color = 'darkpurple'
-            elif richness > 5:
-                color = 'purple'
-            elif richness > 3:
-                color = 'lightpurple'
-            else:
-                color = 'white'
-            
-            folium.CircleMarker(
-                location=[area_data['lat'], area_data['lon']],
-                radius=size,
-                popup=f"Riqueza: {richness} especies",
-                tooltip=f"{area_data['area']}: {richness} especies",
-                color='black',
-                fillColor=color,
-                fillOpacity=0.7,
-                weight=2
-            ).add_to(m)
     
     return m
 
@@ -953,6 +999,7 @@ with st.sidebar:
     - 📊 LE.MU: Métricas de conservación
     - 🛰️ NDVI/EVI: Salud de la vegetación
     - 🔗 Conectividad: Integridad ecológica
+    - 🌳 LiDAR: Estructura 3D del terreno
     """)
 
 # ===============================
@@ -1046,7 +1093,7 @@ if st.session_state.analysis_complete and st.session_state.results:
     
     st.subheader("🗺️ MAPAS DE ANÁLISIS TERRITORIAL")
     
-    map_tab1, map_tab2, map_tab3 = st.tabs(["Mapa Integral", "Mapa de NDVI", "Mapa de Riqueza"])
+    map_tab1, map_tab2, map_tab3 = st.tabs(["Mapa Integral", "Mapa de NDVI", "Visualización 3D LiDAR"])
     
     with map_tab1:
         st.markdown("**🌍 Mapa Integral de Biodiversidad y Vegetación**")
@@ -1056,7 +1103,6 @@ if st.session_state.analysis_complete and st.session_state.results:
         **Leyenda del Mapa Integral:**
         - 🌿 **Puntos verdes**: Salud vegetal (NDVI)
         - 🦜 **Marcadores azules**: Biodiversidad (riqueza de especies)
-        - 🔗 **Área amarilla**: Conectividad ecológica
         """)
     
     with map_tab2:
@@ -1073,16 +1119,55 @@ if st.session_state.analysis_complete and st.session_state.results:
         """)
     
     with map_tab3:
-        st.markdown("**🦜 Mapa de Riqueza de Especies**")
-        richness_map = create_species_richness_map(results['species_data'])
-        st_folium(richness_map, width=800, height=500)
-        st.info("""
-        **Interpretación de Riqueza:**
-        - 🟣 > 8 especies: Alta diversidad
-        - 🟢 5-8 especies: Diversidad media
-        - 🟡 3-5 especies: Diversidad baja
-        - ⚪ < 3 especies: Diversidad muy baja
-        """)
+        st.markdown("**🌳 Visualización 3D LiDAR - Estructura del Terreno**")
+        
+        if results['lidar_data']:
+            # Crear visualización 3D
+            lidar_3d = analyzer.lidar_analyzer.create_3d_visualization(
+                results['lidar_data'], 
+                vegetation_type
+            )
+            
+            if lidar_3d:
+                st.pydeck_chart(lidar_3d)
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.info("""
+                    **🎯 Controles 3D:**
+                    - **Click + arrastrar**: Rotar vista
+                    - **Rueda del mouse**: Zoom in/out
+                    - **Shift + arrastrar**: Panorámica
+                    - **Hover sobre puntos**: Ver detalles
+                    """)
+                
+                with col2:
+                    st.info("""
+                    **🌿 Leyenda LiDAR:**
+                    - 🟢 **Puntos verdes**: Vegetación
+                    - 🟤 **Puntos marrones**: Suelo
+                    - 📏 **Altura**: Estructura vertical
+                    - 🎯 **Color intensidad**: Densidad
+                    """)
+                
+                # Estadísticas LiDAR
+                lidar_df = pd.DataFrame(results['lidar_data'])
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    max_height = lidar_df['z'].max()
+                    st.metric("Altura Máxima", f"{max_height:.1f} m")
+                with col2:
+                    avg_height = lidar_df['z'].mean()
+                    st.metric("Altura Promedio", f"{avg_height:.1f} m")
+                with col3:
+                    veg_points = len(lidar_df[lidar_df['color'].apply(lambda x: x[1] == 128)])
+                    total_points = len(lidar_df)
+                    veg_percentage = (veg_points / total_points) * 100
+                    st.metric("Cobertura Vegetal", f"{veg_percentage:.1f}%")
+            else:
+                st.warning("No se pudo generar la visualización 3D LiDAR")
+        else:
+            st.warning("No hay datos LiDAR disponibles para visualización")
     
     # ===============================
     # 🌿 ANÁLISIS DE BIODIVERSIDAD
@@ -1229,9 +1314,8 @@ if st.session_state.analysis_complete and st.session_state.results:
     
     with col2:
         # Crear un archivo Excel descargable
-        from io import BytesIO
         output = BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
             pd.DataFrame(results['species_data']).to_excel(writer, sheet_name='Especies', index=False)
             pd.DataFrame(results['spectral_data']).to_excel(writer, sheet_name='Vegetación', index=False)
             pd.DataFrame([results['biodiversity_metrics']]).to_excel(writer, sheet_name='Métricas', index=False)
@@ -1241,7 +1325,7 @@ if st.session_state.analysis_complete and st.session_state.results:
             label="📊 Descargar Excel",
             data=output.getvalue(),
             file_name=f"diagnostico_biodiversidad_{pd.Timestamp.now().strftime('%Y%m%d')}.xlsx",
-            mime="application/vnd.ms-excel",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
     
@@ -1259,8 +1343,9 @@ else:
     1. **📁 Cargar tu territorio**: Sube archivos KML o Shapefile con la delimitación de tu área de estudio
     2. **🌿 Analizar biodiversidad**: Calcula índices de diversidad, riqueza y equitatividad de especies
     3. **🛰️ Evaluar vegetación**: Obtén índices espectrales (NDVI, EVI, NDWI, etc.) para salud vegetal
-    4. **🔍 Aplicar LE.MU**: Utiliza indicadores de conservación y conectividad ecológica
-    5. **📊 Integrar resultados**: Obtén un diagnóstico completo con recomendaciones de manejo
+    4. **🌳 Visualización 3D LiDAR**: Explora la estructura tridimensional del terreno
+    5. **🔍 Aplicar LE.MU**: Utiliza indicadores de conservación y conectividad ecológica
+    6. **📊 Integrar resultados**: Obtén un diagnóstico completo con recomendaciones de manejo
     
     ### 🚀 Para comenzar:
     
@@ -1274,6 +1359,7 @@ else:
     - 🌿 **LE.MU Atlas**: Sistema de indicadores de conservación
     - 📊 **Índice de Shannon-Wiener**: Diversidad de especies
     - 🛰️ **Teledetección**: Índices de vegetación multiespectral
+    - 🌳 **LiDAR 3D**: Estructura tridimensional del terreno
     - 🔗 **Análisis integral**: Salud completa del ecosistema
     """)
 
@@ -1282,7 +1368,7 @@ st.markdown("---")
 st.markdown(
     "<div style='text-align: center'>"
     "🌍 <b>Diagnóstico de Biodiversidad Ambiental</b> | "
-    "Metodología LE.MU Atlas + Índices de Vegetación | "
+    "Metodología LE.MU Atlas + Índices de Vegetación + LiDAR 3D | "
     "Desarrollado con Streamlit 🚀"
     "</div>",
     unsafe_allow_html=True
