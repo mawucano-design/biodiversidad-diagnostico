@@ -1,6 +1,4 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
 import math
 import random
 from datetime import datetime
@@ -14,22 +12,21 @@ st.set_page_config(
 )
 
 # Título y descripción
-st.title("🌿 Atlas de Biodiversidad - Análisis Avanzado")
+st.title("🌿 Atlas de Biodiversidad")
 st.markdown("""
-Análisis de biodiversidad con mapas interactivos y visualización 3D
-**Versión optimizada para máxima compatibilidad**
+Análisis de biodiversidad usando la metodología LE.MU + Índice de Shannon
+**Versión ultra-compatible - Sin dependencias externas problemáticas**
 """)
 
 class BiodiversityAnalyzer:
-    """Analizador completo de biodiversidad con capacidades geoespaciales"""
+    """Analizador de biodiversidad sin dependencias externas"""
     
     def __init__(self):
         self.species_pool = [
             'Quercus robur', 'Fagus sylvatica', 'Pinus sylvestris', 
             'Acer pseudoplatanus', 'Betula pendula', 'Alnus glutinosa',
             'Pinus pinaster', 'Quercus ilex', 'Quercus suber',
-            'Juniperus communis', 'Castanea sativa', 'Populus nigra',
-            'Fraxinus excelsior', 'Ulmus minor', 'Salix alba'
+            'Juniperus communis', 'Castanea sativa', 'Populus nigra'
         ]
     
     def shannon_index(self, abundances):
@@ -41,14 +38,6 @@ class BiodiversityAnalyzer:
         proportions = [abundance / total for abundance in abundances if abundance > 0]
         return -sum(p * math.log(p) for p in proportions)
     
-    def simpson_index(self, abundances):
-        """Calcula el índice de Simpson"""
-        total = sum(abundances)
-        if total == 0:
-            return 0.0
-        
-        return sum((abundance / total) ** 2 for abundance in abundances)
-    
     def species_richness(self, abundances):
         """Calcula la riqueza de especies"""
         return sum(1 for abundance in abundances if abundance > 0)
@@ -59,100 +48,102 @@ class BiodiversityAnalyzer:
             return 1.0
         return shannon_index / math.log(species_richness)
     
-    def generate_sample_locations(self, center_lat, center_lon, num_areas, area_size_km=0.5):
-        """Genera ubicaciones geográficas para las áreas de muestreo"""
+    def simpson_index(self, abundances):
+        """Calcula el índice de Simpson"""
+        total = sum(abundances)
+        if total == 0:
+            return 0.0
+        return sum((abundance / total) ** 2 for abundance in abundances)
+    
+    def generate_sample_data(self, num_areas, num_species, method="Basado en área"):
+        """Genera datos de muestra para el análisis"""
+        species_data = []
         locations = []
         
-        for i in range(num_areas):
-            # Variación aleatoria alrededor del punto central
-            lat_variation = random.uniform(-0.02, 0.02)
-            lon_variation = random.uniform(-0.03, 0.03)
-            
-            lat = center_lat + lat_variation
-            lon = center_lon + lon_variation
-            
-            # Simular elevación (metros)
-            elevation = random.gauss(500, 150)
-            
-            locations.append({
-                'id': i + 1,
-                'lat': lat,
-                'lon': lon,
-                'elevation': max(0, elevation),
-                'area_hectares': random.uniform(5, 50)
-            })
-        
-        return locations
-    
-    def simulate_species_data(self, locations, method="Basado en área", max_species=15):
-        """Simula datos de especies basados en ubicaciones geográficas"""
-        species_data = []
-        
-        # Seleccionar especies del pool
+        # Seleccionar especies
         selected_species = random.sample(
             self.species_pool, 
-            min(max_species, len(self.species_pool))
+            min(num_species, len(self.species_pool))
         )
         
-        for loc in locations:
+        # Generar ubicaciones (coordenadas simuladas alrededor de Madrid)
+        base_lat, base_lon = 40.4168, -3.7038
+        
+        for area_id in range(1, num_areas + 1):
+            # Variación en coordenadas
+            lat = base_lat + random.uniform(-0.1, 0.1)
+            lon = base_lon + random.uniform(-0.1, 0.1)
+            elevation = random.randint(200, 1000)
+            area_hectares = random.uniform(10, 100)
+            
+            locations.append({
+                'area_id': area_id,
+                'lat': lat,
+                'lon': lon,
+                'elevation': elevation,
+                'area_hectares': area_hectares
+            })
+            
+            # Generar datos de especies para esta área
             for species in selected_species:
-                # Calcular abundancia basada en el método seleccionado
                 if method == "Basado en área":
-                    abundance = self._area_based_abundance(species, loc)
+                    abundance = self._area_based_abundance(species, area_hectares, elevation)
                 elif method == "Basado en elevación":
-                    abundance = self._elevation_based_abundance(species, loc)
-                else:  # Aleatorio
+                    abundance = self._elevation_based_abundance(species, elevation)
+                else:
                     abundance = self._random_abundance(species)
                 
                 species_data.append({
                     'species': species,
-                    'abundance': int(abundance),
-                    'frequency': round(random.uniform(0.1, 1.0), 3),
-                    'area_id': loc['id'],
-                    'lat': loc['lat'],
-                    'lon': loc['lon'],
-                    'elevation': loc['elevation'],
-                    'area_hectares': loc['area_hectares']
+                    'abundance': abundance,
+                    'frequency': round(random.uniform(0.1, 1.0), 2),
+                    'area_id': area_id,
+                    'lat': lat,
+                    'lon': lon,
+                    'elevation': elevation,
+                    'area_hectares': round(area_hectares, 1)
                 })
         
-        return species_data
+        return species_data, locations
     
-    def _area_based_abundance(self, species, location):
-        """Abundancia basada en área y características geográficas"""
+    def _area_based_abundance(self, species, area_hectares, elevation):
+        """Abundancia basada en área y elevación"""
         base_abundance = {
             'Quercus robur': 50, 'Fagus sylvatica': 40, 'Pinus sylvestris': 60,
-            'Acer pseudoplatanus': 30, 'Betula pendula': 35, 'Alnus glutinosa': 25
+            'Acer pseudoplatanus': 30, 'Betula pendula': 35, 'Alnus glutinosa': 25,
+            'Pinus pinaster': 55, 'Quercus ilex': 45, 'Quercus suber': 40,
+            'Juniperus communis': 20, 'Castanea sativa': 35, 'Populus nigra': 30
         }
-        base = base_abundance.get(species, 20)
         
-        # Modificar basado en área y elevación
-        area_factor = location['area_hectares'] / 25
-        elevation_factor = 1 + (location['elevation'] - 500) / 1000
+        base = base_abundance.get(species, 25)
+        area_factor = area_hectares / 50  # Normalizar a 50 hectáreas
+        elevation_factor = 1 + (elevation - 600) / 1000  # Ajuste por elevación
         
-        return max(1, int(base * area_factor * elevation_factor * random.lognormvariate(0, 0.3)))
+        return max(1, int(base * area_factor * elevation_factor * random.uniform(0.7, 1.3)))
     
-    def _elevation_based_abundance(self, species, location):
+    def _elevation_based_abundance(self, species, elevation):
         """Abundancia basada en preferencias de elevación"""
-        low_elevation_species = ['Quercus suber', 'Olea europaea']
-        mid_elevation_species = ['Quercus robur', 'Fagus sylvatica', 'Acer pseudoplatanus']
-        high_elevation_species = ['Pinus sylvestris', 'Juniperus communis', 'Betula pendula']
+        # Especies de baja elevación
+        low_elevation = ['Quercus suber', 'Quercus ilex']
+        # Especies de media elevación
+        mid_elevation = ['Quercus robur', 'Fagus sylvatica', 'Acer pseudoplatanus']
+        # Especies de alta elevación
+        high_elevation = ['Pinus sylvestris', 'Juniperus communis', 'Betula pendula']
         
-        elevation = location['elevation']
-        
-        if species in low_elevation_species and elevation < 300:
+        if species in low_elevation and elevation < 400:
             base = 60
-        elif species in mid_elevation_species and 300 <= elevation <= 800:
+        elif species in mid_elevation and 400 <= elevation <= 800:
             base = 50
-        elif species in high_elevation_species and elevation > 800:
+        elif species in high_elevation and elevation > 800:
             base = 55
         else:
             base = 20
         
-        return max(1, int(base * random.lognormvariate(0, 0.4)))
+        return max(1, int(base * random.uniform(0.5, 1.5)))
     
     def _random_abundance(self, species):
         """Abundancia aleatoria"""
-        return random.randint(1, 50)
+        return random.randint(5, 100)
     
     def analyze_biodiversity(self, species_data):
         """Analiza biodiversidad a partir de datos de especies"""
@@ -162,21 +153,27 @@ class BiodiversityAnalyzer:
                 'species_richness': 0,
                 'total_abundance': 0,
                 'evenness': 0,
-                'simpson_index': 0,
-                'species_data': []
+                'simpson_index': 0
             }
         
-        df = pd.DataFrame(species_data)
+        # Agrupar abundancias por especie
+        species_abundances = {}
+        for record in species_data:
+            species = record['species']
+            abundance = record['abundance']
+            if species in species_abundances:
+                species_abundances[species] += abundance
+            else:
+                species_abundances[species] = abundance
         
-        # Agrupar por especie y sumar abundancias
-        species_abundances = df.groupby('species')['abundance'].sum().values
+        abundances = list(species_abundances.values())
         
         # Calcular métricas
-        shannon = self.shannon_index(species_abundances)
-        richness = self.species_richness(species_abundances)
-        total_abundance = sum(species_abundances)
+        shannon = self.shannon_index(abundances)
+        richness = self.species_richness(abundances)
+        total_abundance = sum(abundances)
         evenness_val = self.evenness(shannon, richness)
-        simpson = self.simpson_index(species_abundances)
+        simpson = self.simpson_index(abundances)
         
         return {
             'shannon_index': shannon,
@@ -187,321 +184,340 @@ class BiodiversityAnalyzer:
             'species_data': species_data
         }
 
-class MapVisualizer:
-    """Clase para visualizaciones geoespaciales simplificadas"""
+class DataVisualizer:
+    """Visualizador de datos sin dependencias externas"""
     
-    def create_interactive_map(self, species_data, center_lat, center_lon):
-        """Crea un mapa interactivo simple usando Plotly"""
-        if not species_data:
-            return None
-            
-        df = pd.DataFrame(species_data)
+    def display_metrics(self, results):
+        """Muestra métricas en formato atractivo"""
+        col1, col2, col3, col4, col5 = st.columns(5)
         
-        # Calcular riqueza por área
-        richness_by_area = df.groupby('area_id').agg({
-            'species': 'nunique',
-            'abundance': 'sum',
-            'lat': 'first',
-            'lon': 'first',
-            'elevation': 'first'
-        }).reset_index()
+        with col1:
+            st.metric(
+                "Índice de Shannon",
+                f"{results['shannon_index']:.3f}",
+                help="Diversidad de especies (0=baja, >3=alta)"
+            )
         
-        # Crear mapa con Plotly
-        fig = px.scatter_mapbox(
-            richness_by_area,
-            lat="lat",
-            lon="lon",
-            color="species",
-            size="abundance",
-            hover_name="area_id",
-            hover_data={
-                "species": True,
-                "abundance": True,
-                "elevation": True,
-                "lat": False,
-                "lon": False
-            },
-            color_continuous_scale=px.colors.sequential.Viridis,
-            zoom=10,
-            height=600,
-            title="Mapa de Biodiversidad - Riqueza por Área"
-        )
+        with col2:
+            st.metric(
+                "Riqueza de Especies",
+                results['species_richness'],
+                help="Número total de especies diferentes"
+            )
         
-        fig.update_layout(
-            mapbox_style="open-street-map",
-            margin={"r":0,"t":40,"l":0,"b":0}
-        )
+        with col3:
+            st.metric(
+                "Abundancia Total",
+                f"{results['total_abundance']:,}",
+                help="Número total de individuos"
+            )
         
-        return fig
+        with col4:
+            st.metric(
+                "Equitatividad",
+                f"{results['evenness']:.3f}",
+                help="Distribución uniforme entre especies (0-1)"
+            )
+        
+        with col5:
+            st.metric(
+                "Índice Simpson",
+                f"{results['simpson_index']:.3f}",
+                help="Probabilidad de encuentro misma especie"
+            )
     
-    def create_species_distribution_chart(self, species_data):
-        """Crea gráfico de distribución de especies"""
+    def create_species_chart(self, species_data):
+        """Crea un gráfico de barras simple para especies"""
         if not species_data:
-            return None
+            return
+        
+        # Calcular abundancia total por especie
+        species_totals = {}
+        for record in species_data:
+            species = record['species']
+            abundance = record['abundance']
+            if species in species_totals:
+                species_totals[species] += abundance
+            else:
+                species_totals[species] = abundance
+        
+        # Ordenar especies por abundancia
+        sorted_species = sorted(species_totals.items(), key=lambda x: x[1], reverse=True)
+        
+        # Mostrar como gráfico de barras simple con st.bar_chart
+        if sorted_species:
+            species_names = [s[0] for s in sorted_species[:10]]  # Top 10
+            species_abundances = [s[1] for s in sorted_species[:10]]
             
-        df = pd.DataFrame(species_data)
-        
-        # Top 10 especies más abundantes
-        top_species = df.groupby('species')['abundance'].sum().nlargest(10)
-        
-        fig = px.bar(
-            x=top_species.index,
-            y=top_species.values,
-            title="Top 10 Especies por Abundancia",
-            labels={'x': 'Especie', 'y': 'Abundancia Total'},
-            color=top_species.values,
-            color_continuous_scale='Viridis'
-        )
-        
-        fig.update_layout(
-            xaxis_tickangle=-45,
-            showlegend=False
-        )
-        
-        return fig
+            # Crear DataFrame simple para el gráfico
+            chart_data = {"Especies": species_names, "Abundancia": species_abundances}
+            
+            st.subheader("📊 Especies Más Abundantes")
+            st.bar_chart(data=chart_data, x="Especies", y="Abundancia")
     
-    def create_elevation_chart(self, species_data):
-        """Crea gráfico de biodiversidad vs elevación"""
+    def create_location_map(self, locations):
+        """Crea un mapa simple usando st.map"""
+        if not locations:
+            return
+        
+        # Preparar datos para el mapa
+        map_data = []
+        for loc in locations:
+            map_data.append({
+                'lat': loc['lat'],
+                'lon': loc['lon'],
+                'area_id': loc['area_id'],
+                'elevation': loc['elevation']
+            })
+        
+        st.subheader("🗺️ Ubicaciones de Muestreo")
+        st.map(map_data, zoom=9)
+    
+    def display_species_table(self, species_data):
+        """Muestra tabla de especies"""
         if not species_data:
-            return None
+            return
+        
+        # Crear resumen por especie
+        species_summary = {}
+        for record in species_data:
+            species = record['species']
+            if species not in species_summary:
+                species_summary[species] = {
+                    'abundance': 0,
+                    'areas': set(),
+                    'frequency_sum': 0,
+                    'count': 0
+                }
             
-        df = pd.DataFrame(species_data)
+            species_summary[species]['abundance'] += record['abundance']
+            species_summary[species]['areas'].add(record['area_id'])
+            species_summary[species]['frequency_sum'] += record['frequency']
+            species_summary[species]['count'] += 1
         
-        # Agrupar por área y calcular métricas
-        area_metrics = df.groupby('area_id').agg({
-            'species': 'nunique',
-            'abundance': 'sum',
-            'elevation': 'first'
-        }).reset_index()
+        # Preparar datos para la tabla
+        table_data = []
+        for species, data in species_summary.items():
+            table_data.append({
+                'Especie': species,
+                'Abundancia Total': data['abundance'],
+                'Áreas Presente': len(data['areas']),
+                'Frecuencia Promedio': round(data['frequency_sum'] / data['count'], 2)
+            })
         
-        fig = px.scatter(
-            area_metrics,
-            x="elevation",
-            y="species",
-            size="abundance",
-            color="species",
-            hover_name="area_id",
-            title="Riqueza de Especies vs Elevación",
-            labels={'elevation': 'Elevación (m)', 'species': 'Riqueza de Especies'},
-            size_max=20
-        )
+        # Ordenar por abundancia
+        table_data.sort(key=lambda x: x['Abundancia Total'], reverse=True)
         
-        return fig
+        st.subheader("📋 Resumen por Especie")
+        
+        # Mostrar tabla usando st.dataframe
+        import pandas as pd
+        df = pd.DataFrame(table_data)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+    
+    def display_locations_table(self, locations):
+        """Muestra tabla de ubicaciones"""
+        if not locations:
+            return
+        
+        st.subheader("📍 Áreas de Estudio")
+        
+        # Preparar datos para la tabla
+        table_data = []
+        for loc in locations:
+            table_data.append({
+                'Área ID': loc['area_id'],
+                'Latitud': round(loc['lat'], 4),
+                'Longitud': round(loc['lon'], 4),
+                'Elevación (m)': loc['elevation'],
+                'Área (ha)': round(loc['area_hectares'], 1)
+            })
+        
+        # Mostrar tabla
+        import pandas as pd
+        df = pd.DataFrame(table_data)
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
 # Sidebar para configuración
 with st.sidebar:
-    st.header("📍 Configuración Geográfica")
+    st.header("⚙️ Configuración del Análisis")
     
-    # Selector de ubicación predefinida
-    location_preset = st.selectbox(
-        "Ubicación de estudio",
-        [
-            "Madrid, España (40.4168, -3.7038)",
-            "Barcelona, España (41.3851, 2.1734)", 
-            "Sevilla, España (37.3891, -5.9845)",
-            "Valencia, España (39.4699, -0.3763)",
-            "Personalizada..."
-        ]
+    # Parámetros básicos
+    num_areas = st.slider(
+        "Número de áreas de estudio",
+        min_value=1,
+        max_value=20,
+        value=8,
+        help="Cantidad de áreas geográficas a analizar"
     )
     
-    if "Personalizada" in location_preset:
-        col1, col2 = st.columns(2)
-        with col1:
-            center_lat = st.number_input("Latitud", value=40.4168, format="%.6f")
-        with col2:
-            center_lon = st.number_input("Longitud", value=-3.7038, format="%.6f")
-    else:
-        coords = {
-            "Madrid, España (40.4168, -3.7038)": (40.4168, -3.7038),
-            "Barcelona, España (41.3851, 2.1734)": (41.3851, 2.1734),
-            "Sevilla, España (37.3891, -5.9845)": (37.3891, -5.9845),
-            "Valencia, España (39.4699, -0.3763)": (39.4699, -0.3763),
-        }
-        center_lat, center_lon = coords[location_preset]
-    
-    st.markdown("---")
-    st.header("⚙️ Parámetros de Análisis")
+    num_species = st.slider(
+        "Número máximo de especies",
+        min_value=5,
+        max_value=20,
+        value=10,
+        help="Límite de especies diferentes a considerar"
+    )
     
     simulation_method = st.selectbox(
         "Método de simulación",
-        ["Basado en área", "Basado en elevación", "Aleatorio"]
+        [
+            "Basado en área",
+            "Basado en elevación", 
+            "Aleatorio"
+        ],
+        help="Cómo se calcula la abundancia de especies"
     )
-    
-    num_areas = st.slider("Número de áreas", 1, 15, 8)
-    num_species = st.slider("Especies máx.", 5, 20, 10)
     
     st.markdown("---")
     st.header("📊 Visualización")
     
-    show_species_chart = st.checkbox("Mostrar gráfico de especies", value=True)
-    show_elevation_chart = st.checkbox("Mostrar análisis de elevación", value=True)
+    show_map = st.checkbox("Mostrar mapa de ubicaciones", value=True)
+    show_charts = st.checkbox("Mostrar gráficos de especies", value=True)
+    show_tables = st.checkbox("Mostrar tablas detalladas", value=True)
+    
+    st.markdown("---")
+    st.header("💡 Información")
+    st.info("""
+    Esta versión utiliza datos simulados 
+    basados en parámetros ecológicos 
+    realistas para la península ibérica.
+    """)
 
-# Inicializar clases
+# Inicializar analizador y visualizador
 analyzer = BiodiversityAnalyzer()
-visualizer = MapVisualizer()
+visualizer = DataVisualizer()
 
-# Mostrar información de ubicación
-st.subheader("🎯 Configuración del Análisis")
-col1, col2, col3, col4 = st.columns(4)
+# Título principal
+st.subheader("🎯 Configuración Actual")
+col1, col2, col3 = st.columns(3)
 with col1:
-    st.metric("📍 Ubicación", f"{center_lat:.4f}, {center_lon:.4f}")
+    st.metric("Áreas de Estudio", num_areas)
 with col2:
-    st.metric("📐 Áreas", num_areas)
+    st.metric("Especies Máx.", num_species)
 with col3:
-    st.metric("🌿 Especies", num_species)
-with col4:
-    st.metric("⚙️ Método", simulation_method)
+    st.metric("Método", simulation_method)
 
-# Ejecutar análisis
+# Botón de ejecución
 if st.button("🚀 Ejecutar Análisis de Biodiversidad", type="primary", use_container_width=True):
     
-    with st.spinner("Generando datos y calculando métricas..."):
-        # Generar ubicaciones de muestreo
-        locations = analyzer.generate_sample_locations(center_lat, center_lon, num_areas)
-        
-        # Simular datos de especies
-        species_data = analyzer.simulate_species_data(
-            locations, 
-            method=simulation_method,
-            max_species=num_species
+    with st.spinner("Generando datos y calculando métricas de biodiversidad..."):
+        # Generar datos de muestra
+        species_data, locations = analyzer.generate_sample_data(
+            num_areas=num_areas,
+            num_species=num_species,
+            method=simulation_method
         )
         
-        # Calcular métricas de biodiversidad
+        # Analizar biodiversidad
         results = analyzer.analyze_biodiversity(species_data)
     
-    # Mostrar métricas principales
-    st.subheader("📈 Métricas de Biodiversidad")
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        st.metric("Índice de Shannon", f"{results['shannon_index']:.3f}")
-    with col2:
-        st.metric("Riqueza", results['species_richness'])
-    with col3:
-        st.metric("Abundancia", f"{results['total_abundance']:,}")
-    with col4:
-        st.metric("Equitatividad", f"{results['evenness']:.3f}")
-    with col5:
-        st.metric("Índice Simpson", f"{results['simpson_index']:.3f}")
+    # Mostrar resultados
+    st.subheader("📈 Resultados del Análisis")
+    visualizer.display_metrics(results)
     
     # Interpretación del índice de Shannon
     shannon_value = results['shannon_index']
     if shannon_value < 1.0:
         diversity_level = "Baja diversidad"
         diversity_color = "🔴"
+        interpretation = "Pocas especies dominantes en el ecosistema"
     elif shannon_value < 3.0:
         diversity_level = "Diversidad moderada"
         diversity_color = "🟡"
+        interpretation = "Equilibrio moderado entre múltiples especies"
     else:
         diversity_level = "Alta diversidad"
         diversity_color = "🟢"
+        interpretation = "Múltiples especies bien distribuidas"
     
-    st.info(f"**{diversity_color} Interpretación del Índice de Shannon ({shannon_value:.3f}): {diversity_level}**")
+    st.info(f"""
+    **{diversity_color} Interpretación del Índice de Shannon ({shannon_value:.3f}): {diversity_level}**
     
-    # SECCIÓN DE MAPAS Y GRÁFICOS
-    st.subheader("🗺️ Visualizaciones")
+    *{interpretation}*
+    """)
     
-    # Mapa interactivo
-    st.markdown("#### 📍 Mapa de Distribución")
-    map_fig = visualizer.create_interactive_map(species_data, center_lat, center_lon)
-    if map_fig:
-        st.plotly_chart(map_fig, use_container_width=True)
-    else:
-        st.warning("No hay datos para mostrar el mapa")
+    # Visualizaciones
+    if show_map:
+        visualizer.create_location_map(locations)
     
-    # Gráficos adicionales
-    if show_species_chart or show_elevation_chart:
-        col1, col2 = st.columns(2)
+    if show_charts:
+        visualizer.create_species_chart(species_data)
+    
+    if show_tables:
+        tab1, tab2 = st.tabs(["🌿 Especies", "📍 Áreas"])
         
-        with col1:
-            if show_species_chart:
-                st.markdown("#### 🌿 Distribución de Especies")
-                species_chart = visualizer.create_species_distribution_chart(species_data)
-                if species_chart:
-                    st.plotly_chart(species_chart, use_container_width=True)
+        with tab1:
+            visualizer.display_species_table(species_data)
         
-        with col2:
-            if show_elevation_chart:
-                st.markdown("#### 🏔️ Biodiversidad vs Elevación")
-                elevation_chart = visualizer.create_elevation_chart(species_data)
-                if elevation_chart:
-                    st.plotly_chart(elevation_chart, use_container_width=True)
+        with tab2:
+            visualizer.display_locations_table(locations)
     
-    # TABLAS DE DATOS
-    st.subheader("📋 Datos Detallados")
-    
-    tab1, tab2 = st.tabs(["📊 Resumen por Especie", "📍 Áreas de Estudio"])
-    
-    with tab1:
-        if species_data:
-            df_species = pd.DataFrame(species_data)
-            species_summary = df_species.groupby('species').agg({
-                'abundance': 'sum',
-                'frequency': 'mean',
-                'area_id': 'nunique'
-            }).reset_index()
-            species_summary.columns = ['Especie', 'Abundancia Total', 'Frecuencia Promedio', 'Áreas Presente']
-            species_summary = species_summary.sort_values('Abundancia Total', ascending=False)
-            
-            st.dataframe(species_summary, use_container_width=True)
-        else:
-            st.info("No hay datos de especies para mostrar")
-    
-    with tab2:
-        if locations:
-            areas_df = pd.DataFrame(locations)
-            st.dataframe(areas_df, use_container_width=True)
-        else:
-            st.info("No hay datos de áreas para mostrar")
-    
-    # EXPORTAR RESULTADOS
+    # Exportar datos
     st.subheader("💾 Exportar Resultados")
     
     if species_data and locations:
         col1, col2 = st.columns(2)
         
         with col1:
-            csv_species = pd.DataFrame(species_data).to_csv(index=False)
+            # Exportar datos de especies
+            import pandas as pd
+            species_df = pd.DataFrame(species_data)
+            csv_species = species_df.to_csv(index=False)
+            
             st.download_button(
-                "📥 Descargar Datos de Especies (CSV)",
-                csv_species,
-                f"biodiversidad_especies_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                "text/csv",
+                label="📥 Descargar Datos de Especies (CSV)",
+                data=csv_species,
+                file_name=f"especies_biodiversidad_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
                 use_container_width=True
             )
         
         with col2:
-            csv_areas = pd.DataFrame(locations).to_csv(index=False)
+            # Exportar ubicaciones
+            locations_df = pd.DataFrame(locations)
+            csv_locations = locations_df.to_csv(index=False)
+            
             st.download_button(
-                "📍 Descargar Ubicaciones (CSV)",
-                csv_areas,
-                f"biodiversidad_ubicaciones_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                "text/csv",
+                label="📍 Descargar Ubicaciones (CSV)",
+                data=csv_locations,
+                file_name=f"ubicaciones_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
                 use_container_width=True
             )
     
-    # INFORMACIÓN ADICIONAL
-    with st.expander("📚 Información sobre los Indicadores"):
+    # Información adicional
+    with st.expander("📚 Métodología y Explicación de Métricas"):
         st.markdown("""
         ### 🌿 Índice de Shannon-Wiener (H')
-        Mide la diversidad de especies considerando tanto la riqueza como la equitatividad.
+        **Fórmula**: H' = -Σ(pᵢ × ln(pᵢ))
         
-        **Interpretación:**
+        Donde:
+        - pᵢ = proporción de individuos de la especie i
+        - ln = logaritmo natural
+        
+        **Interpretación**:
         - **0-1.0**: Baja diversidad (pocas especies dominantes)
         - **1.0-3.0**: Diversidad moderada
         - **>3.0**: Alta diversidad (múltiples especies bien distribuidas)
         
         ### 🔢 Riqueza de Especies (S)
-        Número total de especies diferentes en el área de estudio.
+        - Número total de especies diferentes en el área de estudio
+        - No considera la abundancia relativa
         
         ### ⚖️ Equitatividad de Pielou (J')
-        Mide qué tan uniforme es la distribución de individuos entre especies.
+        **Fórmula**: J' = H' / ln(S)
+        - Mide qué tan uniforme es la distribución de individuos entre especies
         - **Rango**: 0-1 (1 = distribución perfectamente uniforme)
         
         ### 📊 Índice de Simpson (λ)
-        Mide la probabilidad de que dos individuos tomados al azar sean de la misma especie.
+        **Fórmula**: λ = Σ(pᵢ²)
+        - Mide la probabilidad de que dos individuos tomados al azar sean de la misma especie
         - Valores más altos indican menor diversidad
+        
+        ### 📍 Metodología LE.MU
+        Basado en la metodología del [LE.MU Atlas](https://www.le.mu/atlas/)
+        con adaptaciones para análisis de biodiversidad terrestre.
         """)
 
 else:
@@ -509,42 +525,45 @@ else:
     st.markdown("""
     ### 🌍 Bienvenido al Atlas de Biodiversidad
     
-    **Características principales:**
+    **Análisis científico de biodiversidad con:**
     
-    📈 **Análisis Completo de Biodiversidad**
+    📈 **Métricas Avanzadas**
     - Índice de Shannon-Wiener
     - Riqueza de especies
-    - Equitatividad de Pielou
+    - Equitatividad de Pielou  
     - Índice de Simpson
     
-    🗺️ **Visualizaciones Geoespaciales**
-    - Mapas interactivos de distribución
-    - Análisis por elevación
-    - Gráficos de especies principales
+    🗺️ **Análisis Geoespacial**
+    - Mapa interactivo de ubicaciones
+    - Distribución por elevación
+    - Áreas de muestreo realistas
     
-    📊 **Datos y Exportación**
-    - Tablas detalladas interactivas
-    - Exportación a CSV
-    - Métricas en tiempo real
+    📊 **Visualización Completa**
+    - Gráficos de especies
+    - Tablas detalladas
+    - Exportación de datos
     
-    **🎯 Cómo usar:**
-    1. Selecciona la ubicación de estudio
-    2. Configura los parámetros en el panel lateral
-    3. Haz clic en "Ejecutar Análisis de Biodiversidad"
-    4. Explora los resultados y visualizaciones
+    **🎯 Cómo proceder:**
+    1. Configura los parámetros en el panel lateral
+    2. Haz clic en **"Ejecutar Análisis de Biodiversidad"**
+    3. Explora los resultados y visualizaciones
+    4. Exporta los datos para su análisis posterior
     
-    **📍 Ubicaciones disponibles:**
-    - Madrid, Barcelona, Sevilla, Valencia
-    - O configura coordenadas personalizadas
+    **🔍 Características técnicas:**
+    - Datos simulados basados en parámetros ecológicos reales
+    - Especies representativas de la península ibérica
+    - Métodos de simulación configurables
+    - Compatible con todos los navegadores
     """)
 
 # Footer
 st.markdown("---")
 st.markdown(
-    "<div style='text-align: center; color: #666;'>"
+    "<div style='text-align: center; color: #666; font-size: 0.9em;'>"
     "🌿 <b>Atlas de Biodiversidad</b> | "
     "Metodología LE.MU Atlas | "
-    "Desarrollado con Streamlit 🚀"
+    "Versión Ultra-Compatible | "
+    "🚀 Desarrollado con Streamlit"
     "</div>",
     unsafe_allow_html=True
 )
