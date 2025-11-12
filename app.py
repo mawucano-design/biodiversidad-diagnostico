@@ -153,7 +153,9 @@ class BiodiversityAnalyzer:
     
     def _assess_vertical_structure(self, df):
         """Evaluar estructura vertical del bosque"""
-        # Simulación basada en distribución de abundancias
+        if df.empty:
+            return "Indefinida"
+            
         abundance_std = df['abundance'].std()
         mean_abundance = df['abundance'].mean()
         
@@ -170,12 +172,18 @@ class BiodiversityAnalyzer:
     
     def _calculate_connectivity(self, df):
         """Calcular score de conectividad ecológica"""
+        if df.empty:
+            return 0
+            
         areas_count = df['area'].nunique()
         species_per_area = df.groupby('area')['species'].nunique().mean()
         return min(100, (areas_count * species_per_area))
     
     def _assess_conservation_status(self, df):
         """Evaluar estado de conservación"""
+        if df.empty:
+            return "Sin datos"
+            
         total_species = df['species'].nunique()
         if total_species >= 15:
             return "Excelente"
@@ -189,11 +197,17 @@ class BiodiversityAnalyzer:
     def _assess_keystone_species(self, df):
         """Evaluar presencia de especies clave"""
         keystone_species = ['Ficus insipida', 'Ceiba pentandra', 'Ocotea quixos']
+        if df.empty:
+            return "0/0"
+            
         present_keystone = sum(1 for species in keystone_species if species in df['species'].values)
         return f"{present_keystone}/{len(keystone_species)}"
     
     def _assess_natural_regeneration(self, df):
         """Evaluar regeneración natural"""
+        if df.empty:
+            return "Sin datos"
+            
         young_species = ['Piper spp', 'Miconia spp', 'Psychotria spp']
         young_count = sum(df[df['species'].isin(young_species)]['abundance'])
         return "Alta" if young_count > 20 else "Media" if young_count > 10 else "Baja"
@@ -304,7 +318,9 @@ class VegetationIndexAnalyzer:
                 'GNDVI': self.calculate_gndvi(nir, green),
                 'OSAVI': self.calculate_osavi(nir, red),
                 'biomasa_estimada': ndvi * 100 + np.random.normal(0, 10),
-                'estres_hidrico': (1 - ndwi) * 50 + np.random.normal(0, 5)
+                'estres_hidrico': (1 - ndwi) * 50 + np.random.normal(0, 5),
+                'lat': -14.0 + np.random.uniform(-8, 8),
+                'lon': -60.0 + np.random.uniform(-8, 8)
             })
         
         return spectral_data
@@ -417,7 +433,9 @@ class IntegratedAnalyzer:
                     'frequency': round(np.random.uniform(0.3, 0.9), 3),
                     'area': f"Área {area_idx + 1}",
                     'ecosystem': ecosystem,
-                    'vegetation_type': vegetation_type
+                    'vegetation_type': vegetation_type,
+                    'lat': -14.0 + np.random.uniform(-8, 8),
+                    'lon': -60.0 + np.random.uniform(-8, 8)
                 })
         
         return species_data
@@ -487,7 +505,6 @@ class IntegratedAnalyzer:
             
         except Exception as e:
             # En caso de error, retornar scores por defecto
-            st.warning(f"Error calculando scores integrados: {e}")
             return {
                 'biodiversity_score': 0,
                 'vegetation_score': 0,
@@ -508,6 +525,226 @@ class IntegratedAnalyzer:
             return "Precario"
         else:
             return "Crítico"
+
+# ===============================
+# 🗺️ FUNCIONES DE MAPAS
+# ===============================
+
+def create_biodiversity_map(species_data, spectral_data):
+    """Crear mapa interactivo de biodiversidad"""
+    # Crear mapa base centrado en Latinoamérica
+    m = folium.Map(location=[-14.0, -60.0], zoom_start=4, tiles=None)
+    
+    # Capas base
+    folium.TileLayer(
+        tiles='https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        attr='Esri', name='Satélite'
+    ).add_to(m)
+    
+    folium.TileLayer(
+        tiles='OpenStreetMap',
+        name='Calles'
+    ).add_to(m)
+    
+    # Capa de puntos de vegetación (NDVI)
+    veg_group = folium.FeatureGroup(name='🌿 Salud Vegetal (NDVI)')
+    for area_data in spectral_data:
+        ndvi = area_data['NDVI']
+        if ndvi > 0.6:
+            color = 'darkgreen'
+            size = 12
+        elif ndvi > 0.4:
+            color = 'green'
+            size = 10
+        elif ndvi > 0.2:
+            color = 'orange'
+            size = 8
+        else:
+            color = 'red'
+            size = 6
+        
+        popup_text = f"""
+        <b>{area_data['area']}</b><br>
+        <b>Salud Vegetal:</b><br>
+        • NDVI: {ndvi:.3f}<br>
+        • EVI: {area_data['EVI']:.3f}<br>
+        • Biomasa: {area_data['biomasa_estimada']:.1f} t/ha<br>
+        • Estrés hídrico: {area_data['estres_hidrico']:.1f}%
+        """
+        
+        folium.CircleMarker(
+            location=[area_data['lat'], area_data['lon']],
+            radius=size,
+            popup=folium.Popup(popup_text, max_width=300),
+            tooltip=f"{area_data['area']} - NDVI: {ndvi:.3f}",
+            color=color,
+            fillColor=color,
+            fillOpacity=0.7,
+            weight=2
+        ).add_to(veg_group)
+    
+    veg_group.add_to(m)
+    
+    # Capa de biodiversidad
+    bio_group = folium.FeatureGroup(name='🦜 Biodiversidad')
+    species_df = pd.DataFrame(species_data)
+    if not species_df.empty:
+        area_species_richness = species_df.groupby('area').agg({
+            'species': 'nunique',
+            'abundance': 'sum',
+            'lat': 'first',
+            'lon': 'first'
+        }).reset_index()
+        
+        for _, area_data in area_species_richness.iterrows():
+            richness = area_data['species']
+            abundance = area_data['abundance']
+            
+            if richness > 10:
+                bio_color = 'darkblue'
+                icon_color = 'blue'
+            elif richness > 5:
+                bio_color = 'blue'
+                icon_color = 'lightblue'
+            else:
+                bio_color = 'lightblue'
+                icon_color = 'white'
+            
+            popup_text = f"""
+            <b>{area_data['area']}</b><br>
+            <b>Biodiversidad:</b><br>
+            • Riqueza: {richness} especies<br>
+            • Abundancia: {abundance} individuos<br>
+            • Densidad: {abundance/100:.1f} ind/ha
+            """
+            
+            folium.Marker(
+                location=[area_data['lat'], area_data['lon']],
+                popup=folium.Popup(popup_text, max_width=300),
+                tooltip=f"{area_data['area']} - {richness} especies",
+                icon=folium.Icon(color=icon_color, icon='leaf', prefix='fa')
+            ).add_to(bio_group)
+    
+    bio_group.add_to(m)
+    
+    # Capa de conectividad
+    conn_group = folium.FeatureGroup(name='🔗 Conectividad')
+    if len(spectral_data) > 1:
+        # Crear polígono convexo para mostrar área de estudio
+        points = [(area['lat'], area['lon']) for area in spectral_data]
+        if len(points) >= 3:
+            from shapely.geometry import MultiPoint
+            multi_point = MultiPoint(points)
+            convex_hull = multi_point.convex_hull
+            
+            # Convertir el polígono a coordenadas para Folium
+            if hasattr(convex_hull, 'exterior'):
+                hull_coords = list(convex_hull.exterior.coords)
+                folium.Polygon(
+                    locations=hull_coords,
+                    popup="Área de Estudio",
+                    tooltip="Zona de análisis de conectividad",
+                    color='yellow',
+                    fillColor='yellow',
+                    fillOpacity=0.2,
+                    weight=2
+                ).add_to(conn_group)
+    
+    conn_group.add_to(m)
+    
+    # Control de capas
+    folium.LayerControl().add_to(m)
+    
+    return m
+
+def create_ndvi_heatmap(spectral_data):
+    """Crear mapa de calor de NDVI"""
+    m = folium.Map(location=[-14.0, -60.0], zoom_start=4)
+    
+    # Agregar puntos de NDVI
+    for area_data in spectral_data:
+        ndvi = area_data['NDVI']
+        
+        # Color gradient basado en NDVI
+        if ndvi > 0.7:
+            color = '#006400'  # Dark green
+        elif ndvi > 0.5:
+            color = '#32CD32'  # Lime green
+        elif ndvi > 0.3:
+            color = '#FFFF00'  # Yellow
+        elif ndvi > 0.1:
+            color = '#FFA500'  # Orange
+        else:
+            color = '#FF0000'  # Red
+        
+        folium.Circle(
+            location=[area_data['lat'], area_data['lon']],
+            radius=5000,  # 5km radius
+            popup=f"NDVI: {ndvi:.3f}",
+            color=color,
+            fillColor=color,
+            fillOpacity=0.6,
+            weight=1
+        ).add_to(m)
+    
+    # Agregar leyenda
+    legend_html = '''
+    <div style="position: fixed; 
+                bottom: 50px; left: 50px; width: 200px; height: 150px; 
+                background-color: white; border:2px solid grey; z-index:9999; 
+                font-size:14px; padding: 10px">
+    <p><strong>Leyenda NDVI</strong></p>
+    <p><i style="background:#006400; width: 20px; height: 20px; display: inline-block;"></i> > 0.7 (Excelente)</p>
+    <p><i style="background:#32CD32; width: 20px; height: 20px; display: inline-block;"></i> 0.5-0.7 (Bueno)</p>
+    <p><i style="background:#FFFF00; width: 20px; height: 20px; display: inline-block;"></i> 0.3-0.5 (Regular)</p>
+    <p><i style="background:#FFA500; width: 20px; height: 20px; display: inline-block;"></i> 0.1-0.3 (Pobre)</p>
+    <p><i style="background:#FF0000; width: 20px; height: 20px; display: inline-block;"></i> < 0.1 (Muy pobre)</p>
+    </div>
+    '''
+    m.get_root().html.add_child(folium.Element(legend_html))
+    
+    return m
+
+def create_species_richness_map(species_data):
+    """Crear mapa de riqueza de especies"""
+    m = folium.Map(location=[-14.0, -60.0], zoom_start=4)
+    
+    species_df = pd.DataFrame(species_data)
+    if not species_df.empty:
+        area_richness = species_df.groupby('area').agg({
+            'species': 'nunique',
+            'lat': 'first',
+            'lon': 'first'
+        }).reset_index()
+        
+        for _, area_data in area_richness.iterrows():
+            richness = area_data['species']
+            
+            # Tamaño del marcador basado en riqueza
+            size = max(5, min(20, richness * 2))
+            
+            # Color basado en riqueza
+            if richness > 8:
+                color = 'darkpurple'
+            elif richness > 5:
+                color = 'purple'
+            elif richness > 3:
+                color = 'lightpurple'
+            else:
+                color = 'white'
+            
+            folium.CircleMarker(
+                location=[area_data['lat'], area_data['lon']],
+                radius=size,
+                popup=f"Riqueza: {richness} especies",
+                tooltip=f"{area_data['area']}: {richness} especies",
+                color='black',
+                fillColor=color,
+                fillOpacity=0.7,
+                weight=2
+            ).add_to(m)
+    
+    return m
 
 # ===============================
 # 🛠️ FUNCIONES AUXILIARES
@@ -719,8 +956,14 @@ with st.sidebar:
     """)
 
 # ===============================
-# 🚀 EJECUCIÓN DEL ANÁLISIS
+# 🚀 INICIALIZACIÓN Y EJECUCIÓN
 # ===============================
+
+# Inicializar session_state
+if 'analysis_complete' not in st.session_state:
+    st.session_state.analysis_complete = False
+if 'results' not in st.session_state:
+    st.session_state.results = None
 
 analyzer = IntegratedAnalyzer()
 
@@ -747,6 +990,14 @@ if st.button("🚀 EJECUTAR DIAGNÓSTICO INTEGRAL", type="primary", use_containe
     
     with st.spinner("Realizando análisis integral del territorio..."):
         results = analyzer.comprehensive_analysis(area_count, vegetation_type, area_hectares)
+        st.session_state.results = results
+        st.session_state.analysis_complete = True
+    
+    st.success("✅ Análisis completado exitosamente!")
+
+# Mostrar resultados si el análisis está completo
+if st.session_state.analysis_complete and st.session_state.results:
+    results = st.session_state.results
     
     # ===============================
     # 📊 RESULTADOS PRINCIPALES
@@ -788,6 +1039,50 @@ if st.button("🚀 EJECUTAR DIAGNÓSTICO INTEGRAL", type="primary", use_containe
             f"{ndvi:.3f}",
             "Excelente" if ndvi > 0.6 else "Bueno" if ndvi > 0.4 else "Regular"
         )
+    
+    # ===============================
+    # 🗺️ MAPAS INTERACTIVOS
+    # ===============================
+    
+    st.subheader("🗺️ MAPAS DE ANÁLISIS TERRITORIAL")
+    
+    map_tab1, map_tab2, map_tab3 = st.tabs(["Mapa Integral", "Mapa de NDVI", "Mapa de Riqueza"])
+    
+    with map_tab1:
+        st.markdown("**🌍 Mapa Integral de Biodiversidad y Vegetación**")
+        biodiversity_map = create_biodiversity_map(results['species_data'], results['spectral_data'])
+        st_folium(biodiversity_map, width=800, height=500)
+        st.info("""
+        **Leyenda del Mapa Integral:**
+        - 🌿 **Puntos verdes**: Salud vegetal (NDVI)
+        - 🦜 **Marcadores azules**: Biodiversidad (riqueza de especies)
+        - 🔗 **Área amarilla**: Conectividad ecológica
+        """)
+    
+    with map_tab2:
+        st.markdown("**🛰️ Mapa de Calor de NDVI**")
+        ndvi_map = create_ndvi_heatmap(results['spectral_data'])
+        st_folium(ndvi_map, width=800, height=500)
+        st.info("""
+        **Interpretación NDVI:**
+        - 🟢 > 0.7: Vegetación muy densa y saludable
+        - 🟡 0.5-0.7: Vegetación en buen estado
+        - 🟠 0.3-0.5: Vegetación moderada
+        - 🔴 0.1-0.3: Vegetación escasa
+        - ⚫ < 0.1: Suelo desnudo/sin vegetación
+        """)
+    
+    with map_tab3:
+        st.markdown("**🦜 Mapa de Riqueza de Especies**")
+        richness_map = create_species_richness_map(results['species_data'])
+        st_folium(richness_map, width=800, height=500)
+        st.info("""
+        **Interpretación de Riqueza:**
+        - 🟣 > 8 especies: Alta diversidad
+        - 🟢 5-8 especies: Diversidad media
+        - 🟡 3-5 especies: Diversidad baja
+        - ⚪ < 3 especies: Diversidad muy baja
+        """)
     
     # ===============================
     # 🌿 ANÁLISIS DE BIODIVERSIDAD
@@ -908,66 +1203,6 @@ if st.button("🚀 EJECUTAR DIAGNÓSTICO INTEGRAL", type="primary", use_containe
         st.plotly_chart(fig, use_container_width=True)
     
     # ===============================
-    # 🗺️ VISUALIZACIÓN GEOESPACIAL
-    # ===============================
-    
-    st.subheader("🗺️ MAPA INTERACTIVO DEL TERRITORIO")
-    
-    # Crear mapa base centrado en Latinoamérica
-    m = folium.Map(location=[-14.0, -60.0], zoom_start=4, tiles=None)
-    
-    # Capas base
-    folium.TileLayer(
-        tiles='https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        attr='Esri', name='Satélite'
-    ).add_to(m)
-    
-    folium.TileLayer(
-        tiles='OpenStreetMap',
-        name='Calles'
-    ).add_to(m)
-    
-    # Añadir puntos de muestreo
-    for idx, area_data in enumerate(results['spectral_data']):
-        # Generar coordenadas realistas para Latinoamérica
-        lat = -14.0 + np.random.uniform(-8, 8)
-        lon = -60.0 + np.random.uniform(-8, 8)
-        
-        # Color basado en NDVI
-        ndvi = area_data['NDVI']
-        if ndvi > 0.6:
-            color = 'darkgreen'
-        elif ndvi > 0.4:
-            color = 'green'
-        elif ndvi > 0.2:
-            color = 'orange'
-        else:
-            color = 'red'
-        
-        popup_text = f"""
-        <b>{area_data['area']}</b><br>
-        NDVI: {ndvi:.3f}<br>
-        EVI: {area_data['EVI']:.3f}<br>
-        Biomasa: {area_data['biomasa_estimada']:.1f}
-        """
-        
-        folium.CircleMarker(
-            location=[lat, lon],
-            radius=8,
-            popup=folium.Popup(popup_text, max_width=300),
-            tooltip=area_data['area'],
-            color=color,
-            fillColor=color,
-            fillOpacity=0.7
-        ).add_to(m)
-    
-    # Añadir control de capas
-    folium.LayerControl().add_to(m)
-    
-    # Mostrar mapa
-    st_folium(m, width=800, height=500)
-    
-    # ===============================
     # 📋 RECOMENDACIONES
     # ===============================
     
@@ -993,20 +1228,22 @@ if st.button("🚀 EJECUTAR DIAGNÓSTICO INTEGRAL", type="primary", use_containe
             st.success("✅ Reporte PDF generado (simulación)")
     
     with col2:
-        if st.button("📊 Exportar Datos Excel", use_container_width=True):
-            # Crear un archivo Excel simulado
-            from io import BytesIO
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                pd.DataFrame(results['species_data']).to_excel(writer, sheet_name='Especies', index=False)
-                pd.DataFrame(results['spectral_data']).to_excel(writer, sheet_name='Vegetación', index=False)
-                pd.DataFrame([results['biodiversity_metrics']]).to_excel(writer, sheet_name='Métricas', index=False)
-            st.download_button(
-                label="📥 Descargar Excel",
-                data=output.getvalue(),
-                file_name=f"diagnostico_biodiversidad_{pd.Timestamp.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.ms-excel"
-            )
+        # Crear un archivo Excel descargable
+        from io import BytesIO
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            pd.DataFrame(results['species_data']).to_excel(writer, sheet_name='Especies', index=False)
+            pd.DataFrame(results['spectral_data']).to_excel(writer, sheet_name='Vegetación', index=False)
+            pd.DataFrame([results['biodiversity_metrics']]).to_excel(writer, sheet_name='Métricas', index=False)
+            pd.DataFrame([results['lemu_indicators']]).to_excel(writer, sheet_name='LEMU', index=False)
+        
+        st.download_button(
+            label="📊 Descargar Excel",
+            data=output.getvalue(),
+            file_name=f"diagnostico_biodiversidad_{pd.Timestamp.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.ms-excel",
+            use_container_width=True
+        )
     
     with col3:
         if st.button("🗺️ Exportar Capas GIS", use_container_width=True):
