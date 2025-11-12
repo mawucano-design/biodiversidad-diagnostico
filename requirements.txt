@@ -1,1 +1,10 @@
 streamlit==1.28.0
+pandas==2.1.4
+numpy==1.26.0
+geopandas==0.14.1  # Para parsear KML/SHP
+folium==0.15.1     # Para mapas interactivos
+streamlit-folium==0.15.0  # Integración Folium en Streamlit
+plotly==5.17.0     # Para gráficos y 3D
+laspy==2.5.1       # Para leer archivos LiDAR (LAS)
+fiona==1.9.5       # Dependencia de GeoPandas para SHP
+pykml==0.2.0       # Para parsear KML
