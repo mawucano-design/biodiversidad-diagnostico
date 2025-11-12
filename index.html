@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Atlas de Biodiversidad</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Atlas de Biodiversidad</h1>
+            <p>Análisis de biodiversidad usando la metodología LE.MU + Índice de Shannon</p>
+        </header>
+
+        <div class="upload-section">
+            <h3>Cargar Datos Geográficos</h3>
+            <div class="upload-options">
+                <div class="upload-option">
+                    <label for="kml-file">KML File</label>
+                    <input type="file" id="kml-file" accept=".kml">
+                </div>
+                <div class="upload-option">
+                    <label for="shp-file">Shapefile (ZIP)</label>
+                    <input type="file" id="shp-file" accept=".zip">
+                </div>
+            </div>
+            <button id="analyze-btn" disabled>Analizar Biodiversidad</button>
+        </div>
+
+        <div class="results-section">
+            <div class="map-container">
+                <div id="map"></div>
+            </div>
+            
+            <div class="indicators-panel">
+                <h3>Indicadores de Biodiversidad</h3>
+                <div id="indicators-results">
+                    <div class="indicator">
+                        <span class="indicator-name">Índice de Shannon:</span>
+                        <span class="indicator-value" id="shannon-index">-</span>
+                    </div>
+                    <div class="indicator">
+                        <span class="indicator-name">Riqueza de Especies:</span>
+                        <span class="indicator-value" id="species-richness">-</span>
+                    </div>
+                    <div class="indicator">
+                        <span class="indicator-name">Abundancia Total:</span>
+                        <span class="indicator-value" id="total-abundance">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="data-table">
+            <h3>Datos de Especies</h3>
+            <table id="species-table">
+                <thead>
+                    <tr>
+                        <th>Especie</th>
+                        <th>Abundancia</th>
+                        <th>Frecuencia</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Librerías -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <script src="https://unpkg.com/shpjs@4.0.4/dist/shp.js"></script>
+    <script src="js/shannon.js"></script>
+    <script src="js/file-handlers.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
