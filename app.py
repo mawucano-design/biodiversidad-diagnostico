@@ -1,15 +1,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import tempfile
-import os
-import zipfile
 import math
-import folium
-from streamlit_folium import st_folium
-import plotly.express as px
-import plotly.graph_objects as go
-import pydeck as pdk
+import random
 from datetime import datetime
 
 # Configuración de la página
@@ -23,7 +16,8 @@ st.set_page_config(
 # Título y descripción
 st.title("🌿 Atlas de Biodiversidad - Análisis Avanzado")
 st.markdown("""
-Análisis de biodiversidad con mapas interactivos, base ESRI Satellite y visualización 3D con LiDAR simulado
+Análisis de biodiversidad con mapas interactivos y visualización 3D
+**Versión optimizada para máxima compatibilidad**
 """)
 
 class BiodiversityAnalyzer:
@@ -35,8 +29,7 @@ class BiodiversityAnalyzer:
             'Acer pseudoplatanus', 'Betula pendula', 'Alnus glutinosa',
             'Pinus pinaster', 'Quercus ilex', 'Quercus suber',
             'Juniperus communis', 'Castanea sativa', 'Populus nigra',
-            'Fraxinus excelsior', 'Ulmus minor', 'Salix alba',
-            'Corylus avellana', 'Crataegus monogyna', 'Rubus fruticosus'
+            'Fraxinus excelsior', 'Ulmus minor', 'Salix alba'
         ]
     
     def shannon_index(self, abundances):
@@ -71,65 +64,34 @@ class BiodiversityAnalyzer:
         locations = []
         
         for i in range(num_areas):
-            # Variación aleatoria alrededor del punto central (aproximadamente 0.5-2km)
-            lat_variation = np.random.uniform(-0.02, 0.02)  # ~2km
-            lon_variation = np.random.uniform(-0.03, 0.03)  # ~3km
+            # Variación aleatoria alrededor del punto central
+            lat_variation = random.uniform(-0.02, 0.02)
+            lon_variation = random.uniform(-0.03, 0.03)
             
             lat = center_lat + lat_variation
             lon = center_lon + lon_variation
             
             # Simular elevación (metros)
-            elevation = np.random.normal(500, 150)  # Media 500m, desviación 150m
+            elevation = random.gauss(500, 150)
             
             locations.append({
                 'id': i + 1,
                 'lat': lat,
                 'lon': lon,
                 'elevation': max(0, elevation),
-                'area_hectares': np.random.uniform(5, 50)  # 5-50 hectáreas
+                'area_hectares': random.uniform(5, 50)
             })
         
         return locations
-    
-    def simulate_lidar_data(self, locations):
-        """Simula datos LiDAR para visualización 3D"""
-        lidar_data = []
-        
-        for loc in locations:
-            # Crear una cuadrícula de puntos alrededor de cada ubicación
-            points_per_side = 10
-            spacing = 0.001  # ~100 metros entre puntos
-            
-            for i in range(points_per_side):
-                for j in range(points_per_side):
-                    lat = loc['lat'] + (i - points_per_side/2) * spacing
-                    lon = loc['lon'] + (j - points_per_side/2) * spacing
-                    
-                    # Simular altura de vegetación basada en elevación y ruido
-                    base_height = loc['elevation']
-                    vegetation_height = np.random.exponential(20)  # Altura de árboles
-                    
-                    lidar_data.append({
-                        'lat': lat,
-                        'lon': lon,
-                        'elevation': base_height,
-                        'vegetation_height': vegetation_height,
-                        'total_height': base_height + vegetation_height,
-                        'area_id': loc['id'],
-                        'intensity': np.random.uniform(0.5, 1.0)  # Intensidad LiDAR
-                    })
-        
-        return pd.DataFrame(lidar_data)
     
     def simulate_species_data(self, locations, method="Basado en área", max_species=15):
         """Simula datos de especies basados en ubicaciones geográficas"""
         species_data = []
         
         # Seleccionar especies del pool
-        selected_species = np.random.choice(
+        selected_species = random.sample(
             self.species_pool, 
-            size=min(max_species, len(self.species_pool)), 
-            replace=False
+            min(max_species, len(self.species_pool))
         )
         
         for loc in locations:
@@ -145,7 +107,7 @@ class BiodiversityAnalyzer:
                 species_data.append({
                     'species': species,
                     'abundance': int(abundance),
-                    'frequency': round(np.random.uniform(0.1, 1.0), 3),
+                    'frequency': round(random.uniform(0.1, 1.0), 3),
                     'area_id': loc['id'],
                     'lat': loc['lat'],
                     'lon': loc['lon'],
@@ -164,18 +126,15 @@ class BiodiversityAnalyzer:
         base = base_abundance.get(species, 20)
         
         # Modificar basado en área y elevación
-        area_factor = location['area_hectares'] / 25  # Normalizar a 25 hectáreas
-        elevation_factor = 1 + (location['elevation'] - 500) / 1000  # Ajuste por elevación
+        area_factor = location['area_hectares'] / 25
+        elevation_factor = 1 + (location['elevation'] - 500) / 1000
         
-        return max(1, int(base * area_factor * elevation_factor * np.random.lognormal(0, 0.3)))
+        return max(1, int(base * area_factor * elevation_factor * random.lognormvariate(0, 0.3)))
     
     def _elevation_based_abundance(self, species, location):
         """Abundancia basada en preferencias de elevación"""
-        # Especies de baja elevación
-        low_elevation_species = ['Quercus suber', 'Olea europaea', 'Pistacia lentiscus']
-        # Especies de media elevación
+        low_elevation_species = ['Quercus suber', 'Olea europaea']
         mid_elevation_species = ['Quercus robur', 'Fagus sylvatica', 'Acer pseudoplatanus']
-        # Especies de alta elevación
         high_elevation_species = ['Pinus sylvestris', 'Juniperus communis', 'Betula pendula']
         
         elevation = location['elevation']
@@ -187,19 +146,17 @@ class BiodiversityAnalyzer:
         elif species in high_elevation_species and elevation > 800:
             base = 55
         else:
-            base = 20  # Abundancia baja para hábitat no preferido
+            base = 20
         
-        return max(1, int(base * np.random.lognormal(0, 0.4)))
+        return max(1, int(base * random.lognormvariate(0, 0.4)))
     
     def _random_abundance(self, species):
         """Abundancia aleatoria"""
-        return np.random.poisson(25) + 1
+        return random.randint(1, 50)
     
     def analyze_biodiversity(self, species_data):
         """Analiza biodiversidad a partir de datos de especies"""
-        df = pd.DataFrame(species_data)
-        
-        if df.empty:
+        if not species_data:
             return {
                 'shannon_index': 0,
                 'species_richness': 0,
@@ -208,6 +165,8 @@ class BiodiversityAnalyzer:
                 'simpson_index': 0,
                 'species_data': []
             }
+        
+        df = pd.DataFrame(species_data)
         
         # Agrupar por especie y sumar abundancias
         species_abundances = df.groupby('species')['abundance'].sum().values
@@ -229,160 +188,102 @@ class BiodiversityAnalyzer:
         }
 
 class MapVisualizer:
-    """Clase para visualizaciones geoespaciales"""
+    """Clase para visualizaciones geoespaciales simplificadas"""
     
-    def create_biodiversity_map(self, species_data, center_lat, center_lon):
-        """Crea mapa de biodiversidad con Folium"""
+    def create_interactive_map(self, species_data, center_lat, center_lon):
+        """Crea un mapa interactivo simple usando Plotly"""
+        if not species_data:
+            return None
+            
+        df = pd.DataFrame(species_data)
         
         # Calcular riqueza por área
-        df = pd.DataFrame(species_data)
         richness_by_area = df.groupby('area_id').agg({
             'species': 'nunique',
             'abundance': 'sum',
             'lat': 'first',
-            'lon': 'first'
+            'lon': 'first',
+            'elevation': 'first'
         }).reset_index()
         
-        # Crear mapa base con ESRI Satellite
-        m = folium.Map(
-            location=[center_lat, center_lon],
-            zoom_start=12,
-            tiles=None
-        )
-        
-        # Añadir ESRI Satellite
-        folium.TileLayer(
-            tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-            attr='ESRI Satellite',
-            name='ESRI Satellite',
-            overlay=False,
-            control=True
-        ).add_to(m)
-        
-        # Añadir OpenStreetMap como alternativa
-        folium.TileLayer(
-            tiles='OpenStreetMap',
-            name='OpenStreetMap',
-            overlay=False,
-            control=True
-        ).add_to(m)
-        
-        # Añadir marcadores para cada área de muestreo
-        for _, area in richness_by_area.iterrows():
-            # Color basado en riqueza de especies
-            richness = area['species']
-            if richness <= 3:
-                color = 'red'
-            elif richness <= 6:
-                color = 'orange'
-            else:
-                color = 'green'
-            
-            # Popup con información
-            popup_text = f"""
-            <b>Área {int(area['area_id'])}</b><br>
-            <b>Riqueza:</b> {int(richness)} especies<br>
-            <b>Abundancia:</b> {int(area['abundance'])} ind.<br>
-            <b>Coordenadas:</b> {area['lat']:.4f}, {area['lon']:.4f}
-            """
-            
-            folium.CircleMarker(
-                location=[area['lat'], area['lon']],
-                radius=10 + richness * 2,  # Tamaño proporcional a riqueza
-                popup=folium.Popup(popup_text, max_width=300),
-                color=color,
-                fillColor=color,
-                fillOpacity=0.7,
-                weight=2
-            ).add_to(m)
-        
-        # Añadir control de capas
-        folium.LayerControl().add_to(m)
-        
-        return m
-    
-    def create_3d_visualization(self, lidar_data, species_data):
-        """Crea visualización 3D con PyDeck"""
-        
-        # Combinar datos LiDAR con información de especies
-        df_lidar = lidar_data.copy()
-        df_species = pd.DataFrame(species_data)
-        
-        # Calcular métricas por área para el color
-        richness_by_area = df_species.groupby('area_id').agg({
-            'species': 'nunique'
-        }).reset_index()
-        
-        # Unir con datos LiDAR
-        df_3d = df_lidar.merge(richness_by_area, on='area_id', how='left')
-        
-        # Capa de puntos LiDAR 3D
-        point_cloud_layer = pdk.Layer(
-            "PointCloudLayer",
-            df_3d,
-            get_position=['lon', 'lat', 'total_height'],
-            get_normal=[0, 0, 1],
-            get_color='[255, (species * 25) % 255, 0, 255]',
-            auto_highlight=True,
-            pickable=True,
-            point_size=3,
-        )
-        
-        # Configurar vista inicial
-        view_state = pdk.ViewState(
-            longitude=df_3d['lon'].mean(),
-            latitude=df_3d['lat'].mean(),
-            zoom=11,
-            pitch=45,
-            bearing=0,
-            min_zoom=5,
-            max_zoom=20
-        )
-        
-        # Crear deck
-        deck = pdk.Deck(
-            layers=[point_cloud_layer],
-            initial_view_state=view_state,
-            tooltip={
-                'html': '''
-                <b>Altura Total:</b> {total_height:.1f} m<br/>
-                <b>Elevación:</b> {elevation:.1f} m<br/>
-                <b>Vegetación:</b> {vegetation_height:.1f} m<br/>
-                <b>Riqueza:</b> {species} especies
-                ''',
-                'style': {
-                    'color': 'white',
-                    'backgroundColor': 'rgba(0,0,0,0.7)',
-                    'padding': '10px'
-                }
-            }
-        )
-        
-        return deck
-    
-    def create_species_distribution_map(self, species_data):
-        """Crea mapa de distribución de especies específicas"""
-        df = pd.DataFrame(species_data)
-        
-        # Encontrar las especies más abundantes
-        top_species = df.groupby('species')['abundance'].sum().nlargest(5).index.tolist()
-        
+        # Crear mapa con Plotly
         fig = px.scatter_mapbox(
-            df[df['species'].isin(top_species)],
+            richness_by_area,
             lat="lat",
             lon="lon",
             color="species",
             size="abundance",
-            hover_name="species",
-            hover_data={"abundance": True, "elevation": True, "area_hectares": True},
+            hover_name="area_id",
+            hover_data={
+                "species": True,
+                "abundance": True,
+                "elevation": True,
+                "lat": False,
+                "lon": False
+            },
+            color_continuous_scale=px.colors.sequential.Viridis,
             zoom=10,
             height=600,
-            title="Distribución de Especies Principales"
+            title="Mapa de Biodiversidad - Riqueza por Área"
         )
         
         fig.update_layout(
             mapbox_style="open-street-map",
             margin={"r":0,"t":40,"l":0,"b":0}
+        )
+        
+        return fig
+    
+    def create_species_distribution_chart(self, species_data):
+        """Crea gráfico de distribución de especies"""
+        if not species_data:
+            return None
+            
+        df = pd.DataFrame(species_data)
+        
+        # Top 10 especies más abundantes
+        top_species = df.groupby('species')['abundance'].sum().nlargest(10)
+        
+        fig = px.bar(
+            x=top_species.index,
+            y=top_species.values,
+            title="Top 10 Especies por Abundancia",
+            labels={'x': 'Especie', 'y': 'Abundancia Total'},
+            color=top_species.values,
+            color_continuous_scale='Viridis'
+        )
+        
+        fig.update_layout(
+            xaxis_tickangle=-45,
+            showlegend=False
+        )
+        
+        return fig
+    
+    def create_elevation_chart(self, species_data):
+        """Crea gráfico de biodiversidad vs elevación"""
+        if not species_data:
+            return None
+            
+        df = pd.DataFrame(species_data)
+        
+        # Agrupar por área y calcular métricas
+        area_metrics = df.groupby('area_id').agg({
+            'species': 'nunique',
+            'abundance': 'sum',
+            'elevation': 'first'
+        }).reset_index()
+        
+        fig = px.scatter(
+            area_metrics,
+            x="elevation",
+            y="species",
+            size="abundance",
+            color="species",
+            hover_name="area_id",
+            title="Riqueza de Especies vs Elevación",
+            labels={'elevation': 'Elevación (m)', 'species': 'Riqueza de Especies'},
+            size_max=20
         )
         
         return fig
@@ -410,7 +311,6 @@ with st.sidebar:
         with col2:
             center_lon = st.number_input("Longitud", value=-3.7038, format="%.6f")
     else:
-        # Extraer coordenadas del texto seleccionado
         coords = {
             "Madrid, España (40.4168, -3.7038)": (40.4168, -3.7038),
             "Barcelona, España (41.3851, 2.1734)": (41.3851, 2.1734),
@@ -418,15 +318,6 @@ with st.sidebar:
             "Valencia, España (39.4699, -0.3763)": (39.4699, -0.3763),
         }
         center_lat, center_lon = coords[location_preset]
-    
-    st.markdown("---")
-    st.header("📁 Carga de Datos")
-    
-    uploaded_file = st.file_uploader(
-        "Sube archivo geográfico (opcional)",
-        type=['kml', 'zip'],
-        help="KML o Shapefile para personalizar el análisis"
-    )
     
     st.markdown("---")
     st.header("⚙️ Parámetros de Análisis")
@@ -437,36 +328,36 @@ with st.sidebar:
     )
     
     num_areas = st.slider("Número de áreas", 1, 15, 8)
-    num_species = st.slider("Especies máx.", 5, 30, 12)
+    num_species = st.slider("Especies máx.", 5, 20, 10)
     
     st.markdown("---")
-    st.header("🎨 Visualización")
+    st.header("📊 Visualización")
     
-    show_3d = st.checkbox("Mostrar visualización 3D LiDAR", value=True)
-    show_species_map = st.checkbox("Mostrar mapa de especies", value=True)
+    show_species_chart = st.checkbox("Mostrar gráfico de especies", value=True)
+    show_elevation_chart = st.checkbox("Mostrar análisis de elevación", value=True)
 
 # Inicializar clases
 analyzer = BiodiversityAnalyzer()
 visualizer = MapVisualizer()
 
 # Mostrar información de ubicación
-col1, col2, col3 = st.columns(3)
+st.subheader("🎯 Configuración del Análisis")
+col1, col2, col3, col4 = st.columns(4)
 with col1:
-    st.metric("Ubicación", f"{center_lat:.4f}, {center_lon:.4f}")
+    st.metric("📍 Ubicación", f"{center_lat:.4f}, {center_lon:.4f}")
 with col2:
-    st.metric("Áreas de estudio", num_areas)
+    st.metric("📐 Áreas", num_areas)
 with col3:
-    st.metric("Método", simulation_method)
+    st.metric("🌿 Especies", num_species)
+with col4:
+    st.metric("⚙️ Método", simulation_method)
 
 # Ejecutar análisis
-if st.button("🚀 Ejecutar Análisis Completo", type="primary", use_container_width=True):
+if st.button("🚀 Ejecutar Análisis de Biodiversidad", type="primary", use_container_width=True):
     
-    with st.spinner("Generando datos geoespaciales y calculando métricas..."):
+    with st.spinner("Generando datos y calculando métricas..."):
         # Generar ubicaciones de muestreo
         locations = analyzer.generate_sample_locations(center_lat, center_lon, num_areas)
-        
-        # Simular datos LiDAR
-        lidar_data = analyzer.simulate_lidar_data(locations)
         
         # Simular datos de especies
         species_data = analyzer.simulate_species_data(
@@ -479,167 +370,181 @@ if st.button("🚀 Ejecutar Análisis Completo", type="primary", use_container_w
         results = analyzer.analyze_biodiversity(species_data)
     
     # Mostrar métricas principales
-    st.subheader("📊 Métricas de Biodiversidad")
+    st.subheader("📈 Métricas de Biodiversidad")
     
     col1, col2, col3, col4, col5 = st.columns(5)
     
-    metrics_config = {
-        'shannon_index': ("Índice de Shannon", "%.3f"),
-        'species_richness': ("Riqueza", "%d"),
-        'total_abundance': ("Abundancia", "%,d"),
-        'evenness': ("Equitatividad", "%.3f"),
-        'simpson_index': ("Índice Simpson", "%.3f")
-    }
-    
-    for i, (key, (name, fmt)) in enumerate(metrics_config.items()):
-        with [col1, col2, col3, col4, col5][i]:
-            st.metric(name, fmt % results[key])
+    with col1:
+        st.metric("Índice de Shannon", f"{results['shannon_index']:.3f}")
+    with col2:
+        st.metric("Riqueza", results['species_richness'])
+    with col3:
+        st.metric("Abundancia", f"{results['total_abundance']:,}")
+    with col4:
+        st.metric("Equitatividad", f"{results['evenness']:.3f}")
+    with col5:
+        st.metric("Índice Simpson", f"{results['simpson_index']:.3f}")
     
     # Interpretación del índice de Shannon
     shannon_value = results['shannon_index']
     if shannon_value < 1.0:
         diversity_level = "Baja diversidad"
-        diversity_color = "red"
+        diversity_color = "🔴"
     elif shannon_value < 3.0:
         diversity_level = "Diversidad moderada"
-        diversity_color = "orange"
+        diversity_color = "🟡"
     else:
         diversity_level = "Alta diversidad"
-        diversity_color = "green"
+        diversity_color = "🟢"
     
-    st.info(f"**Interpretación del Índice de Shannon ({shannon_value:.3f}):** "
-            f":{diversity_color}[**{diversity_level}**]")
+    st.info(f"**{diversity_color} Interpretación del Índice de Shannon ({shannon_value:.3f}): {diversity_level}**")
     
-    # SECCIÓN DE MAPAS
-    st.subheader("🗺️ Visualizaciones Geoespaciales")
+    # SECCIÓN DE MAPAS Y GRÁFICOS
+    st.subheader("🗺️ Visualizaciones")
     
-    # Mapa principal de biodiversidad
-    st.markdown("#### 📍 Mapa de Biodiversidad - ESRI Satellite")
-    biodiversity_map = visualizer.create_biodiversity_map(species_data, center_lat, center_lon)
-    st_folium(biodiversity_map, width=1200, height=500)
+    # Mapa interactivo
+    st.markdown("#### 📍 Mapa de Distribución")
+    map_fig = visualizer.create_interactive_map(species_data, center_lat, center_lon)
+    if map_fig:
+        st.plotly_chart(map_fig, use_container_width=True)
+    else:
+        st.warning("No hay datos para mostrar el mapa")
     
-    # Visualización 3D LiDAR
-    if show_3d:
-        st.markdown("#### 🌳 Visualización 3D - Datos LiDAR Simulados")
-        deck = visualizer.create_3d_visualization(lidar_data, species_data)
-        st.pydeck_chart(deck, use_container_width=True)
+    # Gráficos adicionales
+    if show_species_chart or show_elevation_chart:
+        col1, col2 = st.columns(2)
         
-        with st.expander("ℹ️ Información LiDAR"):
-            st.markdown("""
-            **Datos LiDAR simulados incluyen:**
-            - **Elevación del terreno**: Modelo digital del terreno
-            - **Altura de vegetación**: Estructura vertical del bosque
-            - **Intensidad**: Reflectancia de la superficie
-            - **Puntos 3D**: Nube de puntos para análisis estructural
-            """)
+        with col1:
+            if show_species_chart:
+                st.markdown("#### 🌿 Distribución de Especies")
+                species_chart = visualizer.create_species_distribution_chart(species_data)
+                if species_chart:
+                    st.plotly_chart(species_chart, use_container_width=True)
+        
+        with col2:
+            if show_elevation_chart:
+                st.markdown("#### 🏔️ Biodiversidad vs Elevación")
+                elevation_chart = visualizer.create_elevation_chart(species_data)
+                if elevation_chart:
+                    st.plotly_chart(elevation_chart, use_container_width=True)
     
-    # Mapa de distribución de especies
-    if show_species_map:
-        st.markdown("#### 🌿 Mapa de Distribución de Especies")
-        species_map = visualizer.create_species_distribution_map(species_data)
-        st.plotly_chart(species_map, use_container_width=True)
-    
-    # Tablas de datos
+    # TABLAS DE DATOS
     st.subheader("📋 Datos Detallados")
     
-    tab1, tab2, tab3 = st.tabs(["Especies", "Áreas de Estudio", "Datos LiDAR"])
+    tab1, tab2 = st.tabs(["📊 Resumen por Especie", "📍 Áreas de Estudio"])
     
     with tab1:
-        df_species = pd.DataFrame(species_data)
-        species_summary = df_species.groupby('species').agg({
-            'abundance': 'sum',
-            'frequency': 'mean',
-            'area_id': 'nunique'
-        }).reset_index()
-        species_summary.columns = ['Especie', 'Abundancia Total', 'Frecuencia Promedio', 'Áreas Presente']
-        species_summary = species_summary.sort_values('Abundancia Total', ascending=False)
-        
-        st.dataframe(species_summary, use_container_width=True)
+        if species_data:
+            df_species = pd.DataFrame(species_data)
+            species_summary = df_species.groupby('species').agg({
+                'abundance': 'sum',
+                'frequency': 'mean',
+                'area_id': 'nunique'
+            }).reset_index()
+            species_summary.columns = ['Especie', 'Abundancia Total', 'Frecuencia Promedio', 'Áreas Presente']
+            species_summary = species_summary.sort_values('Abundancia Total', ascending=False)
+            
+            st.dataframe(species_summary, use_container_width=True)
+        else:
+            st.info("No hay datos de especies para mostrar")
     
     with tab2:
-        areas_df = pd.DataFrame(locations)
-        st.dataframe(areas_df, use_container_width=True)
+        if locations:
+            areas_df = pd.DataFrame(locations)
+            st.dataframe(areas_df, use_container_width=True)
+        else:
+            st.info("No hay datos de áreas para mostrar")
     
-    with tab3:
-        st.dataframe(lidar_data.head(100), use_container_width=True)  # Mostrar solo primeros 100 puntos
-    
-    # Exportar resultados
+    # EXPORTAR RESULTADOS
     st.subheader("💾 Exportar Resultados")
     
-    col1, col2, col3 = st.columns(3)
+    if species_data and locations:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            csv_species = pd.DataFrame(species_data).to_csv(index=False)
+            st.download_button(
+                "📥 Descargar Datos de Especies (CSV)",
+                csv_species,
+                f"biodiversidad_especies_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                "text/csv",
+                use_container_width=True
+            )
+        
+        with col2:
+            csv_areas = pd.DataFrame(locations).to_csv(index=False)
+            st.download_button(
+                "📍 Descargar Ubicaciones (CSV)",
+                csv_areas,
+                f"biodiversidad_ubicaciones_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                "text/csv",
+                use_container_width=True
+            )
     
-    with col1:
-        csv_species = pd.DataFrame(species_data).to_csv(index=False)
-        st.download_button(
-            "📥 Datos de Especies (CSV)",
-            csv_species,
-            "datos_especies.csv",
-            "text/csv",
-            use_container_width=True
-        )
-    
-    with col2:
-        csv_areas = pd.DataFrame(locations).to_csv(index=False)
-        st.download_button(
-            "📊 Ubicaciones (CSV)",
-            csv_areas,
-            "ubicaciones_areas.csv",
-            "text/csv",
-            use_container_width=True
-        )
-    
-    with col3:
-        csv_lidar = lidar_data.to_csv(index=False)
-        st.download_button(
-            "🌳 Datos LiDAR (CSV)",
-            csv_lidar,
-            "datos_lidar.csv",
-            "text/csv",
-            use_container_width=True
-        )
+    # INFORMACIÓN ADICIONAL
+    with st.expander("📚 Información sobre los Indicadores"):
+        st.markdown("""
+        ### 🌿 Índice de Shannon-Wiener (H')
+        Mide la diversidad de especies considerando tanto la riqueza como la equitatividad.
+        
+        **Interpretación:**
+        - **0-1.0**: Baja diversidad (pocas especies dominantes)
+        - **1.0-3.0**: Diversidad moderada
+        - **>3.0**: Alta diversidad (múltiples especies bien distribuidas)
+        
+        ### 🔢 Riqueza de Especies (S)
+        Número total de especies diferentes en el área de estudio.
+        
+        ### ⚖️ Equitatividad de Pielou (J')
+        Mide qué tan uniforme es la distribución de individuos entre especies.
+        - **Rango**: 0-1 (1 = distribución perfectamente uniforme)
+        
+        ### 📊 Índice de Simpson (λ)
+        Mide la probabilidad de que dos individuos tomados al azar sean de la misma especie.
+        - Valores más altos indican menor diversidad
+        """)
 
 else:
     # Mensaje inicial
     st.markdown("""
-    ### 🌍 Atlas de Biodiversidad Avanzado
+    ### 🌍 Bienvenido al Atlas de Biodiversidad
     
-    **Nuevas funcionalidades implementadas:**
+    **Características principales:**
     
-    🗺️ **Mapas Interactivos**
-    - Base ESRI Satellite de alta resolución
-    - Mapas de distribución de especies
-    - Visualización de riqueza por área
+    📈 **Análisis Completo de Biodiversidad**
+    - Índice de Shannon-Wiener
+    - Riqueza de especies
+    - Equitatividad de Pielou
+    - Índice de Simpson
     
-    🌳 **Visualización 3D con LiDAR**
-    - Modelado de elevación del terreno
-    - Estructura de vegetación en 3D
-    - Nube de puntos interactiva
+    🗺️ **Visualizaciones Geoespaciales**
+    - Mapas interactivos de distribución
+    - Análisis por elevación
+    - Gráficos de especies principales
     
-    📊 **Análisis Geoespacial**
-    - Ubicaciones realistas de muestreo
-    - Influencia de elevación en biodiversidad
-    - Mapas de calor de distribución
+    📊 **Datos y Exportación**
+    - Tablas detalladas interactivas
+    - Exportación a CSV
+    - Métricas en tiempo real
     
     **🎯 Cómo usar:**
-    1. Selecciona ubicación en el panel lateral
-    2. Configura parámetros de análisis
-    3. Haz clic en "Ejecutar Análisis Completo"
-    4. Explora los mapas y visualizaciones 3D
+    1. Selecciona la ubicación de estudio
+    2. Configura los parámetros en el panel lateral
+    3. Haz clic en "Ejecutar Análisis de Biodiversidad"
+    4. Explora los resultados y visualizaciones
     
-    **🔍 Datos incluidos:**
-    - Simulación LiDAR realista
-    - Modelos de elevación digital
-    - Distribución espacial de especies
-    - Métricas de biodiversidad geo-referenciadas
+    **📍 Ubicaciones disponibles:**
+    - Madrid, Barcelona, Sevilla, Valencia
+    - O configura coordenadas personalizadas
     """)
 
 # Footer
 st.markdown("---")
 st.markdown(
-    "<div style='text-align: center'>"
-    "🌿 <b>Atlas de Biodiversidad Avanzado</b> | "
-    "ESRI Satellite 🗺️ | LiDAR 3D 🌳 | "
-    "Streamlit 🚀"
+    "<div style='text-align: center; color: #666;'>"
+    "🌿 <b>Atlas de Biodiversidad</b> | "
+    "Metodología LE.MU Atlas | "
+    "Desarrollado con Streamlit 🚀"
     "</div>",
     unsafe_allow_html=True
 )
