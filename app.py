@@ -639,160 +639,6 @@ class IntegratedAnalyzer:
             return "Crítico"
 
 # ===============================
-# 🗺️ FUNCIONES DE MAPAS
-# ===============================
-
-def create_biodiversity_map(species_data, spectral_data):
-    """Crear mapa interactivo de biodiversidad"""
-    # Crear mapa base centrado en Latinoamérica
-    m = folium.Map(location=[-14.0, -60.0], zoom_start=4, tiles=None)
-    
-    # Capas base
-    folium.TileLayer(
-        tiles='https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        attr='Esri', name='Satélite'
-    ).add_to(m)
-    
-    folium.TileLayer(
-        tiles='OpenStreetMap',
-        name='Calles'
-    ).add_to(m)
-    
-    # Capa de puntos de vegetación (NDVI)
-    veg_group = folium.FeatureGroup(name='🌿 Salud Vegetal (NDVI)')
-    for area_data in spectral_data:
-        ndvi = area_data['NDVI']
-        if ndvi > 0.6:
-            color = 'darkgreen'
-            size = 12
-        elif ndvi > 0.4:
-            color = 'green'
-            size = 10
-        elif ndvi > 0.2:
-            color = 'orange'
-            size = 8
-        else:
-            color = 'red'
-            size = 6
-        
-        popup_text = f"""
-        <b>{area_data['area']}</b><br>
-        <b>Salud Vegetal:</b><br>
-        • NDVI: {ndvi:.3f}<br>
-        • EVI: {area_data['EVI']:.3f}<br>
-        • Biomasa: {area_data['biomasa_estimada']:.1f} t/ha<br>
-        • Estrés hídrico: {area_data['estres_hidrico']:.1f}%
-        """
-        
-        folium.CircleMarker(
-            location=[area_data['lat'], area_data['lon']],
-            radius=size,
-            popup=folium.Popup(popup_text, max_width=300),
-            tooltip=f"{area_data['area']} - NDVI: {ndvi:.3f}",
-            color=color,
-            fillColor=color,
-            fillOpacity=0.7,
-            weight=2
-        ).add_to(veg_group)
-    
-    veg_group.add_to(m)
-    
-    # Capa de biodiversidad
-    bio_group = folium.FeatureGroup(name='🦜 Biodiversidad')
-    species_df = pd.DataFrame(species_data)
-    if not species_df.empty:
-        area_species_richness = species_df.groupby('area').agg({
-            'species': 'nunique',
-            'abundance': 'sum',
-            'lat': 'first',
-            'lon': 'first'
-        }).reset_index()
-        
-        for _, area_data in area_species_richness.iterrows():
-            richness = area_data['species']
-            abundance = area_data['abundance']
-            
-            if richness > 10:
-                bio_color = 'darkblue'
-                icon_color = 'blue'
-            elif richness > 5:
-                bio_color = 'blue'
-                icon_color = 'lightblue'
-            else:
-                bio_color = 'lightblue'
-                icon_color = 'white'
-            
-            popup_text = f"""
-            <b>{area_data['area']}</b><br>
-            <b>Biodiversidad:</b><br>
-            • Riqueza: {richness} especies<br>
-            • Abundancia: {abundance} individuos<br>
-            • Densidad: {abundance/100:.1f} ind/ha
-            """
-            
-            folium.Marker(
-                location=[area_data['lat'], area_data['lon']],
-                popup=folium.Popup(popup_text, max_width=300),
-                tooltip=f"{area_data['area']} - {richness} especies",
-                icon=folium.Icon(color=icon_color, icon='leaf', prefix='fa')
-            ).add_to(bio_group)
-    
-    bio_group.add_to(m)
-    
-    # Control de capas
-    folium.LayerControl().add_to(m)
-    
-    return m
-
-def create_ndvi_heatmap(spectral_data):
-    """Crear mapa de calor de NDVI"""
-    m = folium.Map(location=[-14.0, -60.0], zoom_start=4)
-    
-    # Agregar puntos de NDVI
-    for area_data in spectral_data:
-        ndvi = area_data['NDVI']
-        
-        # Color gradient basado en NDVI
-        if ndvi > 0.7:
-            color = '#006400'  # Dark green
-        elif ndvi > 0.5:
-            color = '#32CD32'  # Lime green
-        elif ndvi > 0.3:
-            color = '#FFFF00'  # Yellow
-        elif ndvi > 0.1:
-            color = '#FFA500'  # Orange
-        else:
-            color = '#FF0000'  # Red
-        
-        folium.Circle(
-            location=[area_data['lat'], area_data['lon']],
-            radius=5000,  # 5km radius
-            popup=f"NDVI: {ndvi:.3f}",
-            color=color,
-            fillColor=color,
-            fillOpacity=0.6,
-            weight=1
-        ).add_to(m)
-    
-    # Agregar leyenda
-    legend_html = '''
-    <div style="position: fixed; 
-                bottom: 50px; left: 50px; width: 200px; height: 150px; 
-                background-color: white; border:2px solid grey; z-index:9999; 
-                font-size:14px; padding: 10px">
-    <p><strong>Leyenda NDVI</strong></p>
-    <p><i style="background:#006400; width: 20px; height: 20px; display: inline-block;"></i> > 0.7 (Excelente)</p>
-    <p><i style="background:#32CD32; width: 20px; height: 20px; display: inline-block;"></i> 0.5-0.7 (Bueno)</p>
-    <p><i style="background:#FFFF00; width: 20px; height: 20px; display: inline-block;"></i> 0.3-0.5 (Regular)</p>
-    <p><i style="background:#FFA500; width: 20px; height: 20px; display: inline-block;"></i> 0.1-0.3 (Pobre)</p>
-    <p><i style="background:#FF0000; width: 20px; height: 20px; display: inline-block;"></i> < 0.1 (Muy pobre)</p>
-    </div>
-    '''
-    m.get_root().html.add_child(folium.Element(legend_html))
-    
-    return m
-
-# ===============================
 # 🛠️ FUNCIONES AUXILIARES
 # ===============================
 
@@ -951,6 +797,173 @@ def generate_recommendations(results):
     
     return sorted(recommendations, key=lambda x: x['priority'], reverse=True)
 
+def create_biodiversity_map(species_data, spectral_data):
+    """Crear mapa interactivo de biodiversidad"""
+    # Crear mapa base centrado en Latinoamérica
+    m = folium.Map(location=[-14.0, -60.0], zoom_start=4, tiles=None)
+    
+    # Capas base
+    folium.TileLayer(
+        tiles='https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        attr='Esri', name='Satélite'
+    ).add_to(m)
+    
+    folium.TileLayer(
+        tiles='OpenStreetMap',
+        name='Calles'
+    ).add_to(m)
+    
+    # Capa de puntos de vegetación (NDVI)
+    veg_group = folium.FeatureGroup(name='🌿 Salud Vegetal (NDVI)')
+    for area_data in spectral_data:
+        ndvi = area_data['NDVI']
+        if ndvi > 0.6:
+            color = 'darkgreen'
+            size = 12
+        elif ndvi > 0.4:
+            color = 'green'
+            size = 10
+        elif ndvi > 0.2:
+            color = 'orange'
+            size = 8
+        else:
+            color = 'red'
+            size = 6
+        
+        popup_text = f"""
+        <b>{area_data['area']}</b><br>
+        <b>Salud Vegetal:</b><br>
+        • NDVI: {ndvi:.3f}<br>
+        • EVI: {area_data['EVI']:.3f}<br>
+        • Biomasa: {area_data['biomasa_estimada']:.1f} t/ha<br>
+        • Estrés hídrico: {area_data['estres_hidrico']:.1f}%
+        """
+        
+        folium.CircleMarker(
+            location=[area_data['lat'], area_data['lon']],
+            radius=size,
+            popup=folium.Popup(popup_text, max_width=300),
+            tooltip=f"{area_data['area']} - NDVI: {ndvi:.3f}",
+            color=color,
+            fillColor=color,
+            fillOpacity=0.7,
+            weight=2
+        ).add_to(veg_group)
+    
+    veg_group.add_to(m)
+    
+    # Capa de biodiversidad
+    bio_group = folium.FeatureGroup(name='🦜 Biodiversidad')
+    species_df = pd.DataFrame(species_data)
+    if not species_df.empty:
+        area_species_richness = species_df.groupby('area').agg({
+            'species': 'nunique',
+            'abundance': 'sum',
+            'lat': 'first',
+            'lon': 'first'
+        }).reset_index()
+        
+        for _, area_data in area_species_richness.iterrows():
+            richness = area_data['species']
+            abundance = area_data['abundance']
+            
+            if richness > 10:
+                bio_color = 'darkblue'
+                icon_color = 'blue'
+            elif richness > 5:
+                bio_color = 'blue'
+                icon_color = 'lightblue'
+            else:
+                bio_color = 'lightblue'
+                icon_color = 'white'
+            
+            popup_text = f"""
+            <b>{area_data['area']}</b><br>
+            <b>Biodiversidad:</b><br>
+            • Riqueza: {richness} especies<br>
+            • Abundancia: {abundance} individuos<br>
+            • Densidad: {abundance/100:.1f} ind/ha
+            """
+            
+            folium.Marker(
+                location=[area_data['lat'], area_data['lon']],
+                popup=folium.Popup(popup_text, max_width=300),
+                tooltip=f"{area_data['area']} - {richness} especies",
+                icon=folium.Icon(color=icon_color, icon='leaf', prefix='fa')
+            ).add_to(bio_group)
+    
+    bio_group.add_to(m)
+    
+    # Control de capas
+    folium.LayerControl().add_to(m)
+    
+    return m
+
+def create_ndvi_heatmap(spectral_data):
+    """Crear mapa de calor de NDVI"""
+    m = folium.Map(location=[-14.0, -60.0], zoom_start=4)
+    
+    # Agregar puntos de NDVI
+    for area_data in spectral_data:
+        ndvi = area_data['NDVI']
+        
+        # Color gradient basado en NDVI
+        if ndvi > 0.7:
+            color = '#006400'  # Dark green
+        elif ndvi > 0.5:
+            color = '#32CD32'  # Lime green
+        elif ndvi > 0.3:
+            color = '#FFFF00'  # Yellow
+        elif ndvi > 0.1:
+            color = '#FFA500'  # Orange
+        else:
+            color = '#FF0000'  # Red
+        
+        folium.Circle(
+            location=[area_data['lat'], area_data['lon']],
+            radius=5000,  # 5km radius
+            popup=f"NDVI: {ndvi:.3f}",
+            color=color,
+            fillColor=color,
+            fillOpacity=0.6,
+            weight=1
+        ).add_to(m)
+    
+    # Agregar leyenda
+    legend_html = '''
+    <div style="position: fixed; 
+                bottom: 50px; left: 50px; width: 200px; height: 150px; 
+                background-color: white; border:2px solid grey; z-index:9999; 
+                font-size:14px; padding: 10px">
+    <p><strong>Leyenda NDVI</strong></p>
+    <p><i style="background:#006400; width: 20px; height: 20px; display: inline-block;"></i> > 0.7 (Excelente)</p>
+    <p><i style="background:#32CD32; width: 20px; height: 20px; display: inline-block;"></i> 0.5-0.7 (Bueno)</p>
+    <p><i style="background:#FFFF00; width: 20px; height: 20px; display: inline-block;"></i> 0.3-0.5 (Regular)</p>
+    <p><i style="background:#FFA500; width: 20px; height: 20px; display: inline-block;"></i> 0.1-0.3 (Pobre)</p>
+    <p><i style="background:#FF0000; width: 20px; height: 20px; display: inline-block;"></i> < 0.1 (Muy pobre)</p>
+    </div>
+    '''
+    m.get_root().html.add_child(folium.Element(legend_html))
+    
+    return m
+
+# ===============================
+# 🚀 INICIALIZACIÓN DEL ESTADO
+# ===============================
+
+# Inicializar el estado de la sesión de forma segura
+def initialize_session_state():
+    """Inicializar el estado de la sesión de manera segura"""
+    if 'analysis_complete' not in st.session_state:
+        st.session_state.analysis_complete = False
+    if 'results' not in st.session_state:
+        st.session_state.results = None
+    if 'analyzer' not in st.session_state:
+        st.session_state.analyzer = IntegratedAnalyzer()
+
+# Llamar a la inicialización al inicio
+initialize_session_state()
+
 # ===============================
 # 📁 SIDEBAR DE CONFIGURACIÓN
 # ===============================
@@ -1003,16 +1016,8 @@ with st.sidebar:
     """)
 
 # ===============================
-# 🚀 INICIALIZACIÓN Y EJECUCIÓN
+# 🎯 EJECUCIÓN PRINCIPAL
 # ===============================
-
-# Inicializar session_state
-if 'analysis_complete' not in st.session_state:
-    st.session_state.analysis_complete = False
-if 'results' not in st.session_state:
-    st.session_state.results = None
-
-analyzer = IntegratedAnalyzer()
 
 # Procesar archivo subido
 if uploaded_file:
@@ -1036,11 +1041,12 @@ col4.metric("Análisis", analysis_depth)
 if st.button("🚀 EJECUTAR DIAGNÓSTICO INTEGRAL", type="primary", use_container_width=True):
     
     with st.spinner("Realizando análisis integral del territorio..."):
-        results = analyzer.comprehensive_analysis(area_count, vegetation_type, area_hectares)
+        results = st.session_state.analyzer.comprehensive_analysis(area_count, vegetation_type, area_hectares)
         st.session_state.results = results
         st.session_state.analysis_complete = True
     
     st.success("✅ Análisis completado exitosamente!")
+    st.rerun()  # Forzar actualización para mostrar resultados
 
 # Mostrar resultados si el análisis está completo
 if st.session_state.analysis_complete and st.session_state.results:
@@ -1123,7 +1129,7 @@ if st.session_state.analysis_complete and st.session_state.results:
         
         if results['lidar_data']:
             # Crear visualización 3D
-            lidar_3d = analyzer.lidar_analyzer.create_3d_visualization(
+            lidar_3d = st.session_state.analyzer.lidar_analyzer.create_3d_visualization(
                 results['lidar_data'], 
                 vegetation_type
             )
