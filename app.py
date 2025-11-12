@@ -130,34 +130,49 @@ class BiodiversityAnalyzer:
         # Conectividad ecológica (simulada)
         connectivity_score = self._calculate_connectivity(df)
         
+        # Estado de conservación
+        conservation_status = self._assess_conservation_status(df)
+        
+        # Especies clave
+        keystone_species = self._assess_keystone_species(df)
+        
+        # Regeneración natural
+        natural_regeneration = self._assess_natural_regeneration(df)
+        
         return {
             'diversidad_alfa': total_species,
-            'densidad_individuos': density_per_hectare,
+            'densidad_individuos': round(density_per_hectare, 2),
             'riqueza_especies': total_species,
             'especies_endemicas': endemic_species,
             'estructura_vertical': vertical_structure,
             'conectividad_ecologica': connectivity_score,
-            'estado_conservacion': self._assess_conservation_status(df),
-            'presencia_especies_clave': self._assess_keystone_species(df),
-            'regeneracion_natural': self._assess_natural_regeneration(df)
+            'estado_conservacion': conservation_status,
+            'presencia_especies_clave': keystone_species,
+            'regeneracion_natural': natural_regeneration
         }
     
     def _assess_vertical_structure(self, df):
         """Evaluar estructura vertical del bosque"""
         # Simulación basada en distribución de abundancias
         abundance_std = df['abundance'].std()
-        if abundance_std > df['abundance'].mean() * 0.8:
-            return "Estructura Compleja"
-        elif abundance_std > df['abundance'].mean() * 0.4:
-            return "Estructura Media"
+        mean_abundance = df['abundance'].mean()
+        
+        if mean_abundance == 0:
+            return "Indefinida"
+        
+        cv = abundance_std / mean_abundance
+        if cv > 0.8:
+            return "Compleja"
+        elif cv > 0.4:
+            return "Media"
         else:
-            return "Estructura Simple"
+            return "Simple"
     
     def _calculate_connectivity(self, df):
         """Calcular score de conectividad ecológica"""
         areas_count = df['area'].nunique()
         species_per_area = df.groupby('area')['species'].nunique().mean()
-        return min(100, (areas_count * species_per_area) / 10)
+        return min(100, (areas_count * species_per_area))
     
     def _assess_conservation_status(self, df):
         """Evaluar estado de conservación"""
@@ -184,11 +199,17 @@ class BiodiversityAnalyzer:
         return "Alta" if young_count > 20 else "Media" if young_count > 10 else "Baja"
     
     def _default_lemu_indicators(self):
-        return {key: 0 for key in [
-            'diversidad_alfa', 'densidad_individuos', 'riqueza_especies',
-            'especies_endemicas', 'estructura_vertical', 'conectividad_ecologica',
-            'estado_conservacion', 'presencia_especies_clave', 'regeneracion_natural'
-        ]}
+        return {
+            'diversidad_alfa': 0,
+            'densidad_individuos': 0.0,
+            'riqueza_especies': 0,
+            'especies_endemicas': 0,
+            'estructura_vertical': "Indefinida",
+            'conectividad_ecologica': 0,
+            'estado_conservacion': "Sin datos",
+            'presencia_especies_clave': "0/0",
+            'regeneracion_natural': "Sin datos"
+        }
 
 class VegetationIndexAnalyzer:
     """Analizador de índices de vegetación multiespectral"""
@@ -207,19 +228,23 @@ class VegetationIndexAnalyzer:
     
     def calculate_ndvi(self, nir, red):
         """Normalized Difference Vegetation Index"""
-        return (nir - red) / (nir + red + 1e-10)
+        denominator = nir + red + 1e-10
+        return (nir - red) / denominator
     
     def calculate_ndwi(self, nir, swir):
         """Normalized Difference Water Index"""
-        return (nir - swir) / (nir + swir + 1e-10)
+        denominator = nir + swir + 1e-10
+        return (nir - swir) / denominator
     
     def calculate_evi(self, nir, red, blue):
         """Enhanced Vegetation Index"""
-        return 2.5 * (nir - red) / (nir + 6 * red - 7.5 * blue + 1)
+        denominator = nir + 6 * red - 7.5 * blue + 1
+        return 2.5 * (nir - red) / denominator
     
     def calculate_savi(self, nir, red, L=0.5):
         """Soil Adjusted Vegetation Index"""
-        return ((nir - red) / (nir + red + L)) * (1 + L)
+        denominator = nir + red + L + 1e-10
+        return ((nir - red) / denominator) * (1 + L)
     
     def calculate_rvi(self, nir, red):
         """Ratio Vegetation Index"""
@@ -227,15 +252,18 @@ class VegetationIndexAnalyzer:
     
     def calculate_ndre(self, nir, red_edge):
         """Normalized Difference Red Edge"""
-        return (nir - red_edge) / (nir + red_edge + 1e-10)
+        denominator = nir + red_edge + 1e-10
+        return (nir - red_edge) / denominator
     
     def calculate_gndvi(self, nir, green):
         """Green Normalized Difference Vegetation Index"""
-        return (nir - green) / (nir + green + 1e-10)
+        denominator = nir + green + 1e-10
+        return (nir - green) / denominator
     
     def calculate_osavi(self, nir, red, L=0.16):
         """Optimized Soil Adjusted Vegetation Index"""
-        return (nir - red) / (nir + red + L + 1e-10)
+        denominator = nir + red + L + 1e-10
+        return (nir - red) / denominator
     
     def simulate_spectral_data(self, area_count, vegetation_type):
         """Simular datos espectrales para diferentes tipos de vegetación"""
@@ -248,6 +276,7 @@ class VegetationIndexAnalyzer:
             'Herbazal Natural': {'ndvi': 0.5, 'ndwi': 0.05, 'evi': 0.3}
         }
         
+        # Valor por defecto si no se encuentra el tipo de vegetación
         base = base_values.get(vegetation_type, {'ndvi': 0.4, 'ndwi': 0.0, 'evi': 0.2})
         
         for area_idx in range(area_count):
@@ -297,20 +326,23 @@ class IntegratedAnalyzer:
         
         # Calcular métricas de biodiversidad
         df_species = pd.DataFrame(species_data)
-        species_abundances = df_species.groupby('species')['abundance'].sum().values
+        if not df_species.empty:
+            species_abundances = df_species.groupby('species')['abundance'].sum().values
+            total_individuals = sum(species_abundances)
+            richness = self.bio_analyzer.species_richness(species_abundances)
+            shannon = self.bio_analyzer.shannon_index(species_abundances)
+        else:
+            species_abundances = np.array([])
+            total_individuals = 0
+            richness = 0
+            shannon = 0.0
         
         biodiversity_metrics = {
-            'shannon_index': self.bio_analyzer.shannon_index(species_abundances),
-            'species_richness': self.bio_analyzer.species_richness(species_abundances),
-            'evenness': self.bio_analyzer.evenness(
-                self.bio_analyzer.shannon_index(species_abundances),
-                self.bio_analyzer.species_richness(species_abundances)
-            ),
+            'shannon_index': shannon,
+            'species_richness': richness,
+            'evenness': self.bio_analyzer.evenness(shannon, richness),
             'simpson_index': self.bio_analyzer.simpson_index(species_abundances),
-            'margalef_index': self.bio_analyzer.margalef_index(
-                self.bio_analyzer.species_richness(species_abundances),
-                sum(species_abundances)
-            )
+            'margalef_index': self.bio_analyzer.margalef_index(richness, total_individuals)
         }
         
         # Calcular indicadores LE.MU
@@ -320,11 +352,10 @@ class IntegratedAnalyzer:
         
         # Calcular promedios de índices de vegetación
         df_spectral = pd.DataFrame(spectral_data)
-        vegetation_metrics = {
-            index: df_spectral[index].mean() for index in [
-                'NDVI', 'NDWI', 'EVI', 'SAVI', 'RVI', 'NDRE', 'GNDVI', 'OSAVI'
-            ]
-        }
+        vegetation_metrics = {}
+        for index in ['NDVI', 'NDWI', 'EVI', 'SAVI', 'RVI', 'NDRE', 'GNDVI', 'OSAVI']:
+            if index in df_spectral.columns:
+                vegetation_metrics[index] = df_spectral[index].mean()
         
         # Métricas integradas
         integrated_scores = self._calculate_integrated_scores(
@@ -356,9 +387,14 @@ class IntegratedAnalyzer:
         else:
             ecosystem = 'Herbáceas'
         
+        available_species = self.bio_analyzer.species_pool.get(ecosystem, [])
+        if not available_species:
+            available_species = ['Especie generalista']
+        
+        num_species = min(12, len(available_species))
         selected_species = np.random.choice(
-            self.bio_analyzer.species_pool[ecosystem],
-            size=min(12, len(self.bio_analyzer.species_pool[ecosystem])),
+            available_species,
+            size=num_species,
             replace=False
         )
         
@@ -371,6 +407,9 @@ class IntegratedAnalyzer:
                     abundance = np.random.poisson(20) + 10
                 else:
                     abundance = np.random.poisson(15) + 5
+                
+                # Asegurar que la abundancia sea al menos 1
+                abundance = max(1, abundance)
                 
                 species_data.append({
                     'species': species,
@@ -386,41 +425,76 @@ class IntegratedAnalyzer:
     def _calculate_integrated_scores(self, bio_metrics, veg_metrics, lemu_indicators):
         """Calcular scores integrados de salud del ecosistema"""
         
-        # Score de biodiversidad (0-100)
-        biodiversity_score = min(100, (
-            bio_metrics['shannon_index'] * 20 +
-            bio_metrics['species_richness'] * 2 +
-            lemu_indicators['diversidad_alfa'] * 3
-        ))
-        
-        # Score de vegetación (0-100)
-        vegetation_score = min(100, (
-            veg_metrics['NDVI'] * 60 +
-            veg_metrics['EVI'] * 40 +
-            (1 - veg_metrics['NDWI']) * 20  # Menos estrés hídrico = mejor
-        ))
-        
-        # Score de conservación (0-100)
-        conservation_score = min(100, (
-            lemu_indicators['conectividad_ecologica'] +
-            lemu_indicators['estructura_vertical'] * 10 +  # Valor simbólico
-            lemu_indicators['presencia_especies_clave'].split('/')[0] * 15
-        ))
-        
-        # Score integral de salud del ecosistema
-        ecosystem_health = (
-            biodiversity_score * 0.4 +
-            vegetation_score * 0.4 +
-            conservation_score * 0.2
-        )
-        
-        return {
-            'biodiversity_score': biodiversity_score,
-            'vegetation_score': vegetation_score,
-            'conservation_score': conservation_score,
-            'ecosystem_health': ecosystem_health,
-            'overall_rating': self._get_rating(ecosystem_health)
-        }
+        try:
+            # Score de biodiversidad (0-100)
+            biodiversity_score = min(100, (
+                bio_metrics['shannon_index'] * 20 +
+                bio_metrics['species_richness'] * 2 +
+                lemu_indicators['diversidad_alfa'] * 3
+            ))
+            
+            # Score de vegetación (0-100)
+            ndvi_score = veg_metrics.get('NDVI', 0) * 100
+            evi_score = veg_metrics.get('EVI', 0) * 125  # EVI normalmente va de 0-0.8
+            ndwi_penalty = (1 - veg_metrics.get('NDWI', 0)) * 20
+            
+            vegetation_score = min(100, (
+                ndvi_score * 0.6 +
+                evi_score * 0.4 -
+                ndwi_penalty
+            ))
+            
+            # Score de conservación (0-100) - Solo usar valores numéricos
+            conservation_numeric = 0
+            conservation_numeric += lemu_indicators['conectividad_ecologica']
+            
+            # Convertir estructura vertical a valor numérico
+            estructura_valor = {
+                "Compleja": 30,
+                "Media": 20, 
+                "Simple": 10,
+                "Indefinida": 0
+            }.get(lemu_indicators['estructura_vertical'], 0)
+            
+            # Convertir especies clave a valor numérico
+            especies_clave_str = lemu_indicators['presencia_especies_clave']
+            try:
+                especies_presentes = int(especies_clave_str.split('/')[0])
+                especies_clave_valor = especies_presentes * 15
+            except:
+                especies_clave_valor = 0
+            
+            conservation_score = min(100, (
+                conservation_numeric +
+                estructura_valor +
+                especies_clave_valor
+            ))
+            
+            # Score integral de salud del ecosistema
+            ecosystem_health = (
+                biodiversity_score * 0.4 +
+                vegetation_score * 0.4 +
+                conservation_score * 0.2
+            )
+            
+            return {
+                'biodiversity_score': round(biodiversity_score, 1),
+                'vegetation_score': round(vegetation_score, 1),
+                'conservation_score': round(conservation_score, 1),
+                'ecosystem_health': round(ecosystem_health, 1),
+                'overall_rating': self._get_rating(ecosystem_health)
+            }
+            
+        except Exception as e:
+            # En caso de error, retornar scores por defecto
+            st.warning(f"Error calculando scores integrados: {e}")
+            return {
+                'biodiversity_score': 0,
+                'vegetation_score': 0,
+                'conservation_score': 0,
+                'ecosystem_health': 0,
+                'overall_rating': "Sin datos"
+            }
     
     def _get_rating(self, score):
         """Convertir score a rating cualitativo"""
@@ -434,6 +508,165 @@ class IntegratedAnalyzer:
             return "Precario"
         else:
             return "Crítico"
+
+# ===============================
+# 🛠️ FUNCIONES AUXILIARES
+# ===============================
+
+def categorize_lemu_indicator(indicator, value):
+    """Categorizar indicadores LE.MU"""
+    if indicator == 'estado_conservacion':
+        return value
+    elif indicator == 'estructura_vertical':
+        return value
+    elif indicator == 'regeneracion_natural':
+        return value
+    elif isinstance(value, (int, float)):
+        if value >= 80: return "Excelente"
+        elif value >= 60: return "Bueno"
+        elif value >= 40: return "Regular"
+        else: return "Mejorable"
+    return "N/A"
+
+def interpret_vegetation_index(index, value):
+    """Interpretar valores de índices de vegetación"""
+    interpretations = {
+        'NDVI': {
+            (0.8, 1.0): "Vegetación muy densa y saludable",
+            (0.6, 0.8): "Vegetación densa",
+            (0.4, 0.6): "Vegetación moderada", 
+            (0.2, 0.4): "Vegetación escasa",
+            (0.0, 0.2): "Suelo desnudo/vegetación muy escasa",
+            (-1.0, 0.0): "Agua/sin vegetación"
+        },
+        'EVI': {
+            (0.6, 1.0): "Alto vigor vegetal",
+            (0.4, 0.6): "Vigor vegetal moderado",
+            (0.2, 0.4): "Vigor vegetal bajo",
+            (0.0, 0.2): "Vigor muy bajo"
+        },
+        'NDWI': {
+            (0.3, 1.0): "Alto contenido de agua",
+            (0.1, 0.3): "Contenido moderado de agua",
+            (-0.1, 0.1): "Bajo contenido de agua",
+            (-1.0, -0.1): "Sequía/ausencia de agua"
+        }
+    }
+    
+    if index in interpretations:
+        for range_val, interpretation in interpretations[index].items():
+            if range_val[0] <= value <= range_val[1]:
+                return interpretation
+    
+    return "Valor fuera de rango típico"
+
+def create_lemu_radar_chart(lemu_indicators):
+    """Crear gráfico radar para indicadores LE.MU"""
+    try:
+        # Seleccionar y procesar indicadores numéricos
+        numeric_data = {}
+        
+        # Procesar cada indicador
+        for key, value in lemu_indicators.items():
+            if key == 'conectividad_ecologica':
+                numeric_data['Conectividad'] = min(100, value)
+            elif key == 'diversidad_alfa':
+                numeric_data['Diversidad'] = min(50, value) * 2  # Escalar a 100
+            elif key == 'densidad_individuos':
+                numeric_data['Densidad'] = min(100, value)
+            elif key == 'riqueza_especies':
+                numeric_data['Riqueza'] = min(50, value) * 2  # Escalar a 100
+            elif key == 'especies_endemicas':
+                numeric_data['Endemismos'] = min(100, value * 10)  # Escalar
+        
+        # Si no hay suficientes datos, usar valores por defecto
+        if len(numeric_data) < 3:
+            default_indicators = ['Conectividad', 'Diversidad', 'Riqueza', 'Densidad', 'Endemismos']
+            for indicator in default_indicators:
+                if indicator not in numeric_data:
+                    numeric_data[indicator] = 0
+        
+        categories = list(numeric_data.keys())
+        values = list(numeric_data.values())
+        
+        # Cerrar el círculo para el radar
+        values_radar = values + [values[0]]
+        categories_radar = categories + [categories[0]]
+        
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatterpolar(
+            r=values_radar,
+            theta=categories_radar,
+            fill='toself',
+            name='Indicadores LE.MU',
+            line=dict(color='green', width=2),
+            fillcolor='rgba(0, 128, 0, 0.3)'
+        ))
+        
+        fig.update_layout(
+            polar=dict(
+                radialaxis=dict(
+                    visible=True,
+                    range=[0, 100]
+                )),
+            showlegend=False,
+            title="Indicadores LE.MU - Perfil de Conservación"
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+    except Exception as e:
+        st.warning(f"No se pudo generar el gráfico radar: {e}")
+
+def generate_recommendations(results):
+    """Generar recomendaciones basadas en los resultados"""
+    recommendations = []
+    
+    # Analizar biodiversidad
+    shannon = results['biodiversity_metrics']['shannon_index']
+    if shannon < 2.0:
+        recommendations.append({
+            'title': 'Mejorar Diversidad de Especies',
+            'description': 'Considerar enriquecimiento con especies nativas y restauración de hábitats. Implementar programas de reforestación con especies diversas.',
+            'priority': 85
+        })
+    
+    # Analizar vegetación
+    ndvi = results['vegetation_metrics'].get('NDVI', 0)
+    if ndvi < 0.4:
+        recommendations.append({
+            'title': 'Mejorar Cobertura Vegetal',
+            'description': 'Implementar prácticas de conservación de suelos, reforestación y manejo sostenible de la vegetación.',
+            'priority': 90
+        })
+    
+    # Analizar conectividad
+    connectivity = results['lemu_indicators']['conectividad_ecologica']
+    if connectivity < 60:
+        recommendations.append({
+            'title': 'Incrementar Conectividad Ecológica',
+            'description': 'Establecer corredores biológicos, reducir fragmentación y conectar áreas naturales remanentes.',
+            'priority': 75
+        })
+    
+    # Analizar regeneración
+    regeneration = results['lemu_indicators']['regeneracion_natural']
+    if regeneration == "Baja":
+        recommendations.append({
+            'title': 'Fomentar Regeneración Natural',
+            'description': 'Reducir perturbaciones, controlar especies invasoras y promover bancos de semillas nativas.',
+            'priority': 70
+        })
+    
+    # Recomendación general de monitoreo
+    recommendations.append({
+        'title': 'Establecer Programa de Monitoreo',
+        'description': 'Implementar monitoreo periódico para evaluar cambios en biodiversidad y salud del ecosistema.',
+        'priority': 60
+    })
+    
+    return sorted(recommendations, key=lambda x: x['priority'], reverse=True)
 
 # ===============================
 # 📁 SIDEBAR DE CONFIGURACIÓN
@@ -533,21 +766,23 @@ if st.button("🚀 EJECUTAR DIAGNÓSTICO INTEGRAL", type="primary", use_containe
         )
     
     with col2:
+        shannon = results['biodiversity_metrics']['shannon_index']
         st.metric(
             "Diversidad (Shannon)",
-            f"{results['biodiversity_metrics']['shannon_index']:.3f}",
-            "Alta" if results['biodiversity_metrics']['shannon_index'] > 2.5 else "Media"
+            f"{shannon:.3f}",
+            "Alta" if shannon > 2.5 else "Media" if shannon > 1.5 else "Baja"
         )
     
     with col3:
+        richness = results['biodiversity_metrics']['species_richness']
         st.metric(
             "Riqueza de Especies",
-            results['biodiversity_metrics']['species_richness'],
+            richness,
             f"Área: {area_hectares} ha"
         )
     
     with col4:
-        ndvi = results['vegetation_metrics']['NDVI']
+        ndvi = results['vegetation_metrics'].get('NDVI', 0)
         st.metric(
             "Vigor Vegetal (NDVI)",
             f"{ndvi:.3f}",
@@ -568,31 +803,38 @@ if st.button("🚀 EJECUTAR DIAGNÓSTICO INTEGRAL", type="primary", use_containe
         with col1:
             st.markdown("**📊 Métricas de Diversidad**")
             metrics_df = pd.DataFrame([
-                {"Métrica": "Índice de Shannon", "Valor": results['biodiversity_metrics']['shannon_index']},
+                {"Métrica": "Índice de Shannon", "Valor": f"{results['biodiversity_metrics']['shannon_index']:.3f}"},
                 {"Métrica": "Riqueza de Especies", "Valor": results['biodiversity_metrics']['species_richness']},
-                {"Métrica": "Equitatividad", "Valor": results['biodiversity_metrics']['evenness']},
-                {"Métrica": "Índice de Simpson", "Valor": results['biodiversity_metrics']['simpson_index']},
-                {"Métrica": "Índice de Margalef", "Valor": results['biodiversity_metrics']['margalef_index']}
+                {"Métrica": "Equitatividad", "Valor": f"{results['biodiversity_metrics']['evenness']:.3f}"},
+                {"Métrica": "Índice de Simpson", "Valor": f"{results['biodiversity_metrics']['simpson_index']:.3f}"},
+                {"Métrica": "Índice de Margalef", "Valor": f"{results['biodiversity_metrics']['margalef_index']:.3f}"}
             ])
             st.dataframe(metrics_df, use_container_width=True, hide_index=True)
         
         with col2:
             st.markdown("**📈 Distribución de Abundancia**")
             species_summary = results['raw_data']['species_df'].groupby('species')['abundance'].sum().reset_index()
-            fig = px.pie(species_summary, values='abundance', names='species', 
-                        title="Composición de Especies")
-            st.plotly_chart(fig, use_container_width=True)
+            if not species_summary.empty:
+                fig = px.pie(species_summary, values='abundance', names='species', 
+                            title="Composición de Especies")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No hay datos de especies disponibles")
     
     with tab2:
         st.markdown("**🪴 Composición de Especies por Área**")
-        pivot_df = results['raw_data']['species_df'].pivot_table(
-            index='species', columns='area', values='abundance', fill_value=0
-        )
-        st.dataframe(pivot_df, use_container_width=True)
-        
-        # Heatmap de abundancia
-        fig = px.imshow(pivot_df, aspect='auto', title="Mapa de Calor de Abundancia por Especie y Área")
-        st.plotly_chart(fig, use_container_width=True)
+        if not results['raw_data']['species_df'].empty:
+            pivot_df = results['raw_data']['species_df'].pivot_table(
+                index='species', columns='area', values='abundance', fill_value=0
+            )
+            st.dataframe(pivot_df, use_container_width=True)
+            
+            # Heatmap de abundancia
+            fig = px.imshow(pivot_df, aspect='auto', 
+                           title="Mapa de Calor de Abundancia por Especie y Área")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No hay datos de especies disponibles")
     
     with tab3:
         st.markdown("**🔍 Indicadores LE.MU de Conservación**")
@@ -601,15 +843,15 @@ if st.button("🚀 EJECUTAR DIAGNÓSTICO INTEGRAL", type="primary", use_containe
         for indicator, value in results['lemu_indicators'].items():
             lemu_data.append({
                 "Indicador": indicator.replace('_', ' ').title(),
-                "Valor": value,
-                "Categoría": self._categorize_lemu_indicator(indicator, value)
+                "Valor": str(value),
+                "Categoría": categorize_lemu_indicator(indicator, value)
             })
         
         lemu_df = pd.DataFrame(lemu_data)
         st.dataframe(lemu_df, use_container_width=True, hide_index=True)
         
         # Radar chart para indicadores LE.MU
-        self._create_lemu_radar_chart(results['lemu_indicators'])
+        create_lemu_radar_chart(results['lemu_indicators'])
     
     # ===============================
     # 🛰️ ANÁLISIS DE VEGETACIÓN
@@ -629,7 +871,7 @@ if st.button("🚀 EJECUTAR DIAGNÓSTICO INTEGRAL", type="primary", use_containe
                 veg_metrics.append({
                     "Índice": index,
                     "Valor": f"{value:.4f}",
-                    "Interpretación": self._interpret_vegetation_index(index, value)
+                    "Interpretación": interpret_vegetation_index(index, value)
                 })
             veg_df = pd.DataFrame(veg_metrics)
             st.dataframe(veg_df, use_container_width=True, hide_index=True)
@@ -731,13 +973,12 @@ if st.button("🚀 EJECUTAR DIAGNÓSTICO INTEGRAL", type="primary", use_containe
     
     st.subheader("💡 RECOMENDACIONES DE MANEJO Y CONSERVACIÓN")
     
-    recommendations = self._generate_recommendations(results)
+    recommendations = generate_recommendations(results)
     
     for i, rec in enumerate(recommendations, 1):
-        with st.expander(f"Recomendación {i}: {rec['title']}"):
+        with st.expander(f"Recomendación {i}: {rec['title']} (Prioridad: {rec['priority']}/100)"):
             st.write(rec['description'])
             st.progress(rec['priority'] / 100)
-            st.caption(f"Prioridad: {rec['priority']}/100")
     
     # ===============================
     # 📥 EXPORTACIÓN DE RESULTADOS
@@ -753,7 +994,19 @@ if st.button("🚀 EJECUTAR DIAGNÓSTICO INTEGRAL", type="primary", use_containe
     
     with col2:
         if st.button("📊 Exportar Datos Excel", use_container_width=True):
-            st.success("✅ Datos exportados a Excel (simulación)")
+            # Crear un archivo Excel simulado
+            from io import BytesIO
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                pd.DataFrame(results['species_data']).to_excel(writer, sheet_name='Especies', index=False)
+                pd.DataFrame(results['spectral_data']).to_excel(writer, sheet_name='Vegetación', index=False)
+                pd.DataFrame([results['biodiversity_metrics']]).to_excel(writer, sheet_name='Métricas', index=False)
+            st.download_button(
+                label="📥 Descargar Excel",
+                data=output.getvalue(),
+                file_name=f"diagnostico_biodiversidad_{pd.Timestamp.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.ms-excel"
+            )
     
     with col3:
         if st.button("🗺️ Exportar Capas GIS", use_container_width=True):
@@ -776,7 +1029,7 @@ else:
     
     1. Configura los parámetros en la **barra lateral** ←
     2. Sube tu archivo territorial (opcional)
-    3. Presiona ****EJECUTAR DIAGNÓSTICO INTEGRAL****
+    3. Presiona **EJECUTAR DIAGNÓSTICO INTEGRAL**
     
     ---
     
@@ -786,151 +1039,6 @@ else:
     - 🛰️ **Teledetección**: Índices de vegetación multiespectral
     - 🔗 **Análisis integral**: Salud completa del ecosistema
     """)
-
-# ===============================
-# 🛠️ MÉTODOS AUXILIARES
-# ===============================
-
-def _categorize_lemu_indicator(self, indicator, value):
-    """Categorizar indicadores LE.MU"""
-    if indicator == 'estado_conservacion':
-        return value
-    elif indicator == 'estructura_vertical':
-        return value
-    elif indicator == 'regeneracion_natural':
-        return value
-    elif isinstance(value, (int, float)):
-        if value >= 80: return "Excelente"
-        elif value >= 60: return "Bueno"
-        elif value >= 40: return "Regular"
-        else: return "Mejorable"
-    return "N/A"
-
-def _interpret_vegetation_index(self, index, value):
-    """Interpretar valores de índices de vegetación"""
-    interpretations = {
-        'NDVI': {
-            (0.8, 1.0): "Vegetación muy densa y saludable",
-            (0.6, 0.8): "Vegetación densa",
-            (0.4, 0.6): "Vegetación moderada", 
-            (0.2, 0.4): "Vegetación escasa",
-            (0.0, 0.2): "Suelo desnudo/vegetación muy escasa",
-            (-1.0, 0.0): "Agua/sin vegetación"
-        },
-        'EVI': {
-            (0.6, 1.0): "Alto vigor vegetal",
-            (0.4, 0.6): "Vigor vegetal moderado",
-            (0.2, 0.4): "Vigor vegetal bajo",
-            (0.0, 0.2): "Vigor muy bajo"
-        },
-        'NDWI': {
-            (0.3, 1.0): "Alto contenido de agua",
-            (0.1, 0.3): "Contenido moderado de agua",
-            (-0.1, 0.1): "Bajo contenido de agua",
-            (-1.0, -0.1): "Sequía/ausencia de agua"
-        }
-    }
-    
-    if index in interpretations:
-        for range_val, interpretation in interpretations[index].items():
-            if range_val[0] <= value <= range_val[1]:
-                return interpretation
-    
-    return "Valor fuera de rango típico"
-
-def _create_lemu_radar_chart(self, lemu_indicators):
-    """Crear gráfico radar para indicadores LE.MU"""
-    try:
-        # Seleccionar indicadores numéricos para el radar
-        numeric_indicators = {
-            'Diversidad Alfa': lemu_indicators['diversidad_alfa'],
-            'Densidad': lemu_indicators['densidad_individuos'],
-            'Riqueza': lemu_indicators['riqueza_especies'], 
-            'Endemismos': lemu_indicators['especies_endemicas'],
-            'Conectividad': lemu_indicators['conectividad_ecologica']
-        }
-        
-        categories = list(numeric_indicators.keys())
-        values = list(numeric_indicators.values())
-        
-        # Normalizar valores para el radar (0-100)
-        max_vals = [50, 100, 50, 10, 100]  # Valores máximos esperados
-        normalized_values = [min(100, (v / max_v) * 100) for v, max_v in zip(values, max_vals)]
-        
-        fig = go.Figure()
-        
-        fig.add_trace(go.Scatterpolar(
-            r=normalized_values + [normalized_values[0]],  # Cerrar el círculo
-            theta=categories + [categories[0]],
-            fill='toself',
-            name='Indicadores LE.MU',
-            line=dict(color='green', width=2),
-            fillcolor='rgba(0, 128, 0, 0.3)'
-        ))
-        
-        fig.update_layout(
-            polar=dict(
-                radialaxis=dict(
-                    visible=True,
-                    range=[0, 100]
-                )),
-            showlegend=False,
-            title="Indicadores LE.MU - Perfil de Conservación"
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-    except Exception as e:
-        st.warning(f"No se pudo generar el gráfico radar: {e}")
-
-def _generate_recommendations(self, results):
-    """Generar recomendaciones basadas en los resultados"""
-    recommendations = []
-    
-    # Analizar biodiversidad
-    shannon = results['biodiversity_metrics']['shannon_index']
-    if shannon < 2.0:
-        recommendations.append({
-            'title': 'Mejorar Diversidad de Especies',
-            'description': 'Considerar enriquecimiento con especies nativas y restauración de hábitats.',
-            'priority': 85
-        })
-    
-    # Analizar vegetación
-    ndvi = results['vegetation_metrics']['NDVI']
-    if ndvi < 0.4:
-        recommendations.append({
-            'title': 'Mejorar Cobertura Vegetal',
-            'description': 'Implementar prácticas de conservación de suelos y reforestación.',
-            'priority': 90
-        })
-    
-    # Analizar conectividad
-    connectivity = results['lemu_indicators']['conectividad_ecologica']
-    if connectivity < 60:
-        recommendations.append({
-            'title': 'Incrementar Conectividad Ecológica',
-            'description': 'Establecer corredores biológicos y reducir fragmentación.',
-            'priority': 75
-        })
-    
-    # Analizar regeneración
-    regeneration = results['lemu_indicators']['regeneracion_natural']
-    if regeneration == "Baja":
-        recommendations.append({
-            'title': 'Fomentar Regeneración Natural',
-            'description': 'Reducir perturbaciones y promover bancos de semillas nativas.',
-            'priority': 70
-        })
-    
-    # Recomendación general de monitoreo
-    recommendations.append({
-        'title': 'Establecer Programa de Monitoreo',
-        'description': 'Implementar monitoreo periódico para evaluar cambios en el tiempo.',
-        'priority': 60
-    })
-    
-    return sorted(recommendations, key=lambda x: x['priority'], reverse=True)
 
 # Footer
 st.markdown("---")
