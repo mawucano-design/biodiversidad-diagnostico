@@ -1,23 +1,48 @@
-# 🌿 Atlas de Biodiversidad (LE.MU + Shannon)
+# Diagnóstico de Biodiversidad Ambiental de un Territorio
 
-Aplicación interactiva en Streamlit basada en la metodología [LE.MU Atlas](https://www.le.mu/atlas/)  
-e incorporando el **Índice de Shannon-Wiener** para evaluar la diversidad biológica por áreas.
+## 🌿 Descripción
 
-## 🚀 Características
+Sistema integral de evaluación ambiental que combina la metodología **LE.MU Atlas** con **índices de vegetación multiespectral** y **métricas de biodiversidad** para un análisis completo del territorio.
 
-- Carga de archivos **KML** o **Shapefile (ZIP)**
-- Cálculo de:
-  - Índice de Shannon
-  - Riqueza de especies
-  - Equitatividad (Pielou)
-  - Índice de Simpson
-- Visualización:
-  - Mapa base **ESRI Satellite**
-  - Gráficos de abundancia y riqueza
-  - Capa **LiDAR 3D (Pydeck)**
-- 100 % en línea, sin instalación local.
+## 🚀 Características Principales
 
-## 📦 Instalación local (opcional)
+### 📊 Análisis de Biodiversidad
+- **Índice de Shannon-Wiener**: Diversidad de especies
+- **Riqueza de Especies**: Número total de especies
+- **Equitatividad de Pielou**: Distribución uniforme
+- **Índice de Simpson**: Dominancia de especies
+- **Índice de Margalef**: Riqueza relativa
+
+### 🛰️ Índices de Vegetación
+- **NDVI** (Normalized Difference Vegetation Index)
+- **NDWI** (Normalized Difference Water Index) 
+- **EVI** (Enhanced Vegetation Index)
+- **SAVI** (Soil Adjusted Vegetation Index)
+- **RVI** (Ratio Vegetation Index)
+- **NDRE** (Normalized Difference Red Edge)
+- **GNDVI** (Green Normalized Difference Vegetation Index)
+- **OSAVI** (Optimized Soil Adjusted Vegetation Index)
+
+### 🔍 Indicadores LE.MU
+- Diversidad Alfa
+- Densidad de Individuos
+- Riqueza de Especies
+- Especies Endémicas
+- Estructura Vertical
+- Conectividad Ecológica
+- Estado de Conservación
+- Especies Clave
+- Regeneración Natural
+
+## 📁 Instalación
+
 ```bash
+# Clonar el repositorio
+git clone https://github.com/tu-usuario/diagnostico-biodiversidad.git
+cd diagnostico-biodiversidad
+
+# Instalar dependencias
 pip install -r requirements.txt
+
+# Ejecutar la aplicación
 streamlit run app.py
