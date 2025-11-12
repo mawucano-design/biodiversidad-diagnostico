@@ -11,6 +11,7 @@ import seaborn as sns
 import plotly.express as px
 import plotly.graph_objects as go
 from io import BytesIO
+from datetime import datetime, timedelta
 
 # Librerías para análisis geoespacial
 import folium
@@ -35,925 +36,556 @@ st.set_page_config(
 st.title("🌍 Diagnóstico de Biodiversidad Ambiental de un Territorio")
 st.markdown("""
 **Sistema integral de evaluación ambiental** que combina la metodología **LE.MU Atlas** con  
-**Índices de Vegetación**, **Métricas de Biodiversidad** y **Visualización 3D LiDAR** para un análisis completo del territorio.
+**Indicadores clave de ecosistemas**: Biodiversidad, Carbono, Vegetación, Agua, Clima y Riesgos.
 """)
 
 # ===============================
-# 🧩 CLASES DE ANÁLISIS
+# 🧩 CLASES DE ANÁLISIS MEJORADAS
 # ===============================
 
-class BiodiversityAnalyzer:
-    """Analizador completo de biodiversidad LE.MU + Shannon"""
+class CarbonAnalyzer:
+    """Analizador de captura y almacenamiento de carbono"""
     
     def __init__(self):
-        self.species_pool = self._load_species_pool()
-        self.vegetation_types = [
-            'Bosque Denso Primario', 'Bosque Secundario', 'Bosque Ripario',
-            'Matorral Denso', 'Matorral Abierto', 'Sabana Arborizada',
-            'Herbazal Natural', 'Zona de Transición', 'Área de Restauración'
-        ]
-    
-    def _load_species_pool(self):
-        """Cargar pool de especies basado en ecosistemas latinoamericanos"""
-        return {
-            'Bosques': [
-                'Handroanthus chrysanthus', 'Ceiba pentandra', 'Ficus insipida',
-                'Ocotea quixos', 'Erythrina edulis', 'Inga edulis',
-                'Cedrela odorata', 'Swietenia macrophylla', 'Brosimum utile',
-                'Virola sebifera', 'Iriartea deltoidea', 'Socratea exorrhiza'
-            ],
-            'Matorrales': [
-                'Baccharis latifolia', 'Dodonaea viscosa', 'Lantana camara',
-                'Croton lechleri', 'Piper spp', 'Psychotria spp',
-                'Miconia spp', 'Tibouchina spp', 'Gaultheria spp'
-            ],
-            'Herbáceas': [
-                'Paspalum spp', 'Axonopus spp', 'Setaria spp',
-                'Eragrostis spp', 'Cyperus spp', 'Eleocharis spp',
-                'Lycopodium spp', 'Selaginella spp'
-            ]
+        self.carbon_stock_values = {
+            'Bosque Denso Primario': {'min': 150, 'max': 300},
+            'Bosque Secundario': {'min': 80, 'max': 150},
+            'Bosque Ripario': {'min': 120, 'max': 200},
+            'Matorral Denso': {'min': 30, 'max': 60},
+            'Matorral Abierto': {'min': 15, 'max': 30},
+            'Sabana Arborizada': {'min': 20, 'max': 40},
+            'Herbazal Natural': {'min': 5, 'max': 15},
+            'Zona de Transición': {'min': 10, 'max': 25},
+            'Área de Restauración': {'min': 25, 'max': 80}
         }
     
-    def shannon_index(self, abundances):
-        """Índice de Shannon-Wiener para diversidad de especies"""
-        total = sum(abundances)
-        if total == 0:
-            return 0.0
-        proportions = [a / total for a in abundances if a > 0]
-        return -sum(p * math.log(p) for p in proportions)
-    
-    def simpson_index(self, abundances):
-        """Índice de Simpson para dominancia"""
-        total = sum(abundances)
-        if total == 0:
-            return 0.0
-        return sum((a / total) ** 2 for a in abundances)
-    
-    def species_richness(self, abundances):
-        """Riqueza de especies"""
-        return sum(1 for a in abundances if a > 0)
-    
-    def evenness(self, shannon_index, richness):
-        """Equitatividad de Pielou"""
-        if richness <= 1:
-            return 1.0
-        return shannon_index / math.log(richness)
-    
-    def margalef_index(self, richness, total_individuals):
-        """Índice de Margalef para riqueza relativa"""
-        if total_individuals == 0:
-            return 0.0
-        return (richness - 1) / math.log(total_individuals)
-    
-    def calculate_lemu_indicators(self, species_data, area_hectares):
-        """Calcular indicadores LE.MU personalizados"""
-        df = pd.DataFrame(species_data)
+    def calculate_carbon_potential(self, vegetation_type, area_hectares, ndvi):
+        """Calcular potencial de captura de CO2 basado en tipo de vegetación y NDVI"""
+        carbon_params = self.carbon_stock_values.get(vegetation_type, {'min': 10, 'max': 20})
+        base_carbon = np.random.uniform(carbon_params['min'], carbon_params['max'])
         
-        if df.empty:
-            return self._default_lemu_indicators()
+        # Ajustar por salud de la vegetación (NDVI)
+        carbon_adjusted = base_carbon * (0.5 + ndvi * 0.5)
         
-        # Métricas básicas
-        total_species = df['species'].nunique()
-        total_abundance = df['abundance'].sum()
-        endemic_species = len([s for s in df['species'].unique() if 'endemica' in s.lower()])
-        
-        # Calcular densidad por hectárea
-        density_per_hectare = total_abundance / area_hectares if area_hectares > 0 else total_abundance
-        
-        # Estructura vertical (simulada basada en tipos de vegetación)
-        vertical_structure = self._assess_vertical_structure(df)
-        
-        # Conectividad ecológica (simulada)
-        connectivity_score = self._calculate_connectivity(df)
-        
-        # Estado de conservación
-        conservation_status = self._assess_conservation_status(df)
-        
-        # Especies clave
-        keystone_species = self._assess_keystone_species(df)
-        
-        # Regeneración natural
-        natural_regeneration = self._assess_natural_regeneration(df)
+        # Calcular CO2 equivalente (1 ton C = 3.67 ton CO2)
+        co2_potential = carbon_adjusted * 3.67
         
         return {
-            'diversidad_alfa': total_species,
-            'densidad_individuos': round(density_per_hectare, 2),
-            'riqueza_especies': total_species,
-            'especies_endemicas': endemic_species,
-            'estructura_vertical': vertical_structure,
-            'conectividad_ecologica': connectivity_score,
-            'estado_conservacion': conservation_status,
-            'presencia_especies_clave': keystone_species,
-            'regeneracion_natural': natural_regeneration
-        }
-    
-    def _assess_vertical_structure(self, df):
-        """Evaluar estructura vertical del bosque"""
-        if df.empty:
-            return "Indefinida"
-            
-        abundance_std = df['abundance'].std()
-        mean_abundance = df['abundance'].mean()
-        
-        if mean_abundance == 0:
-            return "Indefinida"
-        
-        cv = abundance_std / mean_abundance
-        if cv > 0.8:
-            return "Compleja"
-        elif cv > 0.4:
-            return "Media"
-        else:
-            return "Simple"
-    
-    def _calculate_connectivity(self, df):
-        """Calcular score de conectividad ecológica"""
-        if df.empty:
-            return 0
-            
-        areas_count = df['area'].nunique()
-        species_per_area = df.groupby('area')['species'].nunique().mean()
-        return min(100, (areas_count * species_per_area))
-    
-    def _assess_conservation_status(self, df):
-        """Evaluar estado de conservación"""
-        if df.empty:
-            return "Sin datos"
-            
-        total_species = df['species'].nunique()
-        if total_species >= 15:
-            return "Excelente"
-        elif total_species >= 10:
-            return "Bueno"
-        elif total_species >= 5:
-            return "Regular"
-        else:
-            return "Crítico"
-    
-    def _assess_keystone_species(self, df):
-        """Evaluar presencia de especies clave"""
-        keystone_species = ['Ficus insipida', 'Ceiba pentandra', 'Ocotea quixos']
-        if df.empty:
-            return "0/0"
-            
-        present_keystone = sum(1 for species in keystone_species if species in df['species'].values)
-        return f"{present_keystone}/{len(keystone_species)}"
-    
-    def _assess_natural_regeneration(self, df):
-        """Evaluar regeneración natural"""
-        if df.empty:
-            return "Sin datos"
-            
-        young_species = ['Piper spp', 'Miconia spp', 'Psychotria spp']
-        young_count = sum(df[df['species'].isin(young_species)]['abundance'])
-        return "Alta" if young_count > 20 else "Media" if young_count > 10 else "Baja"
-    
-    def _default_lemu_indicators(self):
-        return {
-            'diversidad_alfa': 0,
-            'densidad_individuos': 0.0,
-            'riqueza_especies': 0,
-            'especies_endemicas': 0,
-            'estructura_vertical': "Indefinida",
-            'conectividad_ecologica': 0,
-            'estado_conservacion': "Sin datos",
-            'presencia_especies_clave': "0/0",
-            'regeneracion_natural': "Sin datos"
+            'carbono_almacenado_tha': round(carbon_adjusted, 1),
+            'co2_capturado_tha': round(co2_potential, 1),
+            'co2_total_ton': round(co2_potential * area_hectares, 1),
+            'potencial_secuestro': 'Alto' if carbon_adjusted > 100 else 'Medio' if carbon_adjusted > 50 else 'Bajo'
         }
 
-class VegetationIndexAnalyzer:
-    """Analizador de índices de vegetación multiespectral"""
+class DeforestationAnalyzer:
+    """Analizador de pérdida de bosque y cambios de cobertura"""
     
     def __init__(self):
-        self.indices = {
-            'NDVI': self.calculate_ndvi,
-            'NDWI': self.calculate_ndwi,
-            'EVI': self.calculate_evi,
-            'SAVI': self.calculate_savi,
-            'RVI': self.calculate_rvi,
-            'NDRE': self.calculate_ndre,
-            'GNDVI': self.calculate_gndvi,
-            'OSAVI': self.calculate_osavi
+        self.deforestation_rates = {
+            'Bosque Denso Primario': 0.02,  # 2% anual
+            'Bosque Secundario': 0.05,      # 5% anual  
+            'Bosque Ripario': 0.03,         # 3% anual
+            'Matorral Denso': 0.08,         # 8% anual
+            'Matorral Abierto': 0.12,       # 12% anual
+            'Sabana Arborizada': 0.06,      # 6% anual
+            'Herbazal Natural': 0.15,       # 15% anual
+            'Zona de Transición': 0.10,     # 10% anual
+            'Área de Restauración': -0.20   # -20% (ganancia)
         }
     
-    def calculate_ndvi(self, nir, red):
-        """Normalized Difference Vegetation Index"""
-        denominator = nir + red + 1e-10
-        return (nir - red) / denominator
-    
-    def calculate_ndwi(self, nir, swir):
-        """Normalized Difference Water Index"""
-        denominator = nir + swir + 1e-10
-        return (nir - swir) / denominator
-    
-    def calculate_evi(self, nir, red, blue):
-        """Enhanced Vegetation Index"""
-        denominator = nir + 6 * red - 7.5 * blue + 1
-        return 2.5 * (nir - red) / denominator
-    
-    def calculate_savi(self, nir, red, L=0.5):
-        """Soil Adjusted Vegetation Index"""
-        denominator = nir + red + L + 1e-10
-        return ((nir - red) / denominator) * (1 + L)
-    
-    def calculate_rvi(self, nir, red):
-        """Ratio Vegetation Index"""
-        return nir / (red + 1e-10)
-    
-    def calculate_ndre(self, nir, red_edge):
-        """Normalized Difference Red Edge"""
-        denominator = nir + red_edge + 1e-10
-        return (nir - red_edge) / denominator
-    
-    def calculate_gndvi(self, nir, green):
-        """Green Normalized Difference Vegetation Index"""
-        denominator = nir + green + 1e-10
-        return (nir - green) / denominator
-    
-    def calculate_osavi(self, nir, red, L=0.16):
-        """Optimized Soil Adjusted Vegetation Index"""
-        denominator = nir + red + L + 1e-10
-        return (nir - red) / denominator
-    
-    def simulate_spectral_data(self, area_count, vegetation_type):
-        """Simular datos espectrales para diferentes tipos de vegetación"""
-        spectral_data = []
+    def simulate_deforestation_data(self, area_count, vegetation_type, start_year=2020):
+        """Simular datos históricos de pérdida de bosque"""
+        deforestation_data = []
+        current_year = datetime.now().year
         
-        base_values = {
-            'Bosque Denso Primario': {'ndvi': 0.8, 'ndwi': 0.3, 'evi': 0.6},
-            'Bosque Secundario': {'ndvi': 0.7, 'ndwi': 0.2, 'evi': 0.5},
-            'Matorral Denso': {'ndvi': 0.6, 'ndwi': 0.1, 'evi': 0.4},
-            'Herbazal Natural': {'ndvi': 0.5, 'ndwi': 0.05, 'evi': 0.3}
-        }
-        
-        # Valor por defecto si no se encuentra el tipo de vegetación
-        base = base_values.get(vegetation_type, {'ndvi': 0.4, 'ndwi': 0.0, 'evi': 0.2})
+        base_rate = self.deforestation_rates.get(vegetation_type, 0.05)
         
         for area_idx in range(area_count):
-            # Simular variación espacial
-            ndvi = max(0.1, min(0.9, np.random.normal(base['ndvi'], 0.1)))
-            ndwi = max(-0.2, min(0.5, np.random.normal(base['ndwi'], 0.05)))
-            evi = max(0.1, min(0.8, np.random.normal(base['evi'], 0.08)))
+            area_coverage = 100  # 100% de cobertura inicial
             
-            # Calcular bandas espectrales simuladas
-            red = 0.1 + (1 - ndvi) * 0.3
-            nir = red * (1 + ndvi) / (1 - ndvi) if ndvi < 1 else 0.8
-            blue = 0.1
-            green = 0.2
-            red_edge = 0.15
-            swir = 0.3
+            for year in range(start_year, current_year + 1):
+                # Variación anual aleatoria
+                annual_change = base_rate * np.random.uniform(0.8, 1.2)
+                
+                if 'Restauración' in vegetation_type:
+                    # Ganancia de cobertura en áreas de restauración
+                    area_coverage = min(100, area_coverage * (1 - annual_change))
+                else:
+                    # Pérdida de cobertura
+                    area_coverage = max(0, area_coverage * (1 - annual_change))
+                
+                # Impacto antropogénico simulado
+                human_impact = np.random.choice(['Bajo', 'Medio', 'Alto'], 
+                                              p=[0.6, 0.3, 0.1])
+                
+                deforestation_data.append({
+                    'area': f"Área {area_idx + 1}",
+                    'año': year,
+                    'cobertura_porcentaje': round(area_coverage, 1),
+                    'perdida_acumulada': round(100 - area_coverage, 1),
+                    'tasa_cambio_anual': round(annual_change * 100, 2),
+                    'impacto_antropico': human_impact,
+                    'lat': -14.0 + np.random.uniform(-8, 8),
+                    'lon': -60.0 + np.random.uniform(-8, 8)
+                })
+        
+        return deforestation_data
+
+class AnthropicImpactAnalyzer:
+    """Analizador de impacto antrópico sobre el territorio"""
+    
+    def __init__(self):
+        self.impact_factors = {
+            'agricultura': {'weight': 0.3, 'indicators': ['expansion_agricola', 'uso_pesticidas']},
+            'ganaderia': {'weight': 0.25, 'indicators': ['pastoreo_intensivo', 'compactacion_suelo']},
+            'urbanizacion': {'weight': 0.2, 'indicators': ['expansion_urbana', 'fragmentacion']},
+            'infraestructura': {'weight': 0.15, 'indicators': ['carreteras', 'lineas_energia']},
+            'mineria': {'weight': 0.1, 'indicators': ['mineria_superficie', 'contaminacion']}
+        }
+    
+    def assess_anthropic_impact(self, area_count, vegetation_type):
+        """Evaluar impacto antrópico en diferentes áreas"""
+        impact_data = []
+        
+        for area_idx in range(area_count):
+            total_impact = 0
+            impact_details = {}
+            
+            for factor, params in self.impact_factors.items():
+                # Calcular impacto para cada factor
+                factor_impact = np.random.uniform(0, 1) * params['weight']
+                total_impact += factor_impact
+                
+                impact_details[factor] = {
+                    'impacto': round(factor_impact, 3),
+                    'indicadores': params['indicators']
+                }
+            
+            # Clasificar impacto total
+            if total_impact > 0.7:
+                impact_level = "Muy Alto"
+                color = 'red'
+            elif total_impact > 0.5:
+                impact_level = "Alto"
+                color = 'orange'
+            elif total_impact > 0.3:
+                impact_level = "Moderado"
+                color = 'yellow'
+            elif total_impact > 0.1:
+                impact_level = "Bajo"
+                color = 'lightgreen'
+            else:
+                impact_level = "Muy Bajo"
+                color = 'green'
+            
+            impact_data.append({
+                'area': f"Área {area_idx + 1}",
+                'impacto_total': round(total_impact, 3),
+                'nivel_impacto': impact_level,
+                'color': color,
+                'detalles': impact_details,
+                'lat': -14.0 + np.random.uniform(-8, 8),
+                'lon': -60.0 + np.random.uniform(-8, 8)
+            })
+        
+        return impact_data
+
+class VegetationClassifier:
+    """Clasificador de tipos de vegetación basado en índices espectrales"""
+    
+    def __init__(self):
+        self.vegetation_classes = {
+            'Bosque Denso': {'ndvi_range': (0.7, 1.0), 'evi_range': (0.5, 1.0)},
+            'Bosque Abierto': {'ndvi_range': (0.5, 0.7), 'evi_range': (0.3, 0.5)},
+            'Matorral Denso': {'ndvi_range': (0.4, 0.6), 'evi_range': (0.2, 0.4)},
+            'Matorral Abierto': {'ndvi_range': (0.3, 0.5), 'evi_range': (0.15, 0.3)},
+            'Sabana': {'ndvi_range': (0.2, 0.4), 'evi_range': (0.1, 0.25)},
+            'Herbazal': {'ndvi_range': (0.1, 0.3), 'evi_range': (0.05, 0.15)},
+            'Suelo Desnudo': {'ndvi_range': (0.0, 0.1), 'evi_range': (0.0, 0.05)},
+            'Cuerpo de Agua': {'ndvi_range': (-1.0, 0.0), 'evi_range': (-1.0, 0.0)}
+        }
+    
+    def classify_vegetation(self, ndvi, evi, ndwi):
+        """Clasificar tipo de vegetación basado en índices espectrales"""
+        for class_name, ranges in self.vegetation_classes.items():
+            if (ranges['ndvi_range'][0] <= ndvi <= ranges['ndvi_range'][1] and
+                ranges['evi_range'][0] <= evi <= ranges['evi_range'][1]):
+                return class_name
+        
+        return "No Clasificado"
+
+class IntegratedAnalyzer:
+    """Analizador integrado con todos los indicadores mejorados"""
+    
+    def __init__(self):
+        self.carbon_analyzer = CarbonAnalyzer()
+        self.deforestation_analyzer = DeforestationAnalyzer()
+        self.impact_analyzer = AnthropicImpactAnalyzer()
+        self.vegetation_classifier = VegetationClassifier()
+    
+    def comprehensive_analysis(self, area_count, vegetation_type, area_hectares=100):
+        """Análisis integral con todos los indicadores"""
+        
+        # Simular datos base
+        spectral_data = self._simulate_spectral_data(area_count, vegetation_type)
+        deforestation_data = self.deforestation_analyzer.simulate_deforestation_data(area_count, vegetation_type)
+        impact_data = self.impact_analyzer.assess_anthropic_impact(area_count, vegetation_type)
+        
+        # Calcular indicadores de carbono
+        carbon_indicators = []
+        for area_data in spectral_data:
+            carbon_info = self.carbon_analyzer.calculate_carbon_potential(
+                vegetation_type, area_hectares, area_data['NDVI']
+            )
+            carbon_indicators.append({
+                'area': area_data['area'],
+                **carbon_info,
+                'lat': area_data['lat'],
+                'lon': area_data['lon']
+            })
+        
+        # Clasificar vegetación
+        vegetation_classification = []
+        for area_data in spectral_data:
+            veg_class = self.vegetation_classifier.classify_vegetation(
+                area_data['NDVI'], area_data['EVI'], area_data['NDWI']
+            )
+            vegetation_classification.append({
+                'area': area_data['area'],
+                'clasificacion': veg_class,
+                'ndvi': area_data['NDVI'],
+                'evi': area_data['EVI'],
+                'ndwi': area_data['NDWI'],
+                'lat': area_data['lat'],
+                'lon': area_data['lon']
+            })
+        
+        # Calcular métricas resumen
+        summary_metrics = self._calculate_summary_metrics(
+            carbon_indicators, deforestation_data, impact_data, vegetation_classification
+        )
+        
+        return {
+            'carbon_indicators': carbon_indicators,
+            'deforestation_data': deforestation_data,
+            'impact_data': impact_data,
+            'vegetation_classification': vegetation_classification,
+            'spectral_data': spectral_data,
+            'summary_metrics': summary_metrics
+        }
+    
+    def _simulate_spectral_data(self, area_count, vegetation_type):
+        """Simular datos espectrales básicos"""
+        spectral_data = []
+        
+        base_ndvi = {
+            'Bosque Denso Primario': 0.8, 'Bosque Secundario': 0.7,
+            'Matorral Denso': 0.6, 'Matorral Abierto': 0.4,
+            'Herbazal Natural': 0.3
+        }
+        
+        base_ndvi_val = base_ndvi.get(vegetation_type, 0.5)
+        
+        for area_idx in range(area_count):
+            ndvi = max(0.1, min(0.9, np.random.normal(base_ndvi_val, 0.1)))
+            evi = ndvi * 0.8 + np.random.normal(0, 0.05)
+            ndwi = (1 - ndvi) * 0.3 + np.random.normal(0, 0.03)
             
             spectral_data.append({
                 'area': f"Área {area_idx + 1}",
                 'NDVI': ndvi,
-                'NDWI': ndwi,
                 'EVI': evi,
-                'SAVI': self.calculate_savi(nir, red),
-                'RVI': self.calculate_rvi(nir, red),
-                'NDRE': self.calculate_ndre(nir, red_edge),
-                'GNDVI': self.calculate_gndvi(nir, green),
-                'OSAVI': self.calculate_osavi(nir, red),
-                'biomasa_estimada': ndvi * 100 + np.random.normal(0, 10),
-                'estres_hidrico': (1 - ndwi) * 50 + np.random.normal(0, 5),
+                'NDWI': ndwi,
                 'lat': -14.0 + np.random.uniform(-8, 8),
                 'lon': -60.0 + np.random.uniform(-8, 8)
             })
         
         return spectral_data
-
-class LidarAnalyzer:
-    """Analizador de datos LiDAR para visualización 3D"""
     
-    def __init__(self):
-        self.vegetation_heights = {
-            'Bosque Denso Primario': {'min': 20, 'max': 40},
-            'Bosque Secundario': {'min': 10, 'max': 25},
-            'Matorral Denso': {'min': 3, 'max': 8},
-            'Matorral Abierto': {'min': 1, 'max': 4},
-            'Herbazal Natural': {'min': 0.5, 'max': 2}
-        }
-    
-    def simulate_lidar_data(self, area_count, vegetation_type, center_lat=-14.0, center_lon=-60.0):
-        """Simular datos LiDAR para visualización 3D"""
-        lidar_data = []
+    def _calculate_summary_metrics(self, carbon_data, deforestation_data, impact_data, vegetation_data):
+        """Calcular métricas resumen para el dashboard"""
         
-        # Parámetros de vegetación
-        veg_params = self.vegetation_heights.get(vegetation_type, {'min': 5, 'max': 15})
+        # Carbono total
+        total_co2 = sum([area['co2_total_ton'] for area in carbon_data])
         
-        for area_idx in range(area_count):
-            # Generar coordenadas alrededor del punto central
-            lat = center_lat + np.random.uniform(-0.1, 0.1)
-            lon = center_lon + np.random.uniform(-0.1, 0.1)
-            
-            # Simular puntos de nube LiDAR
-            num_points = np.random.randint(500, 2000)
-            for point_idx in range(num_points):
-                # Coordenadas relativas al área
-                x_offset = np.random.uniform(-100, 100)  # metros
-                y_offset = np.random.uniform(-100, 100)  # metros
-                
-                # Altura basada en tipo de vegetación
-                if np.random.random() < 0.7:  # 70% de puntos son vegetación
-                    height = np.random.uniform(veg_params['min'], veg_params['max'])
-                    # Agregar variación para simular dosel
-                    if height > 10:
-                        height += np.random.normal(0, 3)
-                    color = [0, 128, 0, 160]  # Verde para vegetación
-                else:  # 30% son suelo
-                    height = np.random.uniform(0, 2)
-                    color = [139, 69, 19, 160]  # Marrón para suelo
-                
-                lidar_data.append({
-                    'x': lon + x_offset/111320,  # Convertir metros a grados
-                    'y': lat + y_offset/111320,
-                    'z': height,
-                    'color': color,
-                    'area': f"Área {area_idx + 1}"
-                })
+        # Pérdida promedio de bosque
+        current_year = datetime.now().year
+        current_deforestation = [d for d in deforestation_data if d['año'] == current_year]
+        avg_loss = np.mean([d['perdida_acumulada'] for d in current_deforestation]) if current_deforestation else 0
         
-        return lidar_data
-    
-    def create_3d_visualization(self, lidar_data, vegetation_type):
-        """Crear visualización 3D con PyDeck"""
-        if not lidar_data:
-            return None
-            
-        df = pd.DataFrame(lidar_data)
+        # Impacto promedio
+        avg_impact = np.mean([d['impacto_total'] for d in impact_data])
         
-        # Configurar vista inicial
-        avg_lat = df['y'].mean()
-        avg_lon = df['x'].mean()
-        max_height = df['z'].max()
-        
-        # Capa de puntos LiDAR
-        point_cloud_layer = pdk.Layer(
-            "PointCloudLayer",
-            df,
-            get_position=['x', 'y', 'z'],
-            get_normal=[0, 0, 15],
-            get_color='color',
-            pickable=True,
-            auto_highlight=True,
-            point_size=2,
-        )
-        
-        # Configurar vista
-        view_state = pdk.ViewState(
-            longitude=avg_lon,
-            latitude=avg_lat,
-            zoom=14,
-            pitch=45,
-            bearing=0,
-            max_zoom=20,
-            min_zoom=5,
-            max_pitch=85,
-            min_pitch=0
-        )
-        
-        # Tooltip
-        tooltip = {
-            "html": """
-            <b>Altura:</b> {z} m<br/>
-            <b>Área:</b> {area}
-            """,
-            "style": {
-                "backgroundColor": "steelblue",
-                "color": "white"
-            }
-        }
-        
-        # Crear deck
-        deck = pdk.Deck(
-            layers=[point_cloud_layer],
-            initial_view_state=view_state,
-            tooltip=tooltip,
-            map_style='mapbox://styles/mapbox/satellite-v9'
-        )
-        
-        return deck
-
-class IntegratedAnalyzer:
-    """Analizador integrado de biodiversidad y vegetación"""
-    
-    def __init__(self):
-        self.bio_analyzer = BiodiversityAnalyzer()
-        self.veg_analyzer = VegetationIndexAnalyzer()
-        self.lidar_analyzer = LidarAnalyzer()
-    
-    def comprehensive_analysis(self, area_count, vegetation_type, area_hectares=100):
-        """Análisis integral combinando biodiversidad y vegetación"""
-        # Simular datos de biodiversidad
-        species_data = self._simulate_integrated_species_data(area_count, vegetation_type)
-        
-        # Simular datos de vegetación
-        spectral_data = self.veg_analyzer.simulate_spectral_data(area_count, vegetation_type)
-        
-        # Simular datos LiDAR
-        lidar_data = self.lidar_analyzer.simulate_lidar_data(area_count, vegetation_type)
-        
-        # Calcular métricas de biodiversidad
-        df_species = pd.DataFrame(species_data)
-        if not df_species.empty:
-            species_abundances = df_species.groupby('species')['abundance'].sum().values
-            total_individuals = sum(species_abundances)
-            richness = self.bio_analyzer.species_richness(species_abundances)
-            shannon = self.bio_analyzer.shannon_index(species_abundances)
-        else:
-            species_abundances = np.array([])
-            total_individuals = 0
-            richness = 0
-            shannon = 0.0
-        
-        biodiversity_metrics = {
-            'shannon_index': shannon,
-            'species_richness': richness,
-            'evenness': self.bio_analyzer.evenness(shannon, richness),
-            'simpson_index': self.bio_analyzer.simpson_index(species_abundances),
-            'margalef_index': self.bio_analyzer.margalef_index(richness, total_individuals)
-        }
-        
-        # Calcular indicadores LE.MU
-        lemu_indicators = self.bio_analyzer.calculate_lemu_indicators(
-            species_data, area_hectares
-        )
-        
-        # Calcular promedios de índices de vegetación
-        df_spectral = pd.DataFrame(spectral_data)
-        vegetation_metrics = {}
-        for index in ['NDVI', 'NDWI', 'EVI', 'SAVI', 'RVI', 'NDRE', 'GNDVI', 'OSAVI']:
-            if index in df_spectral.columns:
-                vegetation_metrics[index] = df_spectral[index].mean()
-        
-        # Métricas integradas
-        integrated_scores = self._calculate_integrated_scores(
-            biodiversity_metrics, vegetation_metrics, lemu_indicators
-        )
+        # Distribución de clases de vegetación
+        veg_classes = {}
+        for area in vegetation_data:
+            class_name = area['clasificacion']
+            veg_classes[class_name] = veg_classes.get(class_name, 0) + 1
         
         return {
-            'biodiversity_metrics': biodiversity_metrics,
-            'vegetation_metrics': vegetation_metrics,
-            'lemu_indicators': lemu_indicators,
-            'integrated_scores': integrated_scores,
-            'species_data': species_data,
-            'spectral_data': spectral_data,
-            'lidar_data': lidar_data,
-            'raw_data': {
-                'species_df': df_species,
-                'spectral_df': df_spectral
-            }
+            'carbono_total_co2_ton': round(total_co2, 1),
+            'perdida_bosque_promedio': round(avg_loss, 1),
+            'impacto_antropico_promedio': round(avg_impact, 3),
+            'distribucion_vegetacion': veg_classes,
+            'areas_analizadas': len(carbon_data)
         }
-    
-    def _simulate_integrated_species_data(self, area_count, vegetation_type):
-        """Simular datos de especies integrados con tipo de vegetación"""
-        species_data = []
-        
-        # Seleccionar especies según tipo de vegetación
-        if 'Bosque' in vegetation_type:
-            ecosystem = 'Bosques'
-        elif 'Matorral' in vegetation_type:
-            ecosystem = 'Matorrales'
-        else:
-            ecosystem = 'Herbáceas'
-        
-        available_species = self.bio_analyzer.species_pool.get(ecosystem, [])
-        if not available_species:
-            available_species = ['Especie generalista']
-        
-        num_species = min(12, len(available_species))
-        selected_species = np.random.choice(
-            available_species,
-            size=num_species,
-            replace=False
-        )
-        
-        for area_idx in range(area_count):
-            for species in selected_species:
-                # Abundancia basada en tipo de vegetación
-                if 'Primario' in vegetation_type:
-                    abundance = np.random.poisson(30) + 20
-                elif 'Secundario' in vegetation_type:
-                    abundance = np.random.poisson(20) + 10
-                else:
-                    abundance = np.random.poisson(15) + 5
-                
-                # Asegurar que la abundancia sea al menos 1
-                abundance = max(1, abundance)
-                
-                species_data.append({
-                    'species': species,
-                    'abundance': int(abundance),
-                    'frequency': round(np.random.uniform(0.3, 0.9), 3),
-                    'area': f"Área {area_idx + 1}",
-                    'ecosystem': ecosystem,
-                    'vegetation_type': vegetation_type,
-                    'lat': -14.0 + np.random.uniform(-8, 8),
-                    'lon': -60.0 + np.random.uniform(-8, 8)
-                })
-        
-        return species_data
-    
-    def _calculate_integrated_scores(self, bio_metrics, veg_metrics, lemu_indicators):
-        """Calcular scores integrados de salud del ecosistema"""
-        
-        try:
-            # Score de biodiversidad (0-100)
-            biodiversity_score = min(100, (
-                bio_metrics['shannon_index'] * 20 +
-                bio_metrics['species_richness'] * 2 +
-                lemu_indicators['diversidad_alfa'] * 3
-            ))
-            
-            # Score de vegetación (0-100)
-            ndvi_score = veg_metrics.get('NDVI', 0) * 100
-            evi_score = veg_metrics.get('EVI', 0) * 125  # EVI normalmente va de 0-0.8
-            ndwi_penalty = (1 - veg_metrics.get('NDWI', 0)) * 20
-            
-            vegetation_score = min(100, (
-                ndvi_score * 0.6 +
-                evi_score * 0.4 -
-                ndwi_penalty
-            ))
-            
-            # Score de conservación (0-100) - Solo usar valores numéricos
-            conservation_numeric = 0
-            conservation_numeric += lemu_indicators['conectividad_ecologica']
-            
-            # Convertir estructura vertical a valor numérico
-            estructura_valor = {
-                "Compleja": 30,
-                "Media": 20, 
-                "Simple": 10,
-                "Indefinida": 0
-            }.get(lemu_indicators['estructura_vertical'], 0)
-            
-            # Convertir especies clave a valor numérico
-            especies_clave_str = lemu_indicators['presencia_especies_clave']
-            try:
-                especies_presentes = int(especies_clave_str.split('/')[0])
-                especies_clave_valor = especies_presentes * 15
-            except:
-                especies_clave_valor = 0
-            
-            conservation_score = min(100, (
-                conservation_numeric +
-                estructura_valor +
-                especies_clave_valor
-            ))
-            
-            # Score integral de salud del ecosistema
-            ecosystem_health = (
-                biodiversity_score * 0.4 +
-                vegetation_score * 0.4 +
-                conservation_score * 0.2
-            )
-            
-            return {
-                'biodiversity_score': round(biodiversity_score, 1),
-                'vegetation_score': round(vegetation_score, 1),
-                'conservation_score': round(conservation_score, 1),
-                'ecosystem_health': round(ecosystem_health, 1),
-                'overall_rating': self._get_rating(ecosystem_health)
-            }
-            
-        except Exception as e:
-            # En caso de error, retornar scores por defecto
-            return {
-                'biodiversity_score': 0,
-                'vegetation_score': 0,
-                'conservation_score': 0,
-                'ecosystem_health': 0,
-                'overall_rating': "Sin datos"
-            }
-    
-    def _get_rating(self, score):
-        """Convertir score a rating cualitativo"""
-        if score >= 80:
-            return "Excelente"
-        elif score >= 60:
-            return "Bueno"
-        elif score >= 40:
-            return "Regular"
-        elif score >= 20:
-            return "Precario"
-        else:
-            return "Crítico"
 
 # ===============================
-# 🛠️ FUNCIONES AUXILIARES
+# 🗺️ FUNCIONES DE MAPAS MEJORADAS
 # ===============================
 
-def categorize_lemu_indicator(indicator, value):
-    """Categorizar indicadores LE.MU"""
-    if indicator == 'estado_conservacion':
-        return value
-    elif indicator == 'estructura_vertical':
-        return value
-    elif indicator == 'regeneracion_natural':
-        return value
-    elif isinstance(value, (int, float)):
-        if value >= 80: return "Excelente"
-        elif value >= 60: return "Bueno"
-        elif value >= 40: return "Regular"
-        else: return "Mejorable"
-    return "N/A"
-
-def interpret_vegetation_index(index, value):
-    """Interpretar valores de índices de vegetación"""
-    interpretations = {
-        'NDVI': {
-            (0.8, 1.0): "Vegetación muy densa y saludable",
-            (0.6, 0.8): "Vegetación densa",
-            (0.4, 0.6): "Vegetación moderada", 
-            (0.2, 0.4): "Vegetación escasa",
-            (0.0, 0.2): "Suelo desnudo/vegetación muy escasa",
-            (-1.0, 0.0): "Agua/sin vegetación"
-        },
-        'EVI': {
-            (0.6, 1.0): "Alto vigor vegetal",
-            (0.4, 0.6): "Vigor vegetal moderado",
-            (0.2, 0.4): "Vigor vegetal bajo",
-            (0.0, 0.2): "Vigor muy bajo"
-        },
-        'NDWI': {
-            (0.3, 1.0): "Alto contenido de agua",
-            (0.1, 0.3): "Contenido moderado de agua",
-            (-0.1, 0.1): "Bajo contenido de agua",
-            (-1.0, -0.1): "Sequía/ausencia de agua"
-        }
-    }
+def create_carbon_map(carbon_data):
+    """Crear mapa de captura potencial de CO2"""
+    m = folium.Map(location=[-14.0, -60.0], zoom_start=4)
     
-    if index in interpretations:
-        for range_val, interpretation in interpretations[index].items():
-            if range_val[0] <= value <= range_val[1]:
-                return interpretation
-    
-    return "Valor fuera de rango típico"
-
-def create_lemu_radar_chart(lemu_indicators):
-    """Crear gráfico radar para indicadores LE.MU"""
-    try:
-        # Seleccionar y procesar indicadores numéricos
-        numeric_data = {}
+    # Agregar puntos de carbono
+    for area_data in carbon_data:
+        co2_potential = area_data['co2_total_ton']
         
-        # Procesar cada indicador
-        for key, value in lemu_indicators.items():
-            if key == 'conectividad_ecologica':
-                numeric_data['Conectividad'] = min(100, value)
-            elif key == 'diversidad_alfa':
-                numeric_data['Diversidad'] = min(50, value) * 2  # Escalar a 100
-            elif key == 'densidad_individuos':
-                numeric_data['Densidad'] = min(100, value)
-            elif key == 'riqueza_especies':
-                numeric_data['Riqueza'] = min(50, value) * 2  # Escalar a 100
-            elif key == 'especies_endemicas':
-                numeric_data['Endemismos'] = min(100, value * 10)  # Escalar
-        
-        # Si no hay suficientes datos, usar valores por defecto
-        if len(numeric_data) < 3:
-            default_indicators = ['Conectividad', 'Diversidad', 'Riqueza', 'Densidad', 'Endemismos']
-            for indicator in default_indicators:
-                if indicator not in numeric_data:
-                    numeric_data[indicator] = 0
-        
-        categories = list(numeric_data.keys())
-        values = list(numeric_data.values())
-        
-        # Cerrar el círculo para el radar
-        values_radar = values + [values[0]]
-        categories_radar = categories + [categories[0]]
-        
-        fig = go.Figure()
-        
-        fig.add_trace(go.Scatterpolar(
-            r=values_radar,
-            theta=categories_radar,
-            fill='toself',
-            name='Indicadores LE.MU',
-            line=dict(color='green', width=2),
-            fillcolor='rgba(0, 128, 0, 0.3)'
-        ))
-        
-        fig.update_layout(
-            polar=dict(
-                radialaxis=dict(
-                    visible=True,
-                    range=[0, 100]
-                )),
-            showlegend=False,
-            title="Indicadores LE.MU - Perfil de Conservación"
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-    except Exception as e:
-        st.warning(f"No se pudo generar el gráfico radar: {e}")
-
-def generate_recommendations(results):
-    """Generar recomendaciones basadas en los resultados"""
-    recommendations = []
-    
-    # Analizar biodiversidad
-    shannon = results['biodiversity_metrics']['shannon_index']
-    if shannon < 2.0:
-        recommendations.append({
-            'title': 'Mejorar Diversidad de Especies',
-            'description': 'Considerar enriquecimiento con especies nativas y restauración de hábitats. Implementar programas de reforestación con especies diversas.',
-            'priority': 85
-        })
-    
-    # Analizar vegetación
-    ndvi = results['vegetation_metrics'].get('NDVI', 0)
-    if ndvi < 0.4:
-        recommendations.append({
-            'title': 'Mejorar Cobertura Vegetal',
-            'description': 'Implementar prácticas de conservación de suelos, reforestación y manejo sostenible de la vegetación.',
-            'priority': 90
-        })
-    
-    # Analizar conectividad
-    connectivity = results['lemu_indicators']['conectividad_ecologica']
-    if connectivity < 60:
-        recommendations.append({
-            'title': 'Incrementar Conectividad Ecológica',
-            'description': 'Establecer corredores biológicos, reducir fragmentación y conectar áreas naturales remanentes.',
-            'priority': 75
-        })
-    
-    # Analizar regeneración
-    regeneration = results['lemu_indicators']['regeneracion_natural']
-    if regeneration == "Baja":
-        recommendations.append({
-            'title': 'Fomentar Regeneración Natural',
-            'description': 'Reducir perturbaciones, controlar especies invasoras y promover bancos de semillas nativas.',
-            'priority': 70
-        })
-    
-    # Recomendación general de monitoreo
-    recommendations.append({
-        'title': 'Establecer Programa de Monitoreo',
-        'description': 'Implementar monitoreo periódico para evaluar cambios en biodiversidad y salud del ecosistema.',
-        'priority': 60
-    })
-    
-    return sorted(recommendations, key=lambda x: x['priority'], reverse=True)
-
-def create_biodiversity_map(species_data, spectral_data):
-    """Crear mapa interactivo de biodiversidad"""
-    # Crear mapa base centrado en Latinoamérica
-    m = folium.Map(location=[-14.0, -60.0], zoom_start=4, tiles=None)
-    
-    # Capas base
-    folium.TileLayer(
-        tiles='https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        attr='Esri', name='Satélite'
-    ).add_to(m)
-    
-    folium.TileLayer(
-        tiles='OpenStreetMap',
-        name='Calles'
-    ).add_to(m)
-    
-    # Capa de puntos de vegetación (NDVI)
-    veg_group = folium.FeatureGroup(name='🌿 Salud Vegetal (NDVI)')
-    for area_data in spectral_data:
-        ndvi = area_data['NDVI']
-        if ndvi > 0.6:
-            color = 'darkgreen'
+        # Color basado en potencial de carbono
+        if co2_potential > 5000:
+            color = '#00441b'  # Verde muy oscuro
+            size = 15
+        elif co2_potential > 2000:
+            color = '#238443'  # Verde oscuro
             size = 12
-        elif ndvi > 0.4:
-            color = 'green'
+        elif co2_potential > 1000:
+            color = '#78c679'  # Verde medio
             size = 10
-        elif ndvi > 0.2:
-            color = 'orange'
+        elif co2_potential > 500:
+            color = '#c2e699'  # Verde claro
             size = 8
         else:
-            color = 'red'
+            color = '#ffffcc'  # Amarillo muy claro
             size = 6
         
         popup_text = f"""
         <b>{area_data['area']}</b><br>
-        <b>Salud Vegetal:</b><br>
-        • NDVI: {ndvi:.3f}<br>
-        • EVI: {area_data['EVI']:.3f}<br>
-        • Biomasa: {area_data['biomasa_estimada']:.1f} t/ha<br>
-        • Estrés hídrico: {area_data['estres_hidrico']:.1f}%
+        <b>Potencial de Captura de CO2:</b><br>
+        • CO2 total: {co2_potential:,} ton<br>
+        • Carbono almacenado: {area_data['carbono_almacenado_tha']} t/ha<br>
+        • Potencial: {area_data['potencial_secuestro']}
         """
         
         folium.CircleMarker(
             location=[area_data['lat'], area_data['lon']],
             radius=size,
             popup=folium.Popup(popup_text, max_width=300),
-            tooltip=f"{area_data['area']} - NDVI: {ndvi:.3f}",
+            tooltip=f"{area_data['area']}: {co2_potential:,} ton CO2",
             color=color,
             fillColor=color,
             fillOpacity=0.7,
             weight=2
-        ).add_to(veg_group)
-    
-    veg_group.add_to(m)
-    
-    # Capa de biodiversidad
-    bio_group = folium.FeatureGroup(name='🦜 Biodiversidad')
-    species_df = pd.DataFrame(species_data)
-    if not species_df.empty:
-        area_species_richness = species_df.groupby('area').agg({
-            'species': 'nunique',
-            'abundance': 'sum',
-            'lat': 'first',
-            'lon': 'first'
-        }).reset_index()
-        
-        for _, area_data in area_species_richness.iterrows():
-            richness = area_data['species']
-            abundance = area_data['abundance']
-            
-            if richness > 10:
-                bio_color = 'darkblue'
-                icon_color = 'blue'
-            elif richness > 5:
-                bio_color = 'blue'
-                icon_color = 'lightblue'
-            else:
-                bio_color = 'lightblue'
-                icon_color = 'white'
-            
-            popup_text = f"""
-            <b>{area_data['area']}</b><br>
-            <b>Biodiversidad:</b><br>
-            • Riqueza: {richness} especies<br>
-            • Abundancia: {abundance} individuos<br>
-            • Densidad: {abundance/100:.1f} ind/ha
-            """
-            
-            folium.Marker(
-                location=[area_data['lat'], area_data['lon']],
-                popup=folium.Popup(popup_text, max_width=300),
-                tooltip=f"{area_data['area']} - {richness} especies",
-                icon=folium.Icon(color=icon_color, icon='leaf', prefix='fa')
-            ).add_to(bio_group)
-    
-    bio_group.add_to(m)
-    
-    # Control de capas
-    folium.LayerControl().add_to(m)
-    
-    return m
-
-def create_ndvi_heatmap(spectral_data):
-    """Crear mapa de calor de NDVI"""
-    m = folium.Map(location=[-14.0, -60.0], zoom_start=4)
-    
-    # Agregar puntos de NDVI
-    for area_data in spectral_data:
-        ndvi = area_data['NDVI']
-        
-        # Color gradient basado en NDVI
-        if ndvi > 0.7:
-            color = '#006400'  # Dark green
-        elif ndvi > 0.5:
-            color = '#32CD32'  # Lime green
-        elif ndvi > 0.3:
-            color = '#FFFF00'  # Yellow
-        elif ndvi > 0.1:
-            color = '#FFA500'  # Orange
-        else:
-            color = '#FF0000'  # Red
-        
-        folium.Circle(
-            location=[area_data['lat'], area_data['lon']],
-            radius=5000,  # 5km radius
-            popup=f"NDVI: {ndvi:.3f}",
-            color=color,
-            fillColor=color,
-            fillOpacity=0.6,
-            weight=1
         ).add_to(m)
     
-    # Agregar leyenda
+    # Leyenda
     legend_html = '''
-    <div style="position: fixed; 
-                bottom: 50px; left: 50px; width: 200px; height: 150px; 
-                background-color: white; border:2px solid grey; z-index:9999; 
-                font-size:14px; padding: 10px">
-    <p><strong>Leyenda NDVI</strong></p>
-    <p><i style="background:#006400; width: 20px; height: 20px; display: inline-block;"></i> > 0.7 (Excelente)</p>
-    <p><i style="background:#32CD32; width: 20px; height: 20px; display: inline-block;"></i> 0.5-0.7 (Bueno)</p>
-    <p><i style="background:#FFFF00; width: 20px; height: 20px; display: inline-block;"></i> 0.3-0.5 (Regular)</p>
-    <p><i style="background:#FFA500; width: 20px; height: 20px; display: inline-block;"></i> 0.1-0.3 (Pobre)</p>
-    <p><i style="background:#FF0000; width: 20px; height: 20px; display: inline-block;"></i> < 0.1 (Muy pobre)</p>
+    <div style="position: fixed; bottom: 50px; left: 50px; width: 220px; height: 180px; 
+                background-color: white; border:2px solid grey; z-index:9999; font-size:14px; padding: 10px">
+    <p><strong>Potencial de Captura CO2 (ton)</strong></p>
+    <p><i style="background:#00441b; width: 20px; height: 20px; display: inline-block;"></i> > 5,000</p>
+    <p><i style="background:#238443; width: 20px; height: 20px; display: inline-block;"></i> 2,000-5,000</p>
+    <p><i style="background:#78c679; width: 20px; height: 20px; display: inline-block;"></i> 1,000-2,000</p>
+    <p><i style="background:#c2e699; width: 20px; height: 20px; display: inline-block;"></i> 500-1,000</p>
+    <p><i style="background:#ffffcc; width: 20px; height: 20px; display: inline-block;"></i> < 500</p>
     </div>
     '''
     m.get_root().html.add_child(folium.Element(legend_html))
     
     return m
 
+def create_vegetation_classification_map(vegetation_data):
+    """Crear mapa de clasificación de vegetación"""
+    m = folium.Map(location=[-14.0, -60.0], zoom_start=4)
+    
+    # Colores para cada clase de vegetación
+    veg_colors = {
+        'Bosque Denso': '#006400',
+        'Bosque Abierto': '#32CD32',
+        'Matorral Denso': '#90EE90',
+        'Matorral Abierto': '#ADFF2F',
+        'Sabana': '#FFFF00',
+        'Herbazal': '#FFD700',
+        'Suelo Desnudo': '#8B4513',
+        'Cuerpo de Agua': '#1E90FF',
+        'No Clasificado': '#A9A9A9'
+    }
+    
+    for area_data in vegetation_data:
+        veg_class = area_data['clasificacion']
+        color = veg_colors.get(veg_class, '#A9A9A9')
+        
+        popup_text = f"""
+        <b>{area_data['area']}</b><br>
+        <b>Clasificación de Vegetación:</b><br>
+        • Tipo: {veg_class}<br>
+        • NDVI: {area_data['ndvi']:.3f}<br>
+        • EVI: {area_data['evi']:.3f}<br>
+        • NDWI: {area_data['ndwi']:.3f}
+        """
+        
+        folium.CircleMarker(
+            location=[area_data['lat'], area_data['lon']],
+            radius=8,
+            popup=folium.Popup(popup_text, max_width=300),
+            tooltip=f"{area_data['area']}: {veg_class}",
+            color=color,
+            fillColor=color,
+            fillOpacity=0.7,
+            weight=2
+        ).add_to(m)
+    
+    return m
+
+def create_deforestation_timeline_map(deforestation_data):
+    """Crear mapa de línea de tiempo de deforestación"""
+    m = folium.Map(location=[-14.0, -60.0], zoom_start=4)
+    
+    # Filtrar datos del año más reciente
+    current_year = datetime.now().year
+    current_data = [d for d in deforestation_data if d['año'] == current_year]
+    
+    for area_data in current_data:
+        loss_percentage = area_data['perdida_acumulada']
+        
+        # Color basado en pérdida acumulada
+        if loss_percentage > 50:
+            color = '#8B0000'  # Rojo oscuro
+            size = 12
+        elif loss_percentage > 25:
+            color = '#FF4500'  # Rojo naranja
+            size = 10
+        elif loss_percentage > 10:
+            color = '#FFA500'  # Naranja
+            size = 8
+        elif loss_percentage > 5:
+            color = '#FFFF00'  # Amarillo
+            size = 6
+        else:
+            color = '#32CD32'  # Verde
+            size = 4
+        
+        popup_text = f"""
+        <b>{area_data['area']}</b><br>
+        <b>Pérdida de Cobertura ({current_year}):</b><br>
+        • Pérdida acumulada: {loss_percentage}%<br>
+        • Cobertura actual: {area_data['cobertura_porcentaje']}%<br>
+        • Impacto antrópico: {area_data['impacto_antropico']}
+        """
+        
+        folium.CircleMarker(
+            location=[area_data['lat'], area_data['lon']],
+            radius=size,
+            popup=folium.Popup(popup_text, max_width=300),
+            tooltip=f"{area_data['area']}: {loss_percentage}% pérdida",
+            color=color,
+            fillColor=color,
+            fillOpacity=0.7,
+            weight=2
+        ).add_to(m)
+    
+    return m
+
+def create_anthropic_impact_map(impact_data):
+    """Crear mapa de impacto antrópico"""
+    m = folium.Map(location=[-14.0, -60.0], zoom_start=4)
+    
+    for area_data in impact_data:
+        impact_level = area_data['nivel_impacto']
+        color = area_data['color']
+        
+        # Detalles de impactos por factor
+        impact_details = ""
+        for factor, details in area_data['detalles'].items():
+            impact_details += f"• {factor}: {details['impacto']}<br>"
+        
+        popup_text = f"""
+        <b>{area_data['area']}</b><br>
+        <b>Impacto Antrópico Total:</b> {area_data['impacto_total']}<br>
+        <b>Nivel:</b> {impact_level}<br>
+        <b>Factores:</b><br>
+        {impact_details}
+        """
+        
+        folium.CircleMarker(
+            location=[area_data['lat'], area_data['lon']],
+            radius=10,
+            popup=folium.Popup(popup_text, max_width=300),
+            tooltip=f"{area_data['area']}: Impacto {impact_level}",
+            color=color,
+            fillColor=color,
+            fillOpacity=0.7,
+            weight=2
+        ).add_to(m)
+    
+    return m
+
 # ===============================
-# 🚀 INICIALIZACIÓN DEL ESTADO
+# 📊 FUNCIONES DE VISUALIZACIÓN
 # ===============================
 
-# Inicializar el estado de la sesión de forma segura
+def create_deforestation_timeline_chart(deforestation_data):
+    """Crear gráfico de línea de tiempo de deforestación"""
+    df = pd.DataFrame(deforestation_data)
+    
+    fig = px.line(df, x='año', y='cobertura_porcentaje', color='area',
+                 title="Evolución de la Cobertura Vegetal (2020-Actual)",
+                 labels={'cobertura_porcentaje': 'Cobertura (%)', 'año': 'Año'})
+    
+    fig.update_layout(
+        xaxis=dict(tickmode='linear', dtick=1),
+        hovermode='x unified'
+    )
+    
+    return fig
+
+def create_carbon_bar_chart(carbon_data):
+    """Crear gráfico de barras de potencial de carbono"""
+    df = pd.DataFrame(carbon_data)
+    
+    fig = px.bar(df, x='area', y='co2_total_ton',
+                title="Potencial de Captura de CO2 por Área",
+                labels={'co2_total_ton': 'CO2 Total (ton)', 'area': 'Área'},
+                color='co2_total_ton',
+                color_continuous_scale='Viridis')
+    
+    return fig
+
+def create_impact_radar_chart(impact_data):
+    """Crear gráfico radar de impactos antrópicos"""
+    # Agregar impactos por factor
+    impact_factors = {}
+    for area in impact_data:
+        for factor, details in area['detalles'].items():
+            if factor not in impact_factors:
+                impact_factors[factor] = []
+            impact_factors[factor].append(details['impacto'])
+    
+    # Calcular promedios
+    avg_impacts = {factor: np.mean(values) for factor, values in impact_factors.items()}
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatterpolar(
+        r=list(avg_impacts.values()),
+        theta=list(avg_impacts.keys()),
+        fill='toself',
+        name='Impacto Promedio'
+    ))
+    
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+        title="Impacto Antrópico por Factor (Promedio)"
+    )
+    
+    return fig
+
+# ===============================
+# 🚀 INICIALIZACIÓN Y CONFIGURACIÓN
+# ===============================
+
 def initialize_session_state():
-    """Inicializar el estado de la sesión de manera segura"""
+    """Inicializar el estado de la sesión"""
     if 'analysis_complete' not in st.session_state:
         st.session_state.analysis_complete = False
     if 'results' not in st.session_state:
@@ -961,7 +593,6 @@ def initialize_session_state():
     if 'analyzer' not in st.session_state:
         st.session_state.analyzer = IntegratedAnalyzer()
 
-# Llamar a la inicialización al inicio
 initialize_session_state()
 
 # ===============================
@@ -999,20 +630,16 @@ with st.sidebar:
         min_value=1, max_value=50, value=12
     )
     
-    analysis_depth = st.selectbox(
-        "Profundidad del análisis",
-        ["Básico", "Intermedio", "Completo"],
-        index=1
-    )
-    
     st.markdown("---")
     st.info("""
-    **📈 Indicadores Principales:**
-    - 🌿 Shannon: Diversidad de especies
-    - 📊 LE.MU: Métricas de conservación
-    - 🛰️ NDVI/EVI: Salud de la vegetación
-    - 🔗 Conectividad: Integridad ecológica
-    - 🌳 LiDAR: Estructura 3D del terreno
+    **📈 Categorías de Indicadores:**
+    
+    🌳 **Carbono**: Reservas y tendencias del carbono
+    📉 **Deforestación**: Pérdida de cobertura boscosa  
+    ⚠️ **Impacto Antrópico**: Presiones humanas
+    🌿 **Vegetación**: Estado y clasificación
+    🌊 **Agua**: Disponibilidad y riesgo
+    ☀️ **Clima**: Factores relacionados
     """)
 
 # ===============================
@@ -1022,7 +649,6 @@ with st.sidebar:
 # Procesar archivo subido
 if uploaded_file:
     with st.spinner("Procesando archivo del territorio..."):
-        # Simulación de procesamiento de archivo
         area_count = min(manual_areas * 2, 50)
         st.success(f"🗺️ Territorio procesado: {uploaded_file.name}")
         st.info(f"🔍 Se analizarán {area_count} parcelas de muestreo")
@@ -1031,11 +657,10 @@ else:
     st.info(f"🔬 Configuración manual: {area_count} parcelas de muestreo")
 
 # Mostrar resumen de configuración
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3 = st.columns(3)
 col1.metric("Parcelas", area_count)
 col2.metric("Hectáreas", f"{area_hectares:,}")
 col3.metric("Vegetación", vegetation_type)
-col4.metric("Análisis", analysis_depth)
 
 # Botón de ejecución
 if st.button("🚀 EJECUTAR DIAGNÓSTICO INTEGRAL", type="primary", use_container_width=True):
@@ -1046,263 +671,182 @@ if st.button("🚀 EJECUTAR DIAGNÓSTICO INTEGRAL", type="primary", use_containe
         st.session_state.analysis_complete = True
     
     st.success("✅ Análisis completado exitosamente!")
-    st.rerun()  # Forzar actualización para mostrar resultados
+    st.rerun()
 
 # Mostrar resultados si el análisis está completo
 if st.session_state.analysis_complete and st.session_state.results:
     results = st.session_state.results
     
     # ===============================
-    # 📊 RESULTADOS PRINCIPALES
+    # 📊 RESUMEN EJECUTIVO
     # ===============================
     
     st.subheader("📈 RESUMEN EJECUTIVO DEL DIAGNÓSTICO")
     
-    # Tarjetas de métricas principales
+    summary = results['summary_metrics']
+    
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        health_score = results['integrated_scores']['ecosystem_health']
         st.metric(
-            "Salud del Ecosistema",
-            f"{health_score:.1f}/100",
-            results['integrated_scores']['overall_rating']
+            "Carbono Total CO₂",
+            f"{summary['carbono_total_co2_ton']:,} ton",
+            "Almacenamiento potencial"
         )
     
     with col2:
-        shannon = results['biodiversity_metrics']['shannon_index']
         st.metric(
-            "Diversidad (Shannon)",
-            f"{shannon:.3f}",
-            "Alta" if shannon > 2.5 else "Media" if shannon > 1.5 else "Baja"
+            "Pérdida de Bosque",
+            f"{summary['perdida_bosque_promedio']}%",
+            "Acumulada desde 2020"
         )
     
     with col3:
-        richness = results['biodiversity_metrics']['species_richness']
         st.metric(
-            "Riqueza de Especies",
-            richness,
-            f"Área: {area_hectares} ha"
+            "Impacto Antrópico",
+            f"{summary['impacto_antropico_promedio']}",
+            "Promedio por área"
         )
     
     with col4:
-        ndvi = results['vegetation_metrics'].get('NDVI', 0)
         st.metric(
-            "Vigor Vegetal (NDVI)",
-            f"{ndvi:.3f}",
-            "Excelente" if ndvi > 0.6 else "Bueno" if ndvi > 0.4 else "Regular"
+            "Áreas Analizadas",
+            summary['areas_analizadas'],
+            "Parcelas de muestreo"
         )
     
     # ===============================
-    # 🗺️ MAPAS INTERACTIVOS
+    # 🗺️ MAPAS DE INDICADORES
     # ===============================
     
-    st.subheader("🗺️ MAPAS DE ANÁLISIS TERRITORIAL")
+    st.subheader("🗺️ MAPAS DE INDICADORES TERRITORIALES")
     
-    map_tab1, map_tab2, map_tab3 = st.tabs(["Mapa Integral", "Mapa de NDVI", "Visualización 3D LiDAR"])
+    map_tab1, map_tab2, map_tab3, map_tab4 = st.tabs([
+        "🌳 Carbono CO₂", "🌿 Vegetación", "📉 Deforestación", "⚠️ Impacto Antrópico"
+    ])
     
     with map_tab1:
-        st.markdown("**🌍 Mapa Integral de Biodiversidad y Vegetación**")
-        biodiversity_map = create_biodiversity_map(results['species_data'], results['spectral_data'])
-        st_folium(biodiversity_map, width=800, height=500)
+        st.markdown("**🌳 Mapa de Potencial de Captura de CO2**")
+        carbon_map = create_carbon_map(results['carbon_indicators'])
+        st_folium(carbon_map, width=800, height=500)
         st.info("""
-        **Leyenda del Mapa Integral:**
-        - 🌿 **Puntos verdes**: Salud vegetal (NDVI)
-        - 🦜 **Marcadores azules**: Biodiversidad (riqueza de especies)
+        **Interpretación del Potencial de Carbono:**
+        - 🟢 **Alto potencial**: >2,000 ton CO₂ (Bosques maduros)
+        - 🟡 **Medio potencial**: 500-2,000 ton CO₂ (Bosques secundarios)
+        - 🔴 **Bajo potencial**: <500 ton CO₂ (Vegetación degradada)
         """)
     
     with map_tab2:
-        st.markdown("**🛰️ Mapa de Calor de NDVI**")
-        ndvi_map = create_ndvi_heatmap(results['spectral_data'])
-        st_folium(ndvi_map, width=800, height=500)
+        st.markdown("**🌿 Mapa de Clasificación de Vegetación**")
+        vegetation_map = create_vegetation_classification_map(results['vegetation_classification'])
+        st_folium(vegetation_map, width=800, height=500)
         st.info("""
-        **Interpretación NDVI:**
-        - 🟢 > 0.7: Vegetación muy densa y saludable
-        - 🟡 0.5-0.7: Vegetación en buen estado
-        - 🟠 0.3-0.5: Vegetación moderada
-        - 🔴 0.1-0.3: Vegetación escasa
-        - ⚫ < 0.1: Suelo desnudo/sin vegetación
+        **Clasificación de Vegetación:**
+        - 🌲 **Bosque Denso**: NDVI > 0.7, cobertura continua
+        - 🌳 **Bosque Abierto**: NDVI 0.5-0.7, dosel discontinuo
+        - 🌿 **Matorral**: NDVI 0.3-0.6, vegetación arbustiva
+        - 🍂 **Sabana/Herbazal**: NDVI 0.1-0.4, predominio herbáceo
         """)
     
     with map_tab3:
-        st.markdown("**🌳 Visualización 3D LiDAR - Estructura del Terreno**")
-        
-        if results['lidar_data']:
-            # Crear visualización 3D
-            lidar_3d = st.session_state.analyzer.lidar_analyzer.create_3d_visualization(
-                results['lidar_data'], 
-                vegetation_type
-            )
-            
-            if lidar_3d:
-                st.pydeck_chart(lidar_3d)
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.info("""
-                    **🎯 Controles 3D:**
-                    - **Click + arrastrar**: Rotar vista
-                    - **Rueda del mouse**: Zoom in/out
-                    - **Shift + arrastrar**: Panorámica
-                    - **Hover sobre puntos**: Ver detalles
-                    """)
-                
-                with col2:
-                    st.info("""
-                    **🌿 Leyenda LiDAR:**
-                    - 🟢 **Puntos verdes**: Vegetación
-                    - 🟤 **Puntos marrones**: Suelo
-                    - 📏 **Altura**: Estructura vertical
-                    - 🎯 **Color intensidad**: Densidad
-                    """)
-                
-                # Estadísticas LiDAR
-                lidar_df = pd.DataFrame(results['lidar_data'])
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    max_height = lidar_df['z'].max()
-                    st.metric("Altura Máxima", f"{max_height:.1f} m")
-                with col2:
-                    avg_height = lidar_df['z'].mean()
-                    st.metric("Altura Promedio", f"{avg_height:.1f} m")
-                with col3:
-                    veg_points = len(lidar_df[lidar_df['color'].apply(lambda x: x[1] == 128)])
-                    total_points = len(lidar_df)
-                    veg_percentage = (veg_points / total_points) * 100
-                    st.metric("Cobertura Vegetal", f"{veg_percentage:.1f}%")
-            else:
-                st.warning("No se pudo generar la visualización 3D LiDAR")
-        else:
-            st.warning("No hay datos LiDAR disponibles para visualización")
+        st.markdown("**📉 Mapa de Pérdida de Cobertura (2020-Actual)**")
+        deforestation_map = create_deforestation_timeline_map(results['deforestation_data'])
+        st_folium(deforestation_map, width=800, height=500)
+        st.info("""
+        **Niveles de Pérdida de Cobertura:**
+        - 🟢 **Baja**: <5% pérdida acumulada
+        - 🟡 **Moderada**: 5-25% pérdida
+        - 🟠 **Alta**: 25-50% pérdida  
+        - 🔴 **Crítica**: >50% pérdida
+        """)
+    
+    with map_tab4:
+        st.markdown("**⚠️ Mapa de Impacto Antrópico**")
+        impact_map = create_anthropic_impact_map(results['impact_data'])
+        st_folium(impact_map, width=800, height=500)
+        st.info("""
+        **Factores de Impacto Antrópico:**
+        - 🚜 **Agricultura**: Expansión agrícola, pesticidas
+        - 🐄 **Ganadería**: Pastoreo intensivo, compactación
+        - 🏙️ **Urbanización**: Expansión urbana, fragmentación
+        - 🛣️ **Infraestructura**: Carreteras, líneas de energía
+        - ⛏️ **Minería**: Minería superficial, contaminación
+        """)
     
     # ===============================
-    # 🌿 ANÁLISIS DE BIODIVERSIDAD
+    # 📈 GRÁFICOS COMPLEMENTARIOS
     # ===============================
     
-    st.subheader("🌿 ANÁLISIS DE BIODIVERSIDAD")
+    st.subheader("📈 ANÁLISIS TEMPORAL Y COMPARATIVO")
     
-    tab1, tab2, tab3 = st.tabs(["Métricas", "Composición", "Indicadores LE.MU"])
+    chart_tab1, chart_tab2, chart_tab3 = st.tabs([
+        "📊 Línea de Tiempo", "🌳 Potencial Carbono", "📊 Impacto por Factor"
+    ])
     
-    with tab1:
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("**📊 Métricas de Diversidad**")
-            metrics_df = pd.DataFrame([
-                {"Métrica": "Índice de Shannon", "Valor": f"{results['biodiversity_metrics']['shannon_index']:.3f}"},
-                {"Métrica": "Riqueza de Especies", "Valor": results['biodiversity_metrics']['species_richness']},
-                {"Métrica": "Equitatividad", "Valor": f"{results['biodiversity_metrics']['evenness']:.3f}"},
-                {"Métrica": "Índice de Simpson", "Valor": f"{results['biodiversity_metrics']['simpson_index']:.3f}"},
-                {"Métrica": "Índice de Margalef", "Valor": f"{results['biodiversity_metrics']['margalef_index']:.3f}"}
-            ])
-            st.dataframe(metrics_df, use_container_width=True, hide_index=True)
-        
-        with col2:
-            st.markdown("**📈 Distribución de Abundancia**")
-            species_summary = results['raw_data']['species_df'].groupby('species')['abundance'].sum().reset_index()
-            if not species_summary.empty:
-                fig = px.pie(species_summary, values='abundance', names='species', 
-                            title="Composición de Especies")
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No hay datos de especies disponibles")
+    with chart_tab1:
+        st.markdown("**Evolución Temporal de la Cobertura Vegetal**")
+        timeline_chart = create_deforestation_timeline_chart(results['deforestation_data'])
+        st.plotly_chart(timeline_chart, use_container_width=True)
     
-    with tab2:
-        st.markdown("**🪴 Composición de Especies por Área**")
-        if not results['raw_data']['species_df'].empty:
-            pivot_df = results['raw_data']['species_df'].pivot_table(
-                index='species', columns='area', values='abundance', fill_value=0
-            )
-            st.dataframe(pivot_df, use_container_width=True)
-            
-            # Heatmap de abundancia
-            fig = px.imshow(pivot_df, aspect='auto', 
-                           title="Mapa de Calor de Abundancia por Especie y Área")
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No hay datos de especies disponibles")
+    with chart_tab2:
+        st.markdown("**Potencial de Captura de CO2 por Área**")
+        carbon_chart = create_carbon_bar_chart(results['carbon_indicators'])
+        st.plotly_chart(carbon_chart, use_container_width=True)
     
-    with tab3:
-        st.markdown("**🔍 Indicadores LE.MU de Conservación**")
-        
-        lemu_data = []
-        for indicator, value in results['lemu_indicators'].items():
-            lemu_data.append({
-                "Indicador": indicator.replace('_', ' ').title(),
-                "Valor": str(value),
-                "Categoría": categorize_lemu_indicator(indicator, value)
-            })
-        
-        lemu_df = pd.DataFrame(lemu_data)
-        st.dataframe(lemu_df, use_container_width=True, hide_index=True)
-        
-        # Radar chart para indicadores LE.MU
-        create_lemu_radar_chart(results['lemu_indicators'])
+    with chart_tab3:
+        st.markdown("**Análisis de Factores de Impacto Antrópico**")
+        impact_chart = create_impact_radar_chart(results['impact_data'])
+        st.plotly_chart(impact_chart, use_container_width=True)
     
     # ===============================
-    # 🛰️ ANÁLISIS DE VEGETACIÓN
+    # 📋 RECOMENDACIONES BASADAS EN INDICADORES
     # ===============================
     
-    st.subheader("🛰️ ANÁLISIS DE INDICES DE VEGETACIÓN")
+    st.subheader("💡 RECOMENDACIONES DE MANEJO BASADAS EN INDICADORES")
     
-    veg_tab1, veg_tab2, veg_tab3 = st.tabs(["Índices Principales", "Comparativa", "Tendencias"])
+    # Generar recomendaciones basadas en los resultados
+    recommendations = []
     
-    with veg_tab1:
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("**📋 Valores Promedio por Índice**")
-            veg_metrics = []
-            for index, value in results['vegetation_metrics'].items():
-                veg_metrics.append({
-                    "Índice": index,
-                    "Valor": f"{value:.4f}",
-                    "Interpretación": interpret_vegetation_index(index, value)
-                })
-            veg_df = pd.DataFrame(veg_metrics)
-            st.dataframe(veg_df, use_container_width=True, hide_index=True)
-        
-        with col2:
-            st.markdown("**📊 Distribución Espacial de NDVI**")
-            spectral_df = pd.DataFrame(results['spectral_data'])
-            fig = px.box(spectral_df, y='NDVI', title="Distribución de NDVI entre Parcelas")
-            st.plotly_chart(fig, use_container_width=True)
+    # Recomendaciones basadas en carbono
+    total_co2 = results['summary_metrics']['carbono_total_co2_ton']
+    if total_co2 > 10000:
+        recommendations.append({
+            'title': 'Protección de Sumideros de Carbono',
+            'description': 'Implementar estrategias de conservación para mantener los altos niveles de almacenamiento de carbono. Considerar programas de pago por servicios ambientales.',
+            'priority': 95,
+            'category': '🌳 Carbono'
+        })
+    elif total_co2 < 5000:
+        recommendations.append({
+            'title': 'Restauración para Captura de Carbono',
+            'description': 'Implementar proyectos de reforestación y agroforestería para aumentar la capacidad de secuestro de carbono del territorio.',
+            'priority': 85,
+            'category': '🌳 Carbono'
+        })
     
-    with veg_tab2:
-        st.markdown("**🔄 Correlación entre Índices**")
-        
-        # Matriz de correlación
-        indices_df = pd.DataFrame(results['spectral_data'])[[
-            'NDVI', 'NDWI', 'EVI', 'SAVI', 'RVI', 'NDRE', 'GNDVI', 'OSAVI'
-        ]]
-        corr_matrix = indices_df.corr()
-        
-        fig = px.imshow(corr_matrix, text_auto=True, aspect='auto',
-                       title="Matriz de Correlación entre Índices de Vegetación")
-        st.plotly_chart(fig, use_container_width=True)
+    # Recomendaciones basadas en deforestación
+    avg_loss = results['summary_metrics']['perdida_bosque_promedio']
+    if avg_loss > 30:
+        recommendations.append({
+            'title': 'Control Urgente de Deforestación',
+            'description': 'Establecer medidas inmediatas de control y vigilancia. Implementar sistemas de alerta temprana de deforestación.',
+            'priority': 90,
+            'category': '📉 Deforestación'
+        })
     
-    with veg_tab3:
-        st.markdown("**📈 Tendencias por Parcela**")
-        
-        spectral_df = pd.DataFrame(results['spectral_data'])
-        melted_df = spectral_df.melt(id_vars=['area'], 
-                                   value_vars=['NDVI', 'NDWI', 'EVI', 'SAVI'],
-                                   var_name='Índice', value_name='Valor')
-        
-        fig = px.line(melted_df, x='area', y='Valor', color='Índice',
-                     title="Variación de Índices por Parcela de Muestreo")
-        st.plotly_chart(fig, use_container_width=True)
+    # Recomendaciones basadas en impacto antrópico
+    avg_impact = results['summary_metrics']['impacto_antropico_promedio']
+    if avg_impact > 0.6:
+        recommendations.append({
+            'title': 'Manejo Sostenible de Actividades Humanas',
+            'description': 'Desarrollar planes de ordenamiento territorial que regulen las actividades antrópicas. Promover prácticas sostenibles en agricultura y ganadería.',
+            'priority': 80,
+            'category': '⚠️ Impacto'
+        })
     
-    # ===============================
-    # 📋 RECOMENDACIONES
-    # ===============================
-    
-    st.subheader("💡 RECOMENDACIONES DE MANEJO Y CONSERVACIÓN")
-    
-    recommendations = generate_recommendations(results)
-    
+    # Mostrar recomendaciones
     for i, rec in enumerate(recommendations, 1):
-        with st.expander(f"Recomendación {i}: {rec['title']} (Prioridad: {rec['priority']}/100)"):
+        with st.expander(f"{rec['category']} {rec['title']} (Prioridad: {rec['priority']}/100)"):
             st.write(rec['description'])
             st.progress(rec['priority'] / 100)
     
@@ -1310,63 +854,62 @@ if st.session_state.analysis_complete and st.session_state.results:
     # 📥 EXPORTACIÓN DE RESULTADOS
     # ===============================
     
-    st.subheader("📊 EXPORTAR DIAGNÓSTICO")
+    st.subheader("📊 EXPORTAR DIAGNÓSTICO COMPLETO")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("📄 Generar Reporte PDF", use_container_width=True):
-            st.success("✅ Reporte PDF generado (simulación)")
-    
-    with col2:
-        # Crear un archivo Excel descargable
+        # Crear archivo Excel con todos los datos
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            pd.DataFrame(results['species_data']).to_excel(writer, sheet_name='Especies', index=False)
-            pd.DataFrame(results['spectral_data']).to_excel(writer, sheet_name='Vegetación', index=False)
-            pd.DataFrame([results['biodiversity_metrics']]).to_excel(writer, sheet_name='Métricas', index=False)
-            pd.DataFrame([results['lemu_indicators']]).to_excel(writer, sheet_name='LEMU', index=False)
+            pd.DataFrame(results['carbon_indicators']).to_excel(writer, sheet_name='Carbono', index=False)
+            pd.DataFrame(results['deforestation_data']).to_excel(writer, sheet_name='Deforestación', index=False)
+            pd.DataFrame(results['impact_data']).to_excel(writer, sheet_name='Impacto', index=False)
+            pd.DataFrame(results['vegetation_classification']).to_excel(writer, sheet_name='Vegetación', index=False)
         
         st.download_button(
-            label="📊 Descargar Excel",
+            label="📊 Descargar Datos Completos (Excel)",
             data=output.getvalue(),
-            file_name=f"diagnostico_biodiversidad_{pd.Timestamp.now().strftime('%Y%m%d')}.xlsx",
+            file_name=f"diagnostico_indicadores_{datetime.now().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
     
-    with col3:
-        if st.button("🗺️ Exportar Capas GIS", use_container_width=True):
-            st.success("✅ Capas GIS exportadas (simulación)")
+    with col2:
+        if st.button("📄 Generar Reporte Ejecutivo PDF", use_container_width=True):
+            st.success("✅ Reporte PDF generado (simulación)")
 
 else:
     # Pantalla de bienvenida
     st.markdown("""
     ## 👋 ¡Bienvenido al Diagnóstico de Biodiversidad Ambiental!
     
-    ### 🎯 ¿Qué puedes hacer con esta herramienta?
+    ### 🎯 ¿Qué son los indicadores?
     
-    1. **📁 Cargar tu territorio**: Sube archivos KML o Shapefile con la delimitación de tu área de estudio
-    2. **🌿 Analizar biodiversidad**: Calcula índices de diversidad, riqueza y equitatividad de especies
-    3. **🛰️ Evaluar vegetación**: Obtén índices espectrales (NDVI, EVI, NDWI, etc.) para salud vegetal
-    4. **🌳 Visualización 3D LiDAR**: Explora la estructura tridimensional del terreno
-    5. **🔍 Aplicar LE.MU**: Utiliza indicadores de conservación y conectividad ecológica
-    6. **📊 Integrar resultados**: Obtén un diagnóstico completo con recomendaciones de manejo
+    Los indicadores son mediciones normalizadas que captan el estado, las tendencias y los riesgos de los ecosistemas. 
+    Nos permiten responder a preguntas clave sobre el territorio:
     
-    ### 🚀 Para comenzar:
+    - 🌳 **¿Cuánto carbono hay almacenado?** ¿Está aumentando o disminuyendo?
+    - 📉 **¿Dónde está ocurriendo la pérdida de bosque?** ¿Cuáles son las tendencias?
+    - ⚠️ **¿Qué áreas están bajo presión humana?** ¿Cuáles son los factores de impacto?
+    - 🌿 **¿Qué tipos de vegetación están presentes?** ¿Cuál es su estado de salud?
+    
+    ### 🚀 Para comenzar el análisis:
     
     1. Configura los parámetros en la **barra lateral** ←
-    2. Sube tu archivo territorial (opcional)
+    2. Sube tu archivo territorial (opcional)  
     3. Presiona **EJECUTAR DIAGNÓSTICO INTEGRAL**
     
     ---
     
-    **📚 Metodologías integradas:**
-    - 🌿 **LE.MU Atlas**: Sistema de indicadores de conservación
-    - 📊 **Índice de Shannon-Wiener**: Diversidad de especies
-    - 🛰️ **Teledetección**: Índices de vegetación multiespectral
-    - 🌳 **LiDAR 3D**: Estructura tridimensional del terreno
-    - 🔗 **Análisis integral**: Salud completa del ecosistema
+    **📚 Categorías de Indicadores Analizados:**
+    
+    🌳 **Carbono**: Reservas y tendencias del carbono por encima y por debajo del suelo
+    📉 **Deforestación**: Pérdida de cobertura boscosa y cambios de uso del suelo
+    ⚠️ **Impacto Antrópico**: Presiones humanas que determinan la resistencia de los ecosistemas
+    🌿 **Vegetación**: Estado y cambio de la cubierta vegetal
+    🌊 **Agua**: Disponibilidad, riesgo y seguridad hídrica
+    ☀️ **Clima**: Temperatura de la superficie terrestre y factores relacionados
     """)
 
 # Footer
@@ -1374,7 +917,7 @@ st.markdown("---")
 st.markdown(
     "<div style='text-align: center'>"
     "🌍 <b>Diagnóstico de Biodiversidad Ambiental</b> | "
-    "Metodología LE.MU Atlas + Índices de Vegetación + LiDAR 3D | "
+    "Sistema de Indicadores LE.MU Atlas | "
     "Desarrollado con Streamlit 🚀"
     "</div>",
     unsafe_allow_html=True
