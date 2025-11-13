@@ -22,6 +22,12 @@ import geopandas as gpd
 from shapely.geometry import Polygon, Point
 import pyproj
 
+# Nueva librería para generar documentos Word
+from docx import Document
+from docx.shared import Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+import base64
+
 # ===============================
 # 🌿 CONFIGURACIÓN Y ESTILOS GLOBALES
 # ===============================
@@ -91,6 +97,10 @@ def aplicar_estilos_globales():
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         margin-bottom: 1rem;
     }
+    .download-btn {
+        background: linear-gradient(135deg, #1E90FF 0%, #00BFFF 100%) !important;
+        margin: 5px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -103,7 +113,7 @@ def crear_header():
     """, unsafe_allow_html=True)
 
 # ===============================
-# 🧩 CLASE PRINCIPAL DE ANÁLISIS
+# 🧩 CLASE PRINCIPAL DE ANÁLISIS MEJORADA
 # ===============================
 
 class AnalizadorBiodiversidad:
@@ -167,6 +177,72 @@ class AnalizadorBiodiversidad:
             }
         }
     
+    def _calcular_area_hectareas(self, poligono):
+        """Calcular área en hectáreas de forma precisa usando proyección UTM"""
+        try:
+            # Verificar si el polígono está en coordenadas geográficas (EPSG:4326)
+            if poligono.is_valid:
+                # Crear un GeoDataFrame temporal
+                gdf_temp = gpd.GeoDataFrame([1], geometry=[poligono], crs="EPSG:4326")
+                
+                # Proyectar a un sistema de coordenadas planas para cálculo preciso
+                centroid = poligono.centroid
+                utm_zone = self._determinar_zona_utm(centroid.y, centroid.x)
+                
+                # Proyectar y calcular área
+                gdf_projected = gdf_temp.to_crs(utm_zone)
+                area_m2 = gdf_projected.geometry.area.iloc[0]
+                area_hectareas = area_m2 / 10000
+                
+                return round(area_hectareas, 2)
+            else:
+                # Fallback: cálculo aproximado mejorado
+                return self._calcular_area_aproximada(poligono)
+                
+        except Exception as e:
+            st.warning(f"Usando cálculo aproximado debido a: {str(e)}")
+            return self._calcular_area_aproximada(poligono)
+
+    def _determinar_zona_utm(self, lat, lon):
+        """Determinar la zona UTM automáticamente"""
+        # La zona UTM va de 1 a 60
+        zona = int((lon + 180) / 6) + 1
+        hemisferio = 'north' if lat >= 0 else 'south'
+        
+        return f"EPSG:326{zona:02d}" if hemisferio == 'north' else f"EPSG:327{zona:02d}"
+
+    def _calcular_area_aproximada(self, poligono):
+        """Cálculo aproximado mejorado cuando falla la proyección"""
+        try:
+            bounds = poligono.bounds
+            minx, miny, maxx, maxy = bounds
+            
+            # Calcular grados a metros más preciso considerando latitud
+            lat_media = (miny + maxy) / 2
+            metros_por_grado_lat = 111320  # Aproximadamente constante
+            metros_por_grado_lon = 111320 * math.cos(math.radians(lat_media))
+            
+            # Calcular área en metros cuadrados del bounding box
+            ancho_m = (maxx - minx) * metros_por_grado_lon
+            alto_m = (maxy - miny) * metros_por_grado_lat
+            area_bbox_m2 = ancho_m * alto_m
+            
+            # Estimar área real del polígono (no todo el bbox)
+            bbox_area_grados = (maxx - minx) * (maxy - miny)
+            if bbox_area_grados > 0:
+                # Calcular relación polígono/bbox usando una aproximación
+                relacion_aproximada = 0.75  # Valor conservador para polígonos típicos
+                area_m2_ajustada = area_bbox_m2 * relacion_aproximada
+            else:
+                area_m2_ajustada = area_bbox_m2
+            
+            area_hectareas = area_m2_ajustada / 10000
+            return round(max(area_hectareas, 0.01), 2)  # Mínimo 0.01 ha
+            
+        except Exception as e:
+            st.error(f"Error en cálculo aproximado: {str(e)}")
+            return 1000  # Fallback extremo
+    
     def procesar_poligono(self, gdf, vegetation_type, divisiones=5):
         """Procesar el polígono cargado dividiéndolo en áreas regulares"""
         
@@ -177,8 +253,11 @@ class AnalizadorBiodiversidad:
             # Obtener el polígono principal
             poligono = gdf.geometry.iloc[0]
             
-            # Calcular área en hectáreas
+            # Calcular área en hectáreas (PRECISA)
             area_hectareas = self._calcular_area_hectareas(poligono)
+            
+            # Mostrar información del área calculada
+            st.info(f"**Área calculada:** {area_hectareas:,.2f} hectáreas")
             
             # Generar áreas regulares dentro del polígono
             areas_data = self._generar_areas_regulares(poligono, divisiones)
@@ -197,15 +276,6 @@ class AnalizadorBiodiversidad:
         except Exception as e:
             st.error(f"Error procesando polígono: {str(e)}")
             return None
-    
-    def _calcular_area_hectareas(self, poligono):
-        """Calcular área en hectáreas"""
-        try:
-            bounds = poligono.bounds
-            area_aproximada = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1]) * 11100 * 11100 * 0.8
-            return round(area_aproximada / 10000, 2)
-        except:
-            return 1000
     
     def _generar_areas_regulares(self, poligono, divisiones):
         """Generar áreas regulares (grid) dentro del polígono"""
@@ -823,7 +893,7 @@ def crear_grafico_treemap(datos, columna_valor, columna_estado, titulo):
         return go.Figure()
 
 # ===============================
-# 📁 MANEJO DE ARCHIVOS
+# 📁 MANEJO DE ARCHIVOS Y DESCARGAS
 # ===============================
 
 def procesar_archivo_cargado(uploaded_file):
@@ -844,6 +914,117 @@ def procesar_archivo_cargado(uploaded_file):
     except Exception as e:
         st.error(f"Error procesando archivo: {str(e)}")
         return None
+
+def generar_geojson_indicador(datos, nombre_indicador):
+    """Generar GeoJSON para un indicador específico"""
+    try:
+        # Crear GeoDataFrame
+        gdf = gpd.GeoDataFrame(datos, geometry='geometry')
+        gdf.crs = "EPSG:4326"
+        
+        # Convertir a GeoJSON
+        geojson_str = gdf.to_json()
+        return geojson_str
+    except Exception as e:
+        st.error(f"Error generando GeoJSON: {str(e)}")
+        return None
+
+def crear_documento_word(resultados):
+    """Crear documento Word con el informe completo"""
+    try:
+        doc = Document()
+        
+        # Título
+        title = doc.add_heading('Informe de Análisis de Biodiversidad', 0)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        # Fecha
+        doc.add_paragraph(f"Fecha de generación: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+        doc.add_paragraph()
+        
+        # Resumen ejecutivo
+        doc.add_heading('Resumen Ejecutivo', level=1)
+        summary = resultados['resultados']['summary_metrics']
+        
+        resumen_text = f"""
+        Este informe presenta los resultados del análisis integral de biodiversidad realizado en el área de estudio.
+        
+        **Área total analizada:** {resultados['area_hectareas']:,.2f} hectáreas
+        **Tipo de vegetación:** {resultados['tipo_vegetacion']}
+        **Estado general del ecosistema:** {summary['estado_general']}
+        **Carbono total almacenado:** {summary['carbono_total_co2_ton']:,} ton CO₂
+        **Índice de biodiversidad promedio:** {summary['indice_biodiversidad_promedio']}
+        **Áreas analizadas:** {summary['areas_analizadas']}
+        """
+        
+        doc.add_paragraph(resumen_text)
+        doc.add_paragraph()
+        
+        # Indicadores principales
+        doc.add_heading('Indicadores Principales', level=1)
+        
+        indicadores_data = [
+            ('Carbono Total', f"{summary['carbono_total_co2_ton']:,} ton CO₂"),
+            ('Biodiversidad', f"{summary['indice_biodiversidad_promedio']}"),
+            ('Disponibilidad de Agua', f"{summary['disponibilidad_agua_promedio']}"),
+            ('Salud del Suelo', f"{summary['salud_suelo_promedio']}"),
+            ('Presión Antrópica', f"{summary['presion_antropica_promedio']}"),
+            ('Conectividad', f"{summary['conectividad_promedio']}")
+        ]
+        
+        for nombre, valor in indicadores_data:
+            p = doc.add_paragraph()
+            p.add_run(f"{nombre}: ").bold = True
+            p.add_run(valor)
+        
+        doc.add_paragraph()
+        
+        # Recomendaciones
+        doc.add_heading('Recomendaciones', level=1)
+        
+        if summary['estado_general'] in ['Crítico', 'Moderado']:
+            recomendaciones = [
+                "Implementar programas de restauración ecológica en áreas degradadas",
+                "Establecer corredores biológicos para mejorar la conectividad",
+                "Monitorear continuamente las presiones antrópicas",
+                "Desarrollar estrategias de conservación de la biodiversidad",
+                "Considerar programas de pago por servicios ambientales"
+            ]
+        else:
+            recomendaciones = [
+                "Mantener las prácticas actuales de conservación",
+                "Continuar con el monitoreo periódico de indicadores",
+                "Fortalecer la protección contra amenazas externas",
+                "Promover la investigación científica en el área",
+                "Considerar certificaciones de conservación"
+            ]
+        
+        for rec in recomendaciones:
+            doc.add_paragraph(rec, style='List Bullet')
+        
+        # Guardar documento en memoria
+        buffer = BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
+        
+        return buffer
+    except Exception as e:
+        st.error(f"Error generando documento Word: {str(e)}")
+        return None
+
+def crear_boton_descarga(data, filename, button_text, file_type):
+    """Crear botón de descarga para diferentes tipos de archivos"""
+    try:
+        if file_type == 'geojson':
+            b64 = base64.b64encode(data.encode()).decode()
+            href = f'<a href="data:application/json;base64,{b64}" download="{filename}" class="download-btn">📥 {button_text}</a>'
+        elif file_type == 'word':
+            b64 = base64.b64encode(data.getvalue()).decode()
+            href = f'<a href="data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,{b64}" download="{filename}" class="download-btn">📥 {button_text}</a>'
+        
+        st.markdown(f'<div style="margin: 10px 0;">{href}</div>', unsafe_allow_html=True)
+    except Exception as e:
+        st.error(f"Error creando botón de descarga: {str(e)}")
 
 # ===============================
 # 🚀 CONFIGURACIÓN PRINCIPAL
@@ -925,7 +1106,7 @@ def main():
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Área aproximada", f"{area_ha:,} ha")
+            st.metric("Área aproximada", f"{area_ha:,.2f} ha")
         with col2:
             st.metric("Tipo de vegetación", vegetation_type)
         with col3:
@@ -951,6 +1132,72 @@ def main():
     if st.session_state.analysis_complete and st.session_state.results:
         resultados = st.session_state.results
         summary = resultados['resultados']['summary_metrics']
+        
+        # SECCIÓN DE DESCARGAS
+        st.markdown('<div class="custom-card">', unsafe_allow_html=True)
+        st.subheader("📥 Descargas")
+        
+        col_dl1, col_dl2, col_dl3 = st.columns(3)
+        
+        with col_dl1:
+            st.markdown("**🗺️ Mapas GeoJSON**")
+            # Generar GeoJSON para cada indicador
+            indicadores_geojson = [
+                ('carbono', 'Carbono'),
+                ('vegetacion', 'Vegetación'),
+                ('biodiversidad', 'Biodiversidad'),
+                ('agua', 'Recursos Hídricos')
+            ]
+            
+            for key, nombre in indicadores_geojson:
+                geojson_data = generar_geojson_indicador(
+                    resultados['resultados'][key], 
+                    f"indicador_{key}"
+                )
+                if geojson_data:
+                    crear_boton_descarga(
+                        geojson_data,
+                        f"mapa_{key}.geojson",
+                        f"Descargar {nombre}",
+                        'geojson'
+                    )
+        
+        with col_dl2:
+            st.markdown("**📊 Datos Completos**")
+            # Datos combinados en CSV
+            datos_combinados = []
+            for i in range(len(resultados['resultados']['vegetacion'])):
+                combo = {
+                    'area': resultados['resultados']['vegetacion'][i]['area'],
+                    'ndvi': resultados['resultados']['vegetacion'][i]['ndvi'],
+                    'co2_total_ton': resultados['resultados']['carbono'][i]['co2_total_ton'],
+                    'indice_shannon': resultados['resultados']['biodiversidad'][i]['indice_shannon'],
+                    'disponibilidad_agua': resultados['resultados']['agua'][i]['disponibilidad_agua'],
+                    'salud_suelo': resultados['resultados']['suelo'][i]['salud_suelo'],
+                    'conectividad_total': resultados['resultados']['conectividad'][i]['conectividad_total'],
+                    'presion_total': resultados['resultados']['presiones'][i]['presion_total']
+                }
+                datos_combinados.append(combo)
+            
+            df_completo = pd.DataFrame(datos_combinados)
+            csv = df_completo.to_csv(index=False)
+            b64_csv = base64.b64encode(csv.encode()).decode()
+            href_csv = f'<a href="data:file/csv;base64,{b64_csv}" download="datos_analisis_completo.csv" class="download-btn">📥 Descargar CSV Completo</a>'
+            st.markdown(href_csv, unsafe_allow_html=True)
+        
+        with col_dl3:
+            st.markdown("**📄 Informe Ejecutivo**")
+            # Generar documento Word
+            doc_buffer = crear_documento_word(resultados)
+            if doc_buffer:
+                crear_boton_descarga(
+                    doc_buffer,
+                    "informe_biodiversidad.docx",
+                    "Descargar Informe Word",
+                    'word'
+                )
+        
+        st.markdown('</div>', unsafe_allow_html=True)
         
         # RESUMEN EJECUTIVO
         st.markdown('<div class="custom-card">', unsafe_allow_html=True)
@@ -1181,6 +1428,7 @@ def main():
         - 📊 **Visualizaciones Avanzadas** - Gráficos 3D, radar, sunburst, treemap
         - 🎨 **Leyendas Detalladas** - Información clara y comprensible
         - 🔗 **Análisis Multivariado** - Relaciones entre indicadores
+        - 📥 **Descargas Mejoradas** - GeoJSON + Informes Word ejecutivos
         
         **¡Comienza cargando tu archivo en el sidebar!** ←
         """)
