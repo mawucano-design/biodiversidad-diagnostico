@@ -14,3 +14,4 @@ xlsxwriter
 rasterio
 geopandas
 shapely
+python-docx
