@@ -16,6 +16,8 @@ from datetime import datetime, timedelta
 # Librerías para análisis geoespacial
 import folium
 from streamlit_folium import st_folium
+# ✅ CORRECCIÓN: Importar plugins correctamente
+from folium.plugins import Fullscreen, MousePosition
 import pydeck as pdk
 
 # ===============================
@@ -93,15 +95,6 @@ def aplicar_estilos_globales():
         box-shadow: 0 8px 25px rgba(0,0,0,0.12);
     }
     
-    /* Sidebar styling */
-    .css-1d391kg {
-        background: linear-gradient(180deg, #2C3E50 0%, #34495E 100%);
-    }
-    
-    .sidebar .sidebar-content {
-        background: linear-gradient(180deg, #2C3E50 0%, #34495E 100%);
-    }
-    
     /* Botones modernos */
     .stButton button {
         background: linear-gradient(135deg, #2E8B57 0%, #228B22 100%);
@@ -131,14 +124,6 @@ def aplicar_estilos_globales():
         color: #2C3E50 !important;
     }
     
-    .stMetric {
-        background: white;
-        padding: 1rem;
-        border-radius: 12px;
-        border-left: 4px solid #2E8B57;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    
     /* Separadores elegantes */
     .custom-divider {
         height: 4px;
@@ -164,11 +149,6 @@ def aplicar_estilos_globales():
     .stTabs [aria-selected="true"] {
         background: #2E8B57 !important;
         color: white !important;
-    }
-    
-    /* Mejoras para selects e inputs */
-    .stSelectbox, .stNumberInput, .stTextInput {
-        border-radius: 8px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -503,14 +483,14 @@ def crear_mapa_interactivo_mejorado(lat, lon, zoom=10, area_nombre="Área de Est
             control=True
         ).add_to(m)
     
-    # Plugins adicionales
-    plugins.Fullscreen(
+    # ✅ CORRECCIÓN: Usar plugins importados directamente
+    Fullscreen(
         position='topright',
         title='Pantalla completa',
         title_cancel='Salir pantalla completa'
     ).add_to(m)
     
-    plugins.MousePosition(
+    MousePosition(
         position='bottomleft',
         separator=' | ',
         empty_string='Coordenadas no disponibles',
@@ -528,6 +508,10 @@ def crear_mapa_interactivo_mejorado(lat, lon, zoom=10, area_nombre="Área de Est
 
 def create_carbon_map(carbon_data):
     """Crear mapa de captura potencial de CO2 mejorado"""
+    if not carbon_data:
+        st.warning("No hay datos de carbono para mostrar")
+        return folium.Map(location=[-14.0, -60.0], zoom_start=4)
+    
     m = crear_mapa_interactivo_mejorado(-14.0, -60.0, 4)
     
     # Agregar puntos de carbono
@@ -593,6 +577,10 @@ def create_carbon_map(carbon_data):
 
 def create_vegetation_classification_map(vegetation_data):
     """Crear mapa de clasificación de vegetación mejorado"""
+    if not vegetation_data:
+        st.warning("No hay datos de vegetación para mostrar")
+        return folium.Map(location=[-14.0, -60.0], zoom_start=4)
+    
     m = crear_mapa_interactivo_mejorado(-14.0, -60.0, 4)
     
     # Colores para cada clase de vegetación
@@ -640,6 +628,10 @@ def create_vegetation_classification_map(vegetation_data):
 
 def create_deforestation_timeline_map(deforestation_data):
     """Crear mapa de línea de tiempo de deforestación mejorado"""
+    if not deforestation_data:
+        st.warning("No hay datos de deforestación para mostrar")
+        return folium.Map(location=[-14.0, -60.0], zoom_start=4)
+    
     m = crear_mapa_interactivo_mejorado(-14.0, -60.0, 4)
     
     # Filtrar datos del año más reciente
@@ -693,6 +685,10 @@ def create_deforestation_timeline_map(deforestation_data):
 
 def create_anthropic_impact_map(impact_data):
     """Crear mapa de impacto antrópico mejorado"""
+    if not impact_data:
+        st.warning("No hay datos de impacto antrópico para mostrar")
+        return folium.Map(location=[-14.0, -60.0], zoom_start=4)
+    
     m = crear_mapa_interactivo_mejorado(-14.0, -60.0, 4)
     
     for area_data in impact_data:
@@ -730,11 +726,15 @@ def create_anthropic_impact_map(impact_data):
     return m
 
 # ===============================
-# 📊 FUNCIONES DE VISUALIZACIÓN (MANTENIENDO TU CÓDIGO ORIGINAL)
+# 📊 FUNCIONES DE VISUALIZACIÓN
 # ===============================
 
 def create_deforestation_timeline_chart(deforestation_data):
     """Crear gráfico de línea de tiempo de deforestación"""
+    if not deforestation_data:
+        st.warning("No hay datos para generar el gráfico de deforestación")
+        return go.Figure()
+    
     df = pd.DataFrame(deforestation_data)
     
     fig = px.line(df, x='año', y='cobertura_porcentaje', color='area',
@@ -753,6 +753,10 @@ def create_deforestation_timeline_chart(deforestation_data):
 
 def create_carbon_bar_chart(carbon_data):
     """Crear gráfico de barras de potencial de carbono"""
+    if not carbon_data:
+        st.warning("No hay datos para generar el gráfico de carbono")
+        return go.Figure()
+    
     df = pd.DataFrame(carbon_data)
     
     fig = px.bar(df, x='area', y='co2_total_ton',
@@ -771,6 +775,10 @@ def create_carbon_bar_chart(carbon_data):
 
 def create_impact_radar_chart(impact_data):
     """Crear gráfico radar de impactos antrópicos"""
+    if not impact_data:
+        st.warning("No hay datos para generar el gráfico de impacto")
+        return go.Figure()
+    
     # Agregar impactos por factor
     impact_factors = {}
     for area in impact_data:
