@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 import plotly.figure_factory as ff
 from io import BytesIO
 from datetime import datetime, timedelta
+import json
 
 # Librerías para análisis geoespacial
 import folium
@@ -22,10 +23,16 @@ import geopandas as gpd
 from shapely.geometry import Polygon, Point
 import pyproj
 
-# Nueva librería para generar documentos Word
-from docx import Document
-from docx.shared import Inches
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+# Manejo de la librería docx con fallback
+try:
+    from docx import Document
+    from docx.shared import Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
+    st.warning("⚠️ La librería python-docx no está instalada. La generación de informes Word estará deshabilitada.")
+
 import base64
 
 # ===============================
@@ -100,6 +107,25 @@ def aplicar_estilos_globales():
     .download-btn {
         background: linear-gradient(135deg, #1E90FF 0%, #00BFFF 100%) !important;
         margin: 5px;
+        padding: 10px 15px;
+        border-radius: 8px;
+        color: white;
+        text-decoration: none;
+        display: inline-block;
+        font-weight: 600;
+        border: none;
+        cursor: pointer;
+        font-size: 14px;
+    }
+    .download-btn:hover {
+        background: linear-gradient(135deg, #0066CC 0%, #0099FF 100%) !important;
+    }
+    .warning-box {
+        background: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 8px;
+        padding: 15px;
+        margin: 10px 0;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -893,7 +919,7 @@ def crear_grafico_treemap(datos, columna_valor, columna_estado, titulo):
         return go.Figure()
 
 # ===============================
-# 📁 MANEJO DE ARCHIVOS Y DESCARGAS
+# 📁 MANEJO DE ARCHIVOS Y DESCARGAS CORREGIDO
 # ===============================
 
 def procesar_archivo_cargado(uploaded_file):
@@ -916,21 +942,82 @@ def procesar_archivo_cargado(uploaded_file):
         return None
 
 def generar_geojson_indicador(datos, nombre_indicador):
-    """Generar GeoJSON para un indicador específico"""
+    """Generar GeoJSON para un indicador específico - CORREGIDO"""
     try:
+        # Crear una copia de los datos sin las columnas problemáticas
+        datos_limpios = []
+        for item in datos:
+            item_limpio = item.copy()
+            # Remover columnas que no son serializables
+            if 'centroid' in item_limpio:
+                del item_limpio['centroid']
+            if 'geometry' in item_limpio:
+                # Convertir la geometría a WKT para serialización
+                item_limpio['geometry_wkt'] = item_limpio['geometry'].wkt
+                del item_limpio['geometry']
+            datos_limpios.append(item_limpio)
+        
+        # Crear DataFrame limpio
+        df_limpio = pd.DataFrame(datos_limpios)
+        
+        # Convertir a JSON seguro
+        json_str = df_limpio.to_json(orient='records', indent=2)
+        return json_str
+        
+    except Exception as e:
+        st.error(f"Error generando GeoJSON: {str(e)}")
+        return None
+
+def generar_geojson_completo(resultados):
+    """Generar un GeoJSON completo con todos los indicadores - NUEVA FUNCIÓN"""
+    try:
+        # Combinar todos los datos en un solo DataFrame
+        todos_datos = []
+        
+        for i in range(len(resultados['resultados']['vegetacion'])):
+            area_id = resultados['resultados']['vegetacion'][i]['area']
+            
+            # Encontrar la geometría correspondiente
+            geometry = None
+            for area in resultados['areas_analisis']:
+                if area['id'] == area_id:
+                    geometry = area['geometry']
+                    break
+            
+            if geometry:
+                # Combinar datos de todos los indicadores
+                area_data = {
+                    'area': area_id,
+                    'geometry': geometry,
+                    'ndvi': resultados['resultados']['vegetacion'][i]['ndvi'],
+                    'salud_vegetacion': resultados['resultados']['vegetacion'][i]['salud_vegetacion'],
+                    'co2_total_ton': resultados['resultados']['carbono'][i]['co2_total_ton'],
+                    'indice_shannon': resultados['resultados']['biodiversidad'][i]['indice_shannon'],
+                    'disponibilidad_agua': resultados['resultados']['agua'][i]['disponibilidad_agua'],
+                    'salud_suelo': resultados['resultados']['suelo'][i]['salud_suelo'],
+                    'conectividad_total': resultados['resultados']['conectividad'][i]['conectividad_total'],
+                    'presion_total': resultados['resultados']['presiones'][i]['presion_total']
+                }
+                todos_datos.append(area_data)
+        
         # Crear GeoDataFrame
-        gdf = gpd.GeoDataFrame(datos, geometry='geometry')
+        gdf = gpd.GeoDataFrame(todos_datos, geometry='geometry')
         gdf.crs = "EPSG:4326"
         
         # Convertir a GeoJSON
         geojson_str = gdf.to_json()
         return geojson_str
+        
     except Exception as e:
-        st.error(f"Error generando GeoJSON: {str(e)}")
+        st.error(f"Error generando GeoJSON completo: {str(e)}")
         return None
 
 def crear_documento_word(resultados):
     """Crear documento Word con el informe completo"""
+    if not DOCX_AVAILABLE:
+        st.error("La librería python-docx no está disponible")
+        return None
+        
     try:
         doc = Document()
         
@@ -949,12 +1036,12 @@ def crear_documento_word(resultados):
         resumen_text = f"""
         Este informe presenta los resultados del análisis integral de biodiversidad realizado en el área de estudio.
         
-        **Área total analizada:** {resultados['area_hectareas']:,.2f} hectáreas
-        **Tipo de vegetación:** {resultados['tipo_vegetacion']}
-        **Estado general del ecosistema:** {summary['estado_general']}
-        **Carbono total almacenado:** {summary['carbono_total_co2_ton']:,} ton CO₂
-        **Índice de biodiversidad promedio:** {summary['indice_biodiversidad_promedio']}
-        **Áreas analizadas:** {summary['areas_analizadas']}
+        Área total analizada: {resultados['area_hectareas']:,.2f} hectáreas
+        Tipo de vegetación: {resultados['tipo_vegetacion']}
+        Estado general del ecosistema: {summary['estado_general']}
+        Carbono total almacenado: {summary['carbono_total_co2_ton']:,} ton CO₂
+        Índice de biodiversidad promedio: {summary['indice_biodiversidad_promedio']}
+        Áreas analizadas: {summary['areas_analizadas']}
         """
         
         doc.add_paragraph(resumen_text)
@@ -1013,14 +1100,23 @@ def crear_documento_word(resultados):
         return None
 
 def crear_boton_descarga(data, filename, button_text, file_type):
-    """Crear botón de descarga para diferentes tipos de archivos"""
+    """Crear botón de descarga para diferentes tipos de archivos - MEJORADO"""
     try:
         if file_type == 'geojson':
+            if data is None:
+                st.error(f"No hay datos para generar {filename}")
+                return
             b64 = base64.b64encode(data.encode()).decode()
             href = f'<a href="data:application/json;base64,{b64}" download="{filename}" class="download-btn">📥 {button_text}</a>'
         elif file_type == 'word':
+            if data is None:
+                st.error(f"No hay datos para generar {filename}")
+                return
             b64 = base64.b64encode(data.getvalue()).decode()
             href = f'<a href="data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,{b64}" download="{filename}" class="download-btn">📥 {button_text}</a>'
+        elif file_type == 'csv':
+            b64 = base64.b64encode(data.encode()).decode()
+            href = f'<a href="data:file/csv;base64,{b64}" download="{filename}" class="download-btn">📥 {button_text}</a>'
         
         st.markdown(f'<div style="margin: 10px 0;">{href}</div>', unsafe_allow_html=True)
     except Exception as e:
@@ -1133,7 +1229,7 @@ def main():
         resultados = st.session_state.results
         summary = resultados['resultados']['summary_metrics']
         
-        # SECCIÓN DE DESCARGAS
+        # SECCIÓN DE DESCARGAS MEJORADA
         st.markdown('<div class="custom-card">', unsafe_allow_html=True)
         st.subheader("📥 Descargas")
         
@@ -1141,15 +1237,26 @@ def main():
         
         with col_dl1:
             st.markdown("**🗺️ Mapas GeoJSON**")
-            # Generar GeoJSON para cada indicador
+            
+            # GeoJSON completo con todos los indicadores
+            geojson_completo = generar_geojson_completo(resultados)
+            if geojson_completo:
+                crear_boton_descarga(
+                    geojson_completo,
+                    "mapa_completo.geojson",
+                    "Descargar GeoJSON Completo",
+                    'geojson'
+                )
+            
+            # GeoJSON individuales para cada indicador (formato seguro)
             indicadores_geojson = [
-                ('carbono', 'Carbono'),
-                ('vegetacion', 'Vegetación'),
-                ('biodiversidad', 'Biodiversidad'),
-                ('agua', 'Recursos Hídricos')
+                ('carbono', 'Carbono', 'co2_total_ton'),
+                ('vegetacion', 'Vegetación', 'ndvi'),
+                ('biodiversidad', 'Biodiversidad', 'indice_shannon'),
+                ('agua', 'Recursos Hídricos', 'disponibilidad_agua')
             ]
             
-            for key, nombre in indicadores_geojson:
+            for key, nombre, columna in indicadores_geojson:
                 geojson_data = generar_geojson_indicador(
                     resultados['resultados'][key], 
                     f"indicador_{key}"
@@ -1157,8 +1264,8 @@ def main():
                 if geojson_data:
                     crear_boton_descarga(
                         geojson_data,
-                        f"mapa_{key}.geojson",
-                        f"Descargar {nombre}",
+                        f"datos_{key}.json",
+                        f"Descargar {nombre} (JSON)",
                         'geojson'
                     )
         
@@ -1170,6 +1277,7 @@ def main():
                 combo = {
                     'area': resultados['resultados']['vegetacion'][i]['area'],
                     'ndvi': resultados['resultados']['vegetacion'][i]['ndvi'],
+                    'salud_vegetacion': resultados['resultados']['vegetacion'][i]['salud_vegetacion'],
                     'co2_total_ton': resultados['resultados']['carbono'][i]['co2_total_ton'],
                     'indice_shannon': resultados['resultados']['biodiversidad'][i]['indice_shannon'],
                     'disponibilidad_agua': resultados['resultados']['agua'][i]['disponibilidad_agua'],
@@ -1181,21 +1289,82 @@ def main():
             
             df_completo = pd.DataFrame(datos_combinados)
             csv = df_completo.to_csv(index=False)
-            b64_csv = base64.b64encode(csv.encode()).decode()
-            href_csv = f'<a href="data:file/csv;base64,{b64_csv}" download="datos_analisis_completo.csv" class="download-btn">📥 Descargar CSV Completo</a>'
-            st.markdown(href_csv, unsafe_allow_html=True)
+            crear_boton_descarga(
+                csv,
+                "datos_analisis_completo.csv",
+                "Descargar CSV Completo",
+                'csv'
+            )
+            
+            # Datos resumen
+            datos_resumen = {
+                'Metrica': [
+                    'Área Total (ha)', 'Tipo Vegetación', 'Estado General',
+                    'Carbono Total (ton CO₂)', 'Índice Biodiversidad',
+                    'Disponibilidad Agua', 'Salud Suelo', 'Presión Antrópica', 'Conectividad'
+                ],
+                'Valor': [
+                    resultados['area_hectareas'],
+                    resultados['tipo_vegetacion'],
+                    summary['estado_general'],
+                    summary['carbono_total_co2_ton'],
+                    summary['indice_biodiversidad_promedio'],
+                    summary['disponibilidad_agua_promedio'],
+                    summary['salud_suelo_promedio'],
+                    summary['presion_antropica_promedio'],
+                    summary['conectividad_promedio']
+                ]
+            }
+            df_resumen = pd.DataFrame(datos_resumen)
+            csv_resumen = df_resumen.to_csv(index=False)
+            crear_boton_descarga(
+                csv_resumen,
+                "resumen_ejecutivo.csv",
+                "Descargar Resumen CSV",
+                'csv'
+            )
         
         with col_dl3:
             st.markdown("**📄 Informe Ejecutivo**")
             # Generar documento Word
-            doc_buffer = crear_documento_word(resultados)
-            if doc_buffer:
-                crear_boton_descarga(
-                    doc_buffer,
-                    "informe_biodiversidad.docx",
-                    "Descargar Informe Word",
-                    'word'
-                )
+            if DOCX_AVAILABLE:
+                doc_buffer = crear_documento_word(resultados)
+                if doc_buffer:
+                    crear_boton_descarga(
+                        doc_buffer,
+                        "informe_biodiversidad.docx",
+                        "Descargar Informe Word",
+                        'word'
+                    )
+            else:
+                st.warning("⚠️ python-docx no disponible")
+                
+            # Informe en texto simple como alternativa
+            informe_texto = f"""
+INFORME DE ANÁLISIS DE BIODIVERSIDAD
+Fecha: {datetime.now().strftime('%d/%m/%Y %H:%M')}
+
+RESUMEN EJECUTIVO:
+Área analizada: {resultados['area_hectareas']:,.2f} ha
+Tipo de vegetación: {resultados['tipo_vegetacion']}
+Estado general: {summary['estado_general']}
+
+INDICADORES PRINCIPALES:
+- Carbono total: {summary['carbono_total_co2_ton']:,} ton CO₂
+- Biodiversidad: {summary['indice_biodiversidad_promedio']}
+- Disponibilidad agua: {summary['disponibilidad_agua_promedio']}
+- Salud suelo: {summary['salud_suelo_promedio']}
+- Presión antrópica: {summary['presion_antropica_promedio']}
+- Conectividad: {summary['conectividad_promedio']}
+
+Áreas analizadas: {summary['areas_analizadas']}
+"""
+            crear_boton_descarga(
+                informe_texto,
+                "informe_biodiversidad.txt",
+                "Descargar Informe Texto",
+                'csv'  # Usamos CSV para texto también
+            )
         
         st.markdown('</div>', unsafe_allow_html=True)
         
