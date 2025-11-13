@@ -16,7 +16,6 @@ from datetime import datetime, timedelta
 # Librerías para análisis geoespacial
 import folium
 from streamlit_folium import st_folium
-# ✅ CORRECCIÓN: Importar plugins correctamente
 from folium.plugins import Fullscreen, MousePosition
 import pydeck as pdk
 
@@ -453,66 +452,25 @@ class IntegratedAnalyzer:
         }
 
 # ===============================
-# 🗺️ FUNCIONES DE MAPAS MEJORADAS
+# 🗺️ FUNCIONES DE MAPAS CORREGIDAS
 # ===============================
 
-def crear_mapa_interactivo_mejorado(lat, lon, zoom=10, area_nombre="Área de Estudio"):
-    """Crear mapa interactivo moderno con múltiples capas"""
-    
-    m = folium.Map(
-        location=[lat, lon],
-        zoom_start=zoom,
-        tiles=None,
-        control_scale=True,
-        zoom_control=True
+def crear_mapa_base():
+    """Crear mapa base simple y funcional"""
+    return folium.Map(
+        location=[-14.0, -60.0],
+        zoom_start=4,
+        tiles='OpenStreetMap',
+        control_scale=True
     )
-    
-    # Diferentes capas base
-    capas_base = {
-        'OpenStreetMap': 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-        'CartoDB Light': 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-        'Satélite': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        'Relieve': 'https://stamen-tiles-{s}.a.ssl.fastly.net/terrain/{z}/{x}/{y}{r}.jpg'
-    }
-    
-    for nombre, url in capas_base.items():
-        folium.TileLayer(
-            tiles=url,
-            attr=nombre,
-            name=nombre,
-            control=True
-        ).add_to(m)
-    
-    # ✅ CORRECCIÓN: Usar plugins importados directamente
-    Fullscreen(
-        position='topright',
-        title='Pantalla completa',
-        title_cancel='Salir pantalla completa'
-    ).add_to(m)
-    
-    MousePosition(
-        position='bottomleft',
-        separator=' | ',
-        empty_string='Coordenadas no disponibles',
-        lng_first=False,
-        num_digits=4,
-        prefix='Coordenadas:',
-        lat_formatter=lambda x: f'{x:.4f}°',
-        lng_formatter=lambda x: f'{x:.4f}°'
-    ).add_to(m)
-    
-    # Control de capas
-    folium.LayerControl(position='bottomright').add_to(m)
-    
-    return m
 
 def create_carbon_map(carbon_data):
-    """Crear mapa de captura potencial de CO2 mejorado"""
+    """Crear mapa de captura potencial de CO2"""
     if not carbon_data:
         st.warning("No hay datos de carbono para mostrar")
-        return folium.Map(location=[-14.0, -60.0], zoom_start=4)
+        return crear_mapa_base()
     
-    m = crear_mapa_interactivo_mejorado(-14.0, -60.0, 4)
+    m = crear_mapa_base()
     
     # Agregar puntos de carbono
     for area_data in carbon_data:
@@ -558,30 +516,19 @@ def create_carbon_map(carbon_data):
             weight=2
         ).add_to(m)
     
-    # Leyenda mejorada
-    legend_html = '''
-    <div style="position: fixed; bottom: 50px; left: 50px; width: 250px; height: 200px; 
-                background-color: white; border:2px solid grey; z-index:9999; font-size:14px; 
-                padding: 10px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.2);">
-    <h4 style="margin:0 0 10px 0; color: #2E8B57;">Potencial de Captura CO₂</h4>
-    <p style="margin:5px 0;"><i style="background:#00441b; width: 20px; height: 20px; display: inline-block; border-radius: 50%;"></i> > 5,000 ton</p>
-    <p style="margin:5px 0;"><i style="background:#238443; width: 18px; height: 18px; display: inline-block; border-radius: 50%;"></i> 2,000-5,000 ton</p>
-    <p style="margin:5px 0;"><i style="background:#78c679; width: 16px; height: 16px; display: inline-block; border-radius: 50%;"></i> 1,000-2,000 ton</p>
-    <p style="margin:5px 0;"><i style="background:#c2e699; width: 14px; height: 14px; display: inline-block; border-radius: 50%;"></i> 500-1,000 ton</p>
-    <p style="margin:5px 0;"><i style="background:#ffffcc; width: 12px; height: 12px; display: inline-block; border-radius: 50%;"></i> < 500 ton</p>
-    </div>
-    '''
-    m.get_root().html.add_child(folium.Element(legend_html))
+    # Agregar plugins
+    Fullscreen().add_to(m)
+    MousePosition().add_to(m)
     
     return m
 
 def create_vegetation_classification_map(vegetation_data):
-    """Crear mapa de clasificación de vegetación mejorado"""
+    """Crear mapa de clasificación de vegetación"""
     if not vegetation_data:
         st.warning("No hay datos de vegetación para mostrar")
-        return folium.Map(location=[-14.0, -60.0], zoom_start=4)
+        return crear_mapa_base()
     
-    m = crear_mapa_interactivo_mejorado(-14.0, -60.0, 4)
+    m = crear_mapa_base()
     
     # Colores para cada clase de vegetación
     veg_colors = {
@@ -624,15 +571,19 @@ def create_vegetation_classification_map(vegetation_data):
             weight=2
         ).add_to(m)
     
+    # Agregar plugins
+    Fullscreen().add_to(m)
+    MousePosition().add_to(m)
+    
     return m
 
 def create_deforestation_timeline_map(deforestation_data):
-    """Crear mapa de línea de tiempo de deforestación mejorado"""
+    """Crear mapa de línea de tiempo de deforestación"""
     if not deforestation_data:
         st.warning("No hay datos de deforestación para mostrar")
-        return folium.Map(location=[-14.0, -60.0], zoom_start=4)
+        return crear_mapa_base()
     
-    m = crear_mapa_interactivo_mejorado(-14.0, -60.0, 4)
+    m = crear_mapa_base()
     
     # Filtrar datos del año más reciente
     current_year = datetime.now().year
@@ -681,15 +632,19 @@ def create_deforestation_timeline_map(deforestation_data):
             weight=2
         ).add_to(m)
     
+    # Agregar plugins
+    Fullscreen().add_to(m)
+    MousePosition().add_to(m)
+    
     return m
 
 def create_anthropic_impact_map(impact_data):
-    """Crear mapa de impacto antrópico mejorado"""
+    """Crear mapa de impacto antrópico"""
     if not impact_data:
         st.warning("No hay datos de impacto antrópico para mostrar")
-        return folium.Map(location=[-14.0, -60.0], zoom_start=4)
+        return crear_mapa_base()
     
-    m = crear_mapa_interactivo_mejorado(-14.0, -60.0, 4)
+    m = crear_mapa_base()
     
     for area_data in impact_data:
         impact_level = area_data['nivel_impacto']
@@ -722,6 +677,10 @@ def create_anthropic_impact_map(impact_data):
             fillOpacity=0.7,
             weight=2
         ).add_to(m)
+    
+    # Agregar plugins
+    Fullscreen().add_to(m)
+    MousePosition().add_to(m)
     
     return m
 
@@ -1018,7 +977,8 @@ def main():
         with map_tab1:
             st.markdown("**🌳 Mapa de Potencial de Captura de CO2**")
             carbon_map = create_carbon_map(results['carbon_indicators'])
-            st_folium(carbon_map, width=800, height=500)
+            # ✅ CORRECCIÓN: Mostrar el mapa correctamente
+            st_folium(carbon_map, width=700, height=500, key="carbon_map")
             st.info("""
             **Interpretación del Potencial de Carbono:**
             - 🟢 **Alto potencial**: >2,000 ton CO₂ (Bosques maduros)
@@ -1029,7 +989,7 @@ def main():
         with map_tab2:
             st.markdown("**🌿 Mapa de Clasificación de Vegetación**")
             vegetation_map = create_vegetation_classification_map(results['vegetation_classification'])
-            st_folium(vegetation_map, width=800, height=500)
+            st_folium(vegetation_map, width=700, height=500, key="vegetation_map")
             st.info("""
             **Clasificación de Vegetación:**
             - 🌲 **Bosque Denso**: NDVI > 0.7, cobertura continua
@@ -1041,7 +1001,7 @@ def main():
         with map_tab3:
             st.markdown("**📉 Mapa de Pérdida de Cobertura (2020-Actual)**")
             deforestation_map = create_deforestation_timeline_map(results['deforestation_data'])
-            st_folium(deforestation_map, width=800, height=500)
+            st_folium(deforestation_map, width=700, height=500, key="deforestation_map")
             st.info("""
             **Niveles de Pérdida de Cobertura:**
             - 🟢 **Baja**: <5% pérdida acumulada
@@ -1053,7 +1013,7 @@ def main():
         with map_tab4:
             st.markdown("**⚠️ Mapa de Impacto Antrópico**")
             impact_map = create_anthropic_impact_map(results['impact_data'])
-            st_folium(impact_map, width=800, height=500)
+            st_folium(impact_map, width=700, height=500, key="impact_map")
             st.info("""
             **Factores de Impacto Antrópico:**
             - 🚜 **Agricultura**: Expansión agrícola, pesticidas
