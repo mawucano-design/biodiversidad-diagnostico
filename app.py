@@ -119,25 +119,29 @@ class PoligonoAnalyzer:
         if gdf is None or gdf.empty:
             return None
         
-        # Obtener el polígono principal
-        poligono = gdf.geometry.iloc[0]
-        
-        # Calcular área en hectáreas
-        area_hectareas = self._calcular_area_hectareas(poligono)
-        
-        # Generar puntos de muestreo dentro del polígono
-        puntos_muestreo_data = self._generar_puntos_muestreo(poligono, puntos_muestreo)
-        
-        # Analizar cada punto de muestreo
-        resultados = self._analizar_puntos_muestreo(puntos_muestreo_data, vegetation_type, area_hectareas)
-        
-        return {
-            'poligono': poligono,
-            'area_hectareas': area_hectareas,
-            'puntos_muestreo': puntos_muestreo_data,
-            'resultados': resultados,
-            'centroide': poligono.centroid
-        }
+        try:
+            # Obtener el polígono principal
+            poligono = gdf.geometry.iloc[0]
+            
+            # Calcular área en hectáreas
+            area_hectareas = self._calcular_area_hectareas(poligono)
+            
+            # Generar puntos de muestreo dentro del polígono
+            puntos_muestreo_data = self._generar_puntos_muestreo(poligono, puntos_muestreo)
+            
+            # Analizar cada punto de muestreo
+            resultados = self._analizar_puntos_muestreo(puntos_muestreo_data, vegetation_type, area_hectareas)
+            
+            return {
+                'poligono': poligono,
+                'area_hectareas': area_hectareas,
+                'puntos_muestreo': puntos_muestreo_data,
+                'resultados': resultados,
+                'centroide': poligono.centroid
+            }
+        except Exception as e:
+            st.error(f"Error procesando polígono: {str(e)}")
+            return None
     
     def _calcular_area_hectareas(self, poligono):
         """Calcular área en hectáreas usando proyección UTM apropiada"""
@@ -398,71 +402,75 @@ def crear_mapa_poligono_analisis(gdf, resultados):
     if gdf is None or resultados is None:
         return crear_mapa_base()
     
-    # Obtener el centroide para centrar el mapa
-    centroide = resultados['centroide']
-    m = folium.Map(
-        location=[centroide.y, centroide.x],
-        zoom_start=12,
-        tiles='OpenStreetMap'
-    )
-    
-    # Agregar el polígono cargado
-    poligono_geojson = gdf.__geo_interface__
-    folium.GeoJson(
-        poligono_geojson,
-        style_function=lambda x: {
-            'fillColor': '#2E8B57',
-            'color': '#228B22',
-            'weight': 3,
-            'fillOpacity': 0.2
-        },
-        tooltip="Área de estudio cargada"
-    ).add_to(m)
-    
-    # Agregar puntos de muestreo con colores según carbono
-    for punto in resultados['resultados']['carbon_indicators']:
-        co2_potential = punto['co2_total_ton']
+    try:
+        # Obtener el centroide para centrar el mapa
+        centroide = resultados['centroide']
+        m = folium.Map(
+            location=[centroide.y, centroide.x],
+            zoom_start=12,
+            tiles='OpenStreetMap'
+        )
         
-        if co2_potential > 5000:
-            color = '#00441b'
-            size = 10
-        elif co2_potential > 2000:
-            color = '#238443'
-            size = 8
-        elif co2_potential > 1000:
-            color = '#78c679'
-            size = 6
-        elif co2_potential > 500:
-            color = '#c2e699'
-            size = 5
-        else:
-            color = '#ffffcc'
-            size = 4
-        
-        popup_text = f"""
-        <div style="min-width: 250px;">
-            <h4>🌿 {punto['area']}</h4>
-            <p><b>CO₂:</b> {punto['co2_total_ton']:,} ton</p>
-            <p><b>Carbono:</b> {punto['carbono_almacenado_tha']} t/ha</p>
-            <p><b>NDVI:</b> {punto['ndvi']:.3f}</p>
-        </div>
-        """
-        
-        folium.CircleMarker(
-            location=[punto['lat'], punto['lon']],
-            radius=size,
-            popup=folium.Popup(popup_text, max_width=300),
-            tooltip=f"{punto['area']}: {punto['co2_total_ton']:,} ton CO₂",
-            color=color,
-            fillColor=color,
-            fillOpacity=0.7,
-            weight=2
+        # Agregar el polígono cargado
+        poligono_geojson = gdf.__geo_interface__
+        folium.GeoJson(
+            poligono_geojson,
+            style_function=lambda x: {
+                'fillColor': '#2E8B57',
+                'color': '#228B22',
+                'weight': 3,
+                'fillOpacity': 0.2
+            },
+            tooltip="Área de estudio cargada"
         ).add_to(m)
-    
-    Fullscreen().add_to(m)
-    MousePosition().add_to(m)
-    
-    return m
+        
+        # Agregar puntos de muestreo con colores según carbono
+        for punto in resultados['resultados']['carbon_indicators']:
+            co2_potential = punto['co2_total_ton']
+            
+            if co2_potential > 5000:
+                color = '#00441b'
+                size = 10
+            elif co2_potential > 2000:
+                color = '#238443'
+                size = 8
+            elif co2_potential > 1000:
+                color = '#78c679'
+                size = 6
+            elif co2_potential > 500:
+                color = '#c2e699'
+                size = 5
+            else:
+                color = '#ffffcc'
+                size = 4
+            
+            popup_text = f"""
+            <div style="min-width: 250px;">
+                <h4>🌿 {punto['area']}</h4>
+                <p><b>CO₂:</b> {punto['co2_total_ton']:,} ton</p>
+                <p><b>Carbono:</b> {punto['carbono_almacenado_tha']} t/ha</p>
+                <p><b>NDVI:</b> {punto['ndvi']:.3f}</p>
+            </div>
+            """
+            
+            folium.CircleMarker(
+                location=[punto['lat'], punto['lon']],
+                radius=size,
+                popup=folium.Popup(popup_text, max_width=300),
+                tooltip=f"{punto['area']}: {punto['co2_total_ton']:,} ton CO₂",
+                color=color,
+                fillColor=color,
+                fillOpacity=0.7,
+                weight=2
+            ).add_to(m)
+        
+        Fullscreen().add_to(m)
+        MousePosition().add_to(m)
+        
+        return m
+    except Exception as e:
+        st.error(f"Error creando mapa: {str(e)}")
+        return crear_mapa_base()
 
 def crear_mapa_base():
     """Crear mapa base simple"""
@@ -550,14 +558,23 @@ def procesar_archivo_cargado(uploaded_file):
 # ===============================
 
 def initialize_session_state():
+    """Inicializar el estado de la sesión de forma segura"""
     if 'analysis_complete' not in st.session_state:
         st.session_state.analysis_complete = False
     if 'results' not in st.session_state:
         st.session_state.results = None
     if 'poligono_data' not in st.session_state:
         st.session_state.poligono_data = None
+    if 'file_processed' not in st.session_state:
+        st.session_state.file_processed = False
     if 'analyzer' not in st.session_state:
         st.session_state.analyzer = PoligonoAnalyzer()
+
+def tiene_poligono_data():
+    """Verificar de forma segura si hay datos de polígono"""
+    return (st.session_state.poligono_data is not None and 
+            hasattr(st.session_state.poligono_data, 'empty') and 
+            not st.session_state.poligono_data.empty)
 
 def sidebar_config():
     with st.sidebar:
@@ -575,6 +592,17 @@ def sidebar_config():
             type=['kml', 'zip'],
             help="Archivo KML o ZIP con Shapefile del área de estudio"
         )
+        
+        # Procesar archivo inmediatamente después de cargar
+        if uploaded_file is not None and not st.session_state.file_processed:
+            with st.spinner("Procesando archivo..."):
+                gdf = procesar_archivo_cargado(uploaded_file)
+                if gdf is not None:
+                    st.session_state.poligono_data = gdf
+                    st.session_state.file_processed = True
+                    st.session_state.analysis_complete = False  # Resetear análisis
+                    st.success(f"✅ Polígono cargado: {uploaded_file.name}")
+                    st.rerun()
         
         st.markdown("---")
         st.header("📊 Configuración de Análisis")
@@ -610,28 +638,56 @@ def main():
     # Sidebar
     uploaded_file, vegetation_type, puntos_muestreo = sidebar_config()
     
-    # Procesar archivo cargado
-    if uploaded_file and st.session_state.poligono_data is None:
-        with st.spinner("Procesando polígono cargado..."):
-            gdf = procesar_archivo_cargado(uploaded_file)
-            if gdf is not None:
-                st.session_state.poligono_data = gdf
-                st.success(f"✅ Polígono procesado: {uploaded_file.name}")
-                
-                # Mostrar información del polígono
-                poligono = gdf.geometry.iloc[0]
-                area_ha = st.session_state.analyzer._calcular_area_hectareas(poligono)
-                
-                st.info(f"""
-                **📐 Información del Polígono:**
-                - **Área aproximada:** {area_ha:,} hectáreas
-                - **Tipo de geometría:** {poligono.geom_type}
-                - **Puntos de muestreo:** {puntos_muestreo}
-                """)
+    # Mostrar información del polígono si está cargado
+    if tiene_poligono_data():
+        gdf = st.session_state.poligono_data
+        poligono = gdf.geometry.iloc[0]
+        area_ha = st.session_state.analyzer._calcular_area_hectareas(poligono)
+        
+        st.markdown('<div class="custom-card">', unsafe_allow_html=True)
+        st.subheader("📐 Información del Polígono Cargado")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Área aproximada", f"{area_ha:,} ha")
+        with col2:
+            st.metric("Tipo de geometría", poligono.geom_type)
+        with col3:
+            st.metric("Puntos de muestreo", puntos_muestreo)
+        
+        # Mostrar vista previa del polígono
+        st.subheader("🗺️ Vista Previa del Polígono")
+        mapa_preview = crear_mapa_base()
+        
+        # Agregar polígono a la vista previa
+        try:
+            poligono_geojson = gdf.__geo_interface__
+            folium.GeoJson(
+                poligono_geojson,
+                style_function=lambda x: {
+                    'fillColor': '#2E8B57',
+                    'color': '#228B22',
+                    'weight': 3,
+                    'fillOpacity': 0.3
+                }
+            ).add_to(mapa_preview)
+            
+            # Centrar el mapa en el polígono
+            bounds = gdf.bounds
+            mapa_preview.fit_bounds([
+                [bounds.miny.iloc[0], bounds.minx.iloc[0]],
+                [bounds.maxy.iloc[0], bounds.maxx.iloc[0]]
+            ])
+        except Exception as e:
+            st.error(f"Error mostrando vista previa: {str(e)}")
+        
+        st_folium(mapa_preview, width=700, height=300, key="preview_map")
+        st.markdown('</div>', unsafe_allow_html=True)
     
-    # Botón de análisis
-    if st.session_state.poligono_data and not st.session_state.analysis_complete:
-        if st.button("🚀 ANALIZAR POLÍGONO CARGADO", type="primary", use_container_width=True):
+    # Botón de análisis (solo si hay polígono cargado)
+    if tiene_poligono_data() and not st.session_state.analysis_complete:
+        st.markdown('<div class="custom-card">', unsafe_allow_html=True)
+        if st.button("🚀 EJECUTAR ANÁLISIS DEL POLÍGONO", type="primary", use_container_width=True):
             with st.spinner("Realizando análisis específico del polígono..."):
                 resultados = st.session_state.analyzer.procesar_poligono(
                     st.session_state.poligono_data, 
@@ -644,18 +700,18 @@ def main():
                     st.session_state.analysis_complete = True
                     st.success("✅ Análisis completado exitosamente!")
                     st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
     
-    # Mostrar resultados
+    # Mostrar resultados del análisis
     if st.session_state.analysis_complete and st.session_state.results:
         resultados = st.session_state.results
         
-        # Mapa principal
+        # Mapa principal con análisis
         st.markdown('<div class="custom-card">', unsafe_allow_html=True)
         st.subheader("🗺️ Mapa de Análisis del Polígono")
         
         mapa = crear_mapa_poligono_analisis(st.session_state.poligono_data, resultados)
         st_folium(mapa, width=800, height=500, key="main_map")
-        
         st.markdown('</div>', unsafe_allow_html=True)
         
         # Métricas principales
@@ -695,7 +751,7 @@ def main():
             )
             st.markdown('</div>', unsafe_allow_html=True)
     
-    elif not st.session_state.poligono_data:
+    elif not tiene_poligono_data():
         # Pantalla de bienvenida
         st.markdown('<div class="custom-card">', unsafe_allow_html=True)
         st.markdown("""
