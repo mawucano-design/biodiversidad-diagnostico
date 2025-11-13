@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.express as px
 import plotly.graph_objects as go
+import plotly.figure_factory as ff
 from io import BytesIO
 from datetime import datetime, timedelta
 
@@ -109,7 +110,6 @@ class AnalizadorBiodiversidad:
     """Analizador integral de biodiversidad para el polígono cargado"""
     
     def __init__(self):
-        # Valores base para diferentes tipos de vegetación
         self.parametros_ecosistemas = {
             'Bosque Denso Primario': {
                 'carbono': {'min': 180, 'max': 320},
@@ -167,8 +167,8 @@ class AnalizadorBiodiversidad:
             }
         }
     
-    def procesar_poligono(self, gdf, vegetation_type, puntos_muestreo=50):
-        """Procesar el polígono cargado y generar análisis integral"""
+    def procesar_poligono(self, gdf, vegetation_type, divisiones=5):
+        """Procesar el polígono cargado dividiéndolo en áreas regulares"""
         
         if gdf is None or gdf.empty:
             return None
@@ -180,16 +180,16 @@ class AnalizadorBiodiversidad:
             # Calcular área en hectáreas
             area_hectareas = self._calcular_area_hectareas(poligono)
             
-            # Generar puntos de muestreo dentro del polígono
-            puntos_muestreo_data = self._generar_puntos_muestreo(poligono, puntos_muestreo)
+            # Generar áreas regulares dentro del polígono
+            areas_data = self._generar_areas_regulares(poligono, divisiones)
             
-            # Realizar análisis integral en cada punto
-            resultados = self._analisis_integral(puntos_muestreo_data, vegetation_type, area_hectareas)
+            # Realizar análisis integral en cada área
+            resultados = self._analisis_integral(areas_data, vegetation_type, area_hectareas)
             
             return {
                 'poligono': poligono,
                 'area_hectareas': area_hectareas,
-                'puntos_muestreo': puntos_muestreo_data,
+                'areas_analisis': areas_data,
                 'resultados': resultados,
                 'centroide': poligono.centroid,
                 'tipo_vegetacion': vegetation_type
@@ -205,39 +205,52 @@ class AnalizadorBiodiversidad:
             area_aproximada = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1]) * 11100 * 11100 * 0.8
             return round(area_aproximada / 10000, 2)
         except:
-            return 1000  # Valor por defecto
+            return 1000
     
-    def _generar_puntos_muestreo(self, poligono, num_puntos):
-        """Generar puntos de muestreo distribuidos dentro del polígono"""
-        puntos = []
+    def _generar_areas_regulares(self, poligono, divisiones):
+        """Generar áreas regulares (grid) dentro del polígono"""
+        areas = []
         bounds = poligono.bounds
         minx, miny, maxx, maxy = bounds
         
-        puntos_generados = 0
-        intentos = 0
-        max_intentos = num_puntos * 10
+        # Calcular tamaño de cada celda
+        delta_x = (maxx - minx) / divisiones
+        delta_y = (maxy - miny) / divisiones
         
-        while puntos_generados < num_puntos and intentos < max_intentos:
-            intentos += 1
-            random_lon = np.random.uniform(minx, maxx)
-            random_lat = np.random.uniform(miny, maxy)
-            punto = Point(random_lon, random_lat)
-            
-            if poligono.contains(punto):
-                puntos_generados += 1
-                puntos.append({
-                    'id': f"Punto_{puntos_generados}",
-                    'lat': random_lat,
-                    'lon': random_lon,
-                    'geometry': punto
-                })
+        for i in range(divisiones):
+            for j in range(divisiones):
+                # Crear polígono de la celda
+                cell_minx = minx + i * delta_x
+                cell_maxx = minx + (i + 1) * delta_x
+                cell_miny = miny + j * delta_y
+                cell_maxy = miny + (j + 1) * delta_y
+                
+                cell_polygon = Polygon([
+                    (cell_minx, cell_miny),
+                    (cell_maxx, cell_miny),
+                    (cell_maxx, cell_maxy),
+                    (cell_minx, cell_maxy),
+                    (cell_minx, cell_miny)
+                ])
+                
+                # Verificar si la celda intersecta con el polígono principal
+                if poligono.intersects(cell_polygon):
+                    intersection = poligono.intersection(cell_polygon)
+                    if not intersection.is_empty:
+                        centroid = intersection.centroid
+                        areas.append({
+                            'id': f"Area_{i+1}_{j+1}",
+                            'geometry': intersection,
+                            'centroid': centroid,
+                            'area_ha': self._calcular_area_hectareas(intersection),
+                            'bounds': intersection.bounds
+                        })
         
-        return puntos
+        return areas
     
-    def _analisis_integral(self, puntos_muestreo, vegetation_type, area_total):
+    def _analisis_integral(self, areas_data, vegetation_type, area_total):
         """Realizar análisis integral con todos los indicadores"""
         
-        # Obtener parámetros base del ecosistema
         params = self.parametros_ecosistemas.get(vegetation_type, self.parametros_ecosistemas['Bosque Secundario'])
         
         # Inicializar listas de resultados
@@ -250,37 +263,39 @@ class AnalizadorBiodiversidad:
         presiones_data = []
         conectividad_data = []
         
-        for punto in puntos_muestreo:
+        for area in areas_data:
+            centroid = area['centroid']
+            
             # 1. ANÁLISIS DE CARBONO
-            carbono_info = self._analizar_carbono(punto, params, area_total / len(puntos_muestreo))
+            carbono_info = self._analizar_carbono(area, params, area['area_ha'])
             carbono_data.append(carbono_info)
             
             # 2. ANÁLISIS DE VEGETACIÓN
-            vegetacion_info = self._analizar_vegetacion(punto, params)
+            vegetacion_info = self._analizar_vegetacion(area, params)
             vegetacion_data.append(vegetacion_info)
             
             # 3. ANÁLISIS DE BIODIVERSIDAD
-            biodiversidad_info = self._analizar_biodiversidad(punto, params)
+            biodiversidad_info = self._analizar_biodiversidad(area, params)
             biodiversidad_data.append(biodiversidad_info)
             
             # 4. ANÁLISIS HÍDRICO
-            agua_info = self._analizar_recursos_hidricos(punto)
+            agua_info = self._analizar_recursos_hidricos(area)
             agua_data.append(agua_info)
             
             # 5. ANÁLISIS DE SUELO
-            suelo_info = self._analizar_suelo(punto)
+            suelo_info = self._analizar_suelo(area)
             suelo_data.append(suelo_info)
             
             # 6. ANÁLISIS CLIMÁTICO
-            clima_info = self._analizar_clima(punto)
+            clima_info = self._analizar_clima(area)
             clima_data.append(clima_info)
             
             # 7. ANÁLISIS DE PRESIONES
-            presiones_info = self._analizar_presiones(punto)
+            presiones_info = self._analizar_presiones(area)
             presiones_data.append(presiones_info)
             
             # 8. ANÁLISIS DE CONECTIVIDAD
-            conectividad_info = self._analizar_conectividad(punto)
+            conectividad_info = self._analizar_conectividad(area)
             conectividad_data.append(conectividad_info)
         
         # Calcular métricas resumen
@@ -301,34 +316,30 @@ class AnalizadorBiodiversidad:
             'summary_metrics': summary_metrics
         }
     
-    def _analizar_carbono(self, punto, params, area_punto):
+    def _analizar_carbono(self, area, params, area_ha):
         """Analizar indicadores de carbono"""
         base_carbon = np.random.uniform(params['carbono']['min'], params['carbono']['max'])
         ndvi = max(0.1, min(0.9, np.random.normal(params['ndvi_base'], 0.08)))
         
-        # Ajustar carbono por salud de la vegetación
         carbono_ajustado = base_carbon * (0.3 + ndvi * 0.7)
         co2_potencial = carbono_ajustado * 3.67
         
         return {
-            'area': punto['id'],
+            'area': area['id'],
             'carbono_almacenado_tha': round(carbono_ajustado, 1),
             'co2_capturado_tha': round(co2_potencial, 1),
-            'co2_total_ton': round(co2_potencial * area_punto, 1),
+            'co2_total_ton': round(co2_potencial * area_ha, 1),
             'potencial_secuestro': 'Alto' if carbono_ajustado > 100 else 'Medio' if carbono_ajustado > 50 else 'Bajo',
             'ndvi': ndvi,
-            'lat': punto['lat'],
-            'lon': punto['lon']
+            'geometry': area['geometry'],
+            'centroid': area['centroid']
         }
     
-    def _analizar_vegetacion(self, punto, params):
+    def _analizar_vegetacion(self, area, params):
         """Analizar estado de la vegetación"""
         ndvi = max(0.1, min(0.9, np.random.normal(params['ndvi_base'], 0.08)))
         evi = ndvi * 0.9 + np.random.normal(0, 0.03)
-        ndwi = (1 - ndvi) * 0.4 + np.random.normal(0, 0.02)
-        lai = ndvi * 3 + np.random.normal(0, 0.5)  # Leaf Area Index
         
-        # Clasificar salud de la vegetación
         if ndvi > 0.7:
             salud = "Excelente"
             color = '#006400'
@@ -343,33 +354,22 @@ class AnalizadorBiodiversidad:
             color = '#FF4500'
         
         return {
-            'area': punto['id'],
+            'area': area['id'],
             'ndvi': ndvi,
             'evi': evi,
-            'ndwi': ndwi,
-            'lai': lai,
             'salud_vegetacion': salud,
             'color_salud': color,
             'biomasa_tha': round(ndvi * 200 + np.random.uniform(0, 50), 1),
-            'lat': punto['lat'],
-            'lon': punto['lon']
+            'geometry': area['geometry'],
+            'centroid': area['centroid']
         }
     
-    def _analizar_biodiversidad(self, punto, params):
+    def _analizar_biodiversidad(self, area, params):
         """Analizar indicadores de biodiversidad"""
-        # Índice de biodiversidad base según tipo de vegetación
         biodiversidad_base = params['biodiversidad']
-        
-        # Simular riqueza de especies
         riqueza_especies = int(biodiversidad_base * 100 + np.random.uniform(0, 30))
-        
-        # Índice de Shannon-Wiener
         shannon_index = biodiversidad_base * 2.5 + np.random.uniform(0, 0.5)
         
-        # Especies endémicas
-        endemismos = int(riqueza_especies * 0.1 + np.random.uniform(0, 5))
-        
-        # Estado de conservación
         if biodiversidad_base > 0.7:
             estado = "Alto"
             color = '#006400'
@@ -384,23 +384,18 @@ class AnalizadorBiodiversidad:
             color = '#FF4500'
         
         return {
-            'area': punto['id'],
+            'area': area['id'],
             'riqueza_especies': riqueza_especies,
             'indice_shannon': round(shannon_index, 2),
-            'especies_endemicas': endemismos,
             'estado_conservacion': estado,
             'color_estado': color,
-            'diversidad_funcional': round(biodiversidad_base * 0.8 + np.random.uniform(0, 0.2), 2),
-            'lat': punto['lat'],
-            'lon': punto['lon']
+            'geometry': area['geometry'],
+            'centroid': area['centroid']
         }
     
-    def _analizar_recursos_hidricos(self, punto):
+    def _analizar_recursos_hidricos(self, area):
         """Analizar indicadores hídricos"""
-        # Simular disponibilidad de agua
         disponibilidad_agua = np.random.uniform(0.2, 0.9)
-        calidad_agua = np.random.uniform(0.3, 0.95)
-        riesgo_sequia = 1 - disponibilidad_agua
         
         if disponibilidad_agua > 0.7:
             estado_agua = "Alta"
@@ -416,27 +411,18 @@ class AnalizadorBiodiversidad:
             color_agua = '#FF4500'
         
         return {
-            'area': punto['id'],
+            'area': area['id'],
             'disponibilidad_agua': round(disponibilidad_agua, 2),
-            'calidad_agua': round(calidad_agua, 2),
-            'riesgo_sequia': round(riesgo_sequia, 2),
             'estado_hidrico': estado_agua,
             'color_estado_agua': color_agua,
-            'infiltracion_suelo': round(np.random.uniform(0.1, 0.8), 2),
-            'lat': punto['lat'],
-            'lon': punto['lon']
+            'geometry': area['geometry'],
+            'centroid': area['centroid']
         }
     
-    def _analizar_suelo(self, punto):
+    def _analizar_suelo(self, area):
         """Analizar calidad del suelo"""
         materia_organica = np.random.uniform(1.0, 8.0)
-        erosion = np.random.uniform(0.1, 0.8)
-        compactacion = np.random.uniform(0.1, 0.7)
-        
-        # Calcular salud del suelo
-        salud_suelo = (materia_organica / 8.0 * 0.4 + 
-                      (1 - erosion) * 0.3 + 
-                      (1 - compactacion) * 0.3)
+        salud_suelo = materia_organica / 8.0 * 0.6 + np.random.uniform(0, 0.4)
         
         if salud_suelo > 0.7:
             estado_suelo = "Excelente"
@@ -452,64 +438,17 @@ class AnalizadorBiodiversidad:
             color_suelo = '#D2691E'
         
         return {
-            'area': punto['id'],
-            'materia_organica': round(materia_organica, 1),
-            'erosión': round(erosion, 2),
-            'compactacion': round(compactacion, 2),
+            'area': area['id'],
             'salud_suelo': round(salud_suelo, 2),
             'estado_suelo': estado_suelo,
             'color_estado_suelo': color_suelo,
-            'nutrientes': round(np.random.uniform(0.3, 0.9), 2),
-            'lat': punto['lat'],
-            'lon': punto['lon']
+            'geometry': area['geometry'],
+            'centroid': area['centroid']
         }
     
-    def _analizar_clima(self, punto):
-        """Analizar indicadores climáticos"""
-        # Simular datos climáticos
-        temperatura = np.random.uniform(15, 35)
-        precipitacion = np.random.uniform(500, 3000)
-        humedad = np.random.uniform(40, 90)
-        
-        # Calcular vulnerabilidad climática
-        vulnerabilidad = (temperatura - 15) / 20 * 0.4 + \
-                        (3000 - precipitacion) / 2500 * 0.4 + \
-                        (1 - humedad/100) * 0.2
-        
-        if vulnerabilidad < 0.3:
-            riesgo_climatico = "Bajo"
-            color_clima = '#32CD32'
-        elif vulnerabilidad < 0.6:
-            riesgo_climatico = "Moderado"
-            color_clima = '#FFD700'
-        else:
-            riesgo_climatico = "Alto"
-            color_clima = '#FF4500'
-        
-        return {
-            'area': punto['id'],
-            'temperatura_promedio': round(temperatura, 1),
-            'precipitacion_anual': round(precipitacion, 0),
-            'humedad_relativa': round(humedad, 1),
-            'vulnerabilidad_climatica': round(vulnerabilidad, 2),
-            'riesgo_climatico': riesgo_climatico,
-            'color_riesgo_clima': color_clima,
-            'evapotranspiracion': round(precipitacion * 0.6 + np.random.uniform(-100, 100), 0),
-            'lat': punto['lat'],
-            'lon': punto['lon']
-        }
-    
-    def _analizar_presiones(self, punto):
+    def _analizar_presiones(self, area):
         """Analizar presiones antrópicas"""
-        # Factores de presión
-        presion_urbana = np.random.uniform(0, 1)
-        presion_agricola = np.random.uniform(0, 1)
-        presion_ganadera = np.random.uniform(0, 1)
-        
-        # Presión total
-        presion_total = (presion_urbana * 0.4 + 
-                        presion_agricola * 0.3 + 
-                        presion_ganadera * 0.3)
+        presion_total = np.random.uniform(0, 1)
         
         if presion_total < 0.3:
             nivel_presion = "Bajo"
@@ -522,27 +461,17 @@ class AnalizadorBiodiversidad:
             color_presion = '#FF4500'
         
         return {
-            'area': punto['id'],
-            'presion_urbana': round(presion_urbana, 2),
-            'presion_agricola': round(presion_agricola, 2),
-            'presion_ganadera': round(presion_ganadera, 2),
+            'area': area['id'],
             'presion_total': round(presion_total, 2),
             'nivel_presion': nivel_presion,
             'color_presion': color_presion,
-            'fragmentacion': round(presion_total * 0.8 + np.random.uniform(0, 0.2), 2),
-            'lat': punto['lat'],
-            'lon': punto['lon']
+            'geometry': area['geometry'],
+            'centroid': area['centroid']
         }
     
-    def _analizar_conectividad(self, punto):
+    def _analizar_conectividad(self, area):
         """Analizar conectividad ecológica"""
-        # Factores de conectividad
-        corredores = np.random.uniform(0.2, 0.9)
-        fragmentacion = np.random.uniform(0.1, 0.8)
-        permeabilidad = 1 - fragmentacion
-        
-        # Conectividad total
-        conectividad = corredores * 0.5 + permeabilidad * 0.5
+        conectividad = np.random.uniform(0.2, 0.9)
         
         if conectividad > 0.7:
             estado_conectividad = "Alta"
@@ -558,34 +487,47 @@ class AnalizadorBiodiversidad:
             color_conectividad = '#FF4500'
         
         return {
-            'area': punto['id'],
-            'corredores_ecologicos': round(corredores, 2),
-            'fragmentacion': round(fragmentacion, 2),
-            'permeabilidad': round(permeabilidad, 2),
+            'area': area['id'],
             'conectividad_total': round(conectividad, 2),
             'estado_conectividad': estado_conectividad,
             'color_conectividad': color_conectividad,
-            'movilidad_especies': round(conectividad * 0.9 + np.random.uniform(0, 0.1), 2),
-            'lat': punto['lat'],
-            'lon': punto['lon']
+            'geometry': area['geometry'],
+            'centroid': area['centroid']
+        }
+    
+    def _analizar_clima(self, area):
+        """Analizar indicadores climáticos"""
+        temperatura = np.random.uniform(15, 35)
+        vulnerabilidad = (temperatura - 15) / 20
+        
+        if vulnerabilidad < 0.3:
+            riesgo_climatico = "Bajo"
+            color_clima = '#32CD32'
+        elif vulnerabilidad < 0.6:
+            riesgo_climatico = "Moderado"
+            color_clima = '#FFD700'
+        else:
+            riesgo_climatico = "Alto"
+            color_clima = '#FF4500'
+        
+        return {
+            'area': area['id'],
+            'vulnerabilidad_climatica': round(vulnerabilidad, 2),
+            'riesgo_climatico': riesgo_climatico,
+            'color_riesgo_clima': color_clima,
+            'geometry': area['geometry'],
+            'centroid': area['centroid']
         }
     
     def _calcular_metricas_resumen(self, carbono, vegetacion, biodiversidad, agua, suelo, clima, presiones, conectividad):
         """Calcular métricas resumen para el dashboard"""
         
-        # Métricas promedio
         avg_carbono = np.mean([p['co2_total_ton'] for p in carbono])
         avg_biodiversidad = np.mean([p['indice_shannon'] for p in biodiversidad])
         avg_agua = np.mean([p['disponibilidad_agua'] for p in agua])
         avg_suelo = np.mean([p['salud_suelo'] for p in suelo])
         avg_presiones = np.mean([p['presion_total'] for p in presiones])
         avg_conectividad = np.mean([p['conectividad_total'] for p in conectividad])
-        
-        # Distribución de estados
-        estados_vegetacion = {}
-        for p in vegetacion:
-            estado = p['salud_vegetacion']
-            estados_vegetacion[estado] = estados_vegetacion.get(estado, 0) + 1
         
         return {
             'carbono_total_co2_ton': round(avg_carbono * len(carbono), 1),
@@ -594,83 +536,105 @@ class AnalizadorBiodiversidad:
             'salud_suelo_promedio': round(avg_suelo, 2),
             'presion_antropica_promedio': round(avg_presiones, 2),
             'conectividad_promedio': round(avg_conectividad, 2),
-            'distribucion_vegetacion': estados_vegetacion,
-            'puntos_analizados': len(carbono),
+            'areas_analizadas': len(carbono),
             'estado_general': self._calcular_estado_general(avg_biodiversidad, avg_presiones, avg_conectividad)
         }
     
     def _calcular_estado_general(self, biodiversidad, presiones, conectividad):
-        """Calcular estado general del ecosistema"""
-        score = (biodiversidad / 2.5 * 0.4 + 
-                (1 - presiones) * 0.4 + 
-                conectividad * 0.2)
-        
-        if score > 0.7:
-            return "Excelente"
-        elif score > 0.5:
-            return "Bueno"
-        elif score > 0.3:
-            return "Moderado"
-        else:
-            return "Crítico"
+        score = (biodiversidad / 2.5 * 0.4 + (1 - presiones) * 0.4 + conectividad * 0.2)
+        if score > 0.7: return "Excelente"
+        elif score > 0.5: return "Bueno"
+        elif score > 0.3: return "Moderado"
+        else: return "Crítico"
 
 # ===============================
-# 🗺️ FUNCIONES DE MAPAS Y VISUALIZACIONES
+# 🗺️ FUNCIONES DE MAPAS MEJORADAS
 # ===============================
 
-def crear_mapa_indicador(gdf, datos, indicador, columna, titulo, colores):
-    """Crear mapa para un indicador específico"""
+def crear_mapa_indicador(gdf, datos, indicador_config):
+    """Crear mapa con áreas para un indicador específico usando ESRI Satellite"""
     if gdf is None or datos is None:
         return crear_mapa_base()
     
     try:
         centroide = gdf.geometry.iloc[0].centroid
-        m = folium.Map(location=[centroide.y, centroide.x], zoom_start=12, tiles='OpenStreetMap')
+        m = folium.Map(
+            location=[centroide.y, centroide.x], 
+            zoom_start=12, 
+            tiles=None  # Desactivamos tiles por defecto
+        )
         
-        # Agregar polígono base
-        poligono_geojson = gdf.__geo_interface__
-        folium.GeoJson(
-            poligono_geojson,
-            style_function=lambda x: {
-                'fillColor': '#2E8B57',
-                'color': '#228B22',
-                'weight': 2,
-                'fillOpacity': 0.1
-            }
+        # Agregar ESRI Satellite como capa base
+        folium.TileLayer(
+            tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            attr='Esri',
+            name='Satélite ESRI',
+            overlay=False
         ).add_to(m)
         
-        # Agregar puntos del indicador
-        for punto in datos:
-            valor = punto[columna]
+        # Agregar OpenStreetMap como alternativa
+        folium.TileLayer(
+            tiles='OpenStreetMap',
+            name='OpenStreetMap'
+        ).add_to(m)
+        
+        # Agregar áreas del indicador
+        for area_data in datos:
+            valor = area_data[indicador_config['columna']]
+            geometry = area_data['geometry']
             
             # Determinar color basado en el valor
             color = 'gray'
-            for rango, color_rango in colores.items():
+            for rango, color_rango in indicador_config['colores'].items():
                 if valor >= rango[0] and valor <= rango[1]:
                     color = color_rango
                     break
             
-            popup_text = f"""
-            <div style="min-width: 250px;">
-                <h4>📍 {punto['area']}</h4>
-                <p><b>{titulo}:</b> {valor}</p>
-                <p><b>Coordenadas:</b> {punto['lat']:.4f}, {punto['lon']:.4f}</p>
-            </div>
-            """
+            # Crear GeoJSON para el área
+            area_geojson = gpd.GeoSeries([geometry]).__geo_interface__
             
-            folium.CircleMarker(
-                location=[punto['lat'], punto['lon']],
-                radius=8,
-                popup=folium.Popup(popup_text, max_width=300),
-                tooltip=f"{punto['area']}: {valor}",
-                color=color,
-                fillColor=color,
-                fillOpacity=0.7,
-                weight=2
+            folium.GeoJson(
+                area_geojson,
+                style_function=lambda x, color=color: {
+                    'fillColor': color,
+                    'color': color,
+                    'weight': 2,
+                    'fillOpacity': 0.6
+                },
+                popup=folium.Popup(
+                    f"""
+                    <div style="min-width: 250px;">
+                        <h4>📍 {area_data['area']}</h4>
+                        <p><b>{indicador_config['titulo']}:</b> {valor}</p>
+                        <p><b>Estado:</b> {area_data.get('estado', 'N/A')}</p>
+                        <p><b>Área:</b> {area_data.get('area_ha', 'N/A')} ha</p>
+                    </div>
+                    """, 
+                    max_width=300
+                ),
+                tooltip=f"{area_data['area']}: {valor}"
             ).add_to(m)
+        
+        # Agregar leyenda detallada
+        legend_html = f'''
+        <div style="position: fixed; bottom: 50px; left: 50px; width: 300px; 
+                    background-color: white; border:2px solid grey; z-index:9999; 
+                    font-size:14px; padding: 10px; border-radius: 8px; 
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.2);">
+        <h4 style="margin:0 0 10px 0; color: #2E8B57;">{indicador_config['titulo']}</h4>
+        <p style="margin:5px 0; font-size:12px; color: #666;">{indicador_config['descripcion']}</p>
+        '''
+        
+        for rango, color in indicador_config['colores'].items():
+            label = indicador_config['leyenda'].get(rango, f"{rango[0]} - {rango[1]}")
+            legend_html += f'<p style="margin:5px 0;"><i style="background:{color}; width: 20px; height: 20px; display: inline-block; border-radius: 4px; margin-right: 8px;"></i> {label}</p>'
+        
+        legend_html += '</div>'
+        m.get_root().html.add_child(folium.Element(legend_html))
         
         Fullscreen().add_to(m)
         MousePosition().add_to(m)
+        folium.LayerControl().add_to(m)
         
         return m
     except Exception as e:
@@ -678,29 +642,104 @@ def crear_mapa_indicador(gdf, datos, indicador, columna, titulo, colores):
         return crear_mapa_base()
 
 def crear_mapa_base():
-    """Crear mapa base simple"""
-    return folium.Map(location=[-14.0, -60.0], zoom_start=4, tiles='OpenStreetMap')
+    """Crear mapa base con ESRI Satellite"""
+    m = folium.Map(location=[-14.0, -60.0], zoom_start=4, tiles=None)
+    folium.TileLayer(
+        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        attr='Esri',
+        name='Satélite ESRI'
+    ).add_to(m)
+    folium.TileLayer('OpenStreetMap').add_to(m)
+    folium.LayerControl().add_to(m)
+    return m
 
-def crear_grafico_barras(datos, columna, titulo, color):
-    """Crear gráfico de barras para un indicador"""
+# ===============================
+# 📊 FUNCIONES DE VISUALIZACIÓN MEJORADAS
+# ===============================
+
+def crear_grafico_radar(datos, categorias):
+    """Crear gráfico radar para comparación de indicadores"""
     if not datos:
         return go.Figure()
     
-    df = pd.DataFrame(datos)
-    fig = px.bar(df, x='area', y=columna, title=titulo, color_discrete_sequence=[color])
-    fig.update_layout(paper_bgcolor='white', plot_bgcolor='white', showlegend=False)
+    fig = go.Figure()
+    
+    for area in datos[:5]:  # Mostrar solo las primeras 5 áreas para claridad
+        valores = [area.get(cat, 0) for cat in categorias.keys()]
+        fig.add_trace(go.Scatterpolar(
+            r=valores,
+            theta=list(categorias.values()),
+            fill='toself',
+            name=area['area']
+        ))
+    
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(visible=True, range=[0, 1])
+        ),
+        showlegend=True,
+        title="Comparación de Indicadores por Área",
+        paper_bgcolor='white',
+        plot_bgcolor='white'
+    )
     return fig
 
-def crear_grafico_pastel(datos, columna_valor, columna_etiqueta, titulo):
-    """Crear gráfico de pastel para distribución"""
+def crear_grafico_sunburst(datos, columna_valor, columna_estado, titulo):
+    """Crear gráfico sunburst para distribución jerárquica"""
     if not datos:
         return go.Figure()
     
     df = pd.DataFrame(datos)
-    conteo = df[columna_etiqueta].value_counts()
+    conteo_estado = df[columna_estado].value_counts()
     
-    fig = px.pie(values=conteo.values, names=conteo.index, title=titulo)
+    fig = px.sunburst(
+        names=conteo_estado.index,
+        parents=[''] * len(conteo_estado),
+        values=conteo_estado.values,
+        title=titulo
+    )
+    
     fig.update_layout(paper_bgcolor='white', plot_bgcolor='white')
+    return fig
+
+def crear_grafico_3d_scatter(datos, ejes_config):
+    """Crear gráfico 3D scatter para relación entre indicadores"""
+    if not datos:
+        return go.Figure()
+    
+    df = pd.DataFrame(datos)
+    
+    fig = px.scatter_3d(
+        df,
+        x=ejes_config['x'],
+        y=ejes_config['y'],
+        z=ejes_config['z'],
+        color=ejes_config.get('color', ejes_config['x']),
+        size=ejes_config.get('size', ejes_config['x']),
+        hover_name='area',
+        title=ejes_config['titulo']
+    )
+    
+    fig.update_layout(paper_bgcolor='white', scene=dict(bgcolor='white'))
+    return fig
+
+def crear_heatmap_correlacion(datos, indicadores):
+    """Crear heatmap de correlación entre indicadores"""
+    if not datos:
+        return go.Figure()
+    
+    df = pd.DataFrame(datos)
+    correlaciones = df[list(indicadores.keys())].corr()
+    
+    fig = ff.create_annotated_heatmap(
+        z=correlaciones.values,
+        x=list(indicadores.values()),
+        y=list(indicadores.values()),
+        annotation_text=correlaciones.round(2).values,
+        colorscale='Viridis'
+    )
+    
+    fig.update_layout(title="Correlación entre Indicadores")
     return fig
 
 # ===============================
@@ -778,9 +817,10 @@ def sidebar_config():
             'Herbazal Natural', 'Zona de Transición', 'Área de Restauración'
         ])
         
-        puntos_muestreo = st.slider("🔍 Puntos de muestreo", 10, 200, 50)
+        divisiones = st.slider("🔲 Divisiones del área", 3, 8, 5,
+                             help="Número de divisiones para crear la grilla de análisis")
         
-        return uploaded_file, vegetation_type, puntos_muestreo
+        return uploaded_file, vegetation_type, divisiones
 
 # ===============================
 # 🎯 APLICACIÓN PRINCIPAL
@@ -792,7 +832,7 @@ def main():
     initialize_session_state()
     
     # Sidebar
-    uploaded_file, vegetation_type, puntos_muestreo = sidebar_config()
+    uploaded_file, vegetation_type, divisiones = sidebar_config()
     
     # Mostrar información del polígono si está cargado
     if tiene_poligono_data():
@@ -809,7 +849,7 @@ def main():
         with col2:
             st.metric("Tipo de vegetación", vegetation_type)
         with col3:
-            st.metric("Puntos de muestreo", puntos_muestreo)
+            st.metric("Áreas de análisis", f"{divisiones}x{divisiones}")
         st.markdown('</div>', unsafe_allow_html=True)
     
     # Botón de análisis
@@ -818,7 +858,7 @@ def main():
         if st.button("🚀 EJECUTAR ANÁLISIS INTEGRAL", type="primary", use_container_width=True):
             with st.spinner("Realizando análisis integral de biodiversidad..."):
                 resultados = st.session_state.analyzer.procesar_poligono(
-                    st.session_state.poligono_data, vegetation_type, puntos_muestreo
+                    st.session_state.poligono_data, vegetation_type, divisiones
                 )
                 if resultados:
                     st.session_state.results = resultados
@@ -854,75 +894,182 @@ def main():
         with col7:
             st.metric("🔗 Conectividad", f"{summary['conectividad_promedio']}")
         with col8:
-            st.metric("🔍 Puntos Analizados", summary['puntos_analizados'])
+            st.metric("🔍 Áreas Analizadas", summary['areas_analizadas'])
         
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # MAPAS Y ANÁLISIS POR INDICADOR
-        indicadores = [
+        # CONFIGURACIÓN DE INDICADORES CON LEYENDAS MEJORADAS
+        indicadores_config = [
             {
                 'key': 'carbono',
                 'titulo': '🌳 Almacenamiento de Carbono',
                 'columna': 'co2_total_ton',
-                'colores': {(0, 1000): '#ffffcc', (1000, 5000): '#c2e699', (5000, 10000): '#78c679', (10000, 50000): '#238443', (50000, 1000000): '#00441b'}
+                'descripcion': 'Potencial de captura y almacenamiento de CO₂ en toneladas',
+                'colores': {
+                    (0, 1000): '#ffffcc',
+                    (1000, 5000): '#c2e699', 
+                    (5000, 10000): '#78c679',
+                    (10000, 50000): '#238443',
+                    (50000, 1000000): '#00441b'
+                },
+                'leyenda': {
+                    (0, 1000): 'Muy Bajo (<1K ton)',
+                    (1000, 5000): 'Bajo (1K-5K ton)',
+                    (5000, 10000): 'Moderado (5K-10K ton)',
+                    (10000, 50000): 'Alto (10K-50K ton)',
+                    (50000, 1000000): 'Muy Alto (>50K ton)'
+                }
             },
             {
                 'key': 'vegetacion',
-                'titulo': '🌿 Salud de la Vegetación (NDVI)',
+                'titulo': '🌿 Salud de la Vegetación',
                 'columna': 'ndvi',
-                'colores': {(0, 0.3): '#FF4500', (0.3, 0.5): '#FFD700', (0.5, 0.7): '#32CD32', (0.7, 1.0): '#006400'}
+                'descripcion': 'Índice de Vegetación de Diferencia Normalizada (NDVI)',
+                'colores': {
+                    (0, 0.3): '#FF4500',
+                    (0.3, 0.5): '#FFD700',
+                    (0.5, 0.7): '#32CD32', 
+                    (0.7, 1.0): '#006400'
+                },
+                'leyenda': {
+                    (0, 0.3): 'Degradada (0-0.3)',
+                    (0.3, 0.5): 'Moderada (0.3-0.5)',
+                    (0.5, 0.7): 'Buena (0.5-0.7)',
+                    (0.7, 1.0): 'Excelente (0.7-1.0)'
+                }
             },
             {
-                'key': 'biodiversidad',
+                'key': 'biodiversidad', 
                 'titulo': '🦋 Índice de Biodiversidad',
                 'columna': 'indice_shannon',
-                'colores': {(0, 1.0): '#FF4500', (1.0, 1.5): '#FFD700', (1.5, 2.0): '#32CD32', (2.0, 3.0): '#006400'}
+                'descripcion': 'Índice de Shannon-Wiener de diversidad de especies',
+                'colores': {
+                    (0, 1.0): '#FF4500',
+                    (1.0, 1.5): '#FFD700',
+                    (1.5, 2.0): '#32CD32',
+                    (2.0, 3.0): '#006400'
+                },
+                'leyenda': {
+                    (0, 1.0): 'Baja (0-1.0)',
+                    (1.0, 1.5): 'Moderada (1.0-1.5)', 
+                    (1.5, 2.0): 'Alta (1.5-2.0)',
+                    (2.0, 3.0): 'Muy Alta (2.0-3.0)'
+                }
             },
             {
                 'key': 'agua',
                 'titulo': '💧 Disponibilidad de Agua',
-                'columna': 'disponibilidad_agua',
-                'colores': {(0, 0.3): '#FF4500', (0.3, 0.5): '#FFD700', (0.5, 0.7): '#87CEEB', (0.7, 1.0): '#1E90FF'}
-            },
-            {
-                'key': 'suelo',
-                'titulo': '🌱 Salud del Suelo',
-                'columna': 'salud_suelo',
-                'colores': {(0, 0.3): '#FF4500', (0.3, 0.5): '#FFD700', (0.5, 0.7): '#CD853F', (0.7, 1.0): '#8B4513'}
-            },
-            {
-                'key': 'presiones',
-                'titulo': '⚠️ Presión Antrópica',
-                'columna': 'presion_total',
-                'colores': {(0, 0.3): '#32CD32', (0.3, 0.6): '#FFD700', (0.6, 1.0): '#FF4500'}
+                'columna': 'disponibilidad_agua', 
+                'descripcion': 'Disponibilidad relativa de recursos hídricos',
+                'colores': {
+                    (0, 0.3): '#FF4500',
+                    (0.3, 0.5): '#FFD700',
+                    (0.5, 0.7): '#87CEEB',
+                    (0.7, 1.0): '#1E90FF'
+                },
+                'leyenda': {
+                    (0, 0.3): 'Crítica (0-0.3)',
+                    (0.3, 0.5): 'Baja (0.3-0.5)',
+                    (0.5, 0.7): 'Moderada (0.5-0.7)',
+                    (0.7, 1.0): 'Alta (0.7-1.0)'
+                }
             }
         ]
         
-        for indicador in indicadores:
+        # MAPAS POR INDICADOR
+        for config in indicadores_config:
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-            st.subheader(indicador['titulo'])
+            st.subheader(config['titulo'])
             
-            # Mapa
+            # Mapa con áreas
             mapa = crear_mapa_indicador(
                 st.session_state.poligono_data,
-                resultados['resultados'][indicador['key']],
-                indicador['key'],
-                indicador['columna'],
-                indicador['titulo'],
-                indicador['colores']
+                resultados['resultados'][config['key']],
+                config
             )
-            st_folium(mapa, width=800, height=400, key=f"map_{indicador['key']}")
+            st_folium(mapa, width=800, height=500, key=f"map_{config['key']}")
             
-            # Gráfico
-            fig = crear_grafico_barras(
-                resultados['resultados'][indicador['key']],
-                indicador['columna'],
-                f"Distribución de {indicador['titulo']}",
-                list(indicador['colores'].values())[-1]
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            # Visualizaciones alternativas
+            col_viz1, col_viz2 = st.columns(2)
+            
+            with col_viz1:
+                # Gráfico Sunburst para distribución
+                st.plotly_chart(
+                    crear_grafico_sunburst(
+                        resultados['resultados'][config['key']],
+                        config['columna'],
+                        next((k for k in resultados['resultados'][config['key']][0].keys() if 'estado' in k), config['columna']),
+                        f"Distribución de {config['titulo']}"
+                    ),
+                    use_container_width=True
+                )
+            
+            with col_viz2:
+                # Heatmap de correlación para los primeros indicadores
+                if config['key'] in ['carbono', 'vegetacion']:
+                    indicadores_corr = {
+                        'ndvi': 'Salud Vegetación',
+                        'co2_total_ton': 'Carbono',
+                        'indice_shannon': 'Biodiversidad', 
+                        'disponibilidad_agua': 'Agua'
+                    }
+                    st.plotly_chart(
+                        crear_heatmap_correlacion(
+                            resultados['resultados'][config['key']],
+                            indicadores_corr
+                        ),
+                        use_container_width=True
+                    )
             
             st.markdown('</div>', unsafe_allow_html=True)
+        
+        # VISUALIZACIONES AVANZADAS
+        st.markdown('<div class="custom-card">', unsafe_allow_html=True)
+        st.subheader("📈 Análisis Multivariado")
+        
+        col_adv1, col_adv2 = st.columns(2)
+        
+        with col_adv1:
+            # Gráfico Radar
+            categorias_radar = {
+                'ndvi': 'Vegetación',
+                'indice_shannon': 'Biodiversidad',
+                'disponibilidad_agua': 'Agua',
+                'salud_suelo': 'Suelo',
+                'conectividad_total': 'Conectividad'
+            }
+            st.plotly_chart(
+                crear_grafico_radar(resultados['resultados']['vegetacion'], categorias_radar),
+                use_container_width=True
+            )
+        
+        with col_adv2:
+            # Gráfico 3D
+            ejes_3d = {
+                'x': 'ndvi',
+                'y': 'indice_shannon', 
+                'z': 'co2_total_ton',
+                'color': 'ndvi',
+                'size': 'co2_total_ton',
+                'titulo': 'Relación Vegetación-Biodiversidad-Carbono'
+            }
+            # Combinar datos para 3D
+            datos_combinados = []
+            for i in range(len(resultados['resultados']['vegetacion'])):
+                combo = {
+                    'area': resultados['resultados']['vegetacion'][i]['area'],
+                    'ndvi': resultados['resultados']['vegetacion'][i]['ndvi'],
+                    'indice_shannon': resultados['resultados']['biodiversidad'][i]['indice_shannon'],
+                    'co2_total_ton': resultados['resultados']['carbono'][i]['co2_total_ton']
+                }
+                datos_combinados.append(combo)
+            
+            st.plotly_chart(
+                crear_grafico_3d_scatter(datos_combinados, ejes_3d),
+                use_container_width=True
+            )
+        
+        st.markdown('</div>', unsafe_allow_html=True)
     
     elif not tiene_poligono_data():
         # Pantalla de bienvenida
@@ -930,25 +1077,14 @@ def main():
         st.markdown("""
         ## 👋 ¡Bienvenido al Análisis Integral de Biodiversidad!
         
-        ### 🌿 Sistema de Evaluación Ecológica Completa
+        ### 🌿 Sistema de Evaluación Ecológica Avanzada
         
-        Esta herramienta realiza un análisis **integral** de biodiversidad que incluye:
-        
-        **📊 Indicadores Analizados:**
-        - 🌳 **Carbono**: Almacenamiento y secuestro de carbono
-        - 🌿 **Vegetación**: Salud, biomasa y productividad
-        - 🦋 **Biodiversidad**: Riqueza de especies y conservación
-        - 💧 **Recursos Hídricos**: Disponibilidad y calidad del agua
-        - 🌱 **Suelo**: Salud y calidad edáfica
-        - ☀️ **Clima**: Vulnerabilidad y riesgos climáticos
-        - ⚠️ **Presiones**: Impacto antrópico y fragmentación
-        - 🔗 **Conectividad**: Corredores ecológicos y permeabilidad
-        
-        **🎯 Métodología:**
-        1. **Carga tu polígono** en formato KML o Shapefile
-        2. **Configura** el tipo de vegetación predominante
-        3. **Ejecuta el análisis** con múltiples puntos de muestreo
-        4. **Obtén resultados** detallados con mapas interactivos
+        **Nuevas Características:**
+        - 🗺️ **Mapas con ESRI Satellite** - Imágenes satelitales de alta calidad
+        - 🔲 **Análisis por Áreas** - Divisiones regulares del territorio
+        - 📊 **Visualizaciones Avanzadas** - Gráficos 3D, radar, sunburst
+        - 🎨 **Leyendas Detalladas** - Información clara y comprensible
+        - 🔗 **Análisis Multivariado** - Relaciones entre indicadores
         
         **¡Comienza cargando tu archivo en el sidebar!** ←
         """)
