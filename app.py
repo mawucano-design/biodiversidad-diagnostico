@@ -149,55 +149,55 @@ class AnalizadorBiodiversidad:
         self.parametros_ecosistemas = {
             'Bosque Denso Primario': {
                 'carbono': {'min': 180, 'max': 320},
-                'biodiversidad': 0.9,
+                'biodiversidad': 0.85,  # Reducido de 0.9
                 'ndvi_base': 0.85,
                 'resiliencia': 0.8
             },
             'Bosque Secundario': {
                 'carbono': {'min': 80, 'max': 160},
-                'biodiversidad': 0.7,
+                'biodiversidad': 0.65,  # Reducido de 0.7
                 'ndvi_base': 0.75,
                 'resiliencia': 0.6
             },
             'Bosque Ripario': {
                 'carbono': {'min': 120, 'max': 220},
-                'biodiversidad': 0.8,
+                'biodiversidad': 0.75,  # Reducido de 0.8
                 'ndvi_base': 0.80,
                 'resiliencia': 0.7
             },
             'Matorral Denso': {
                 'carbono': {'min': 40, 'max': 70},
-                'biodiversidad': 0.5,
+                'biodiversidad': 0.45,  # Reducido de 0.5
                 'ndvi_base': 0.65,
                 'resiliencia': 0.5
             },
             'Matorral Abierto': {
                 'carbono': {'min': 20, 'max': 40},
-                'biodiversidad': 0.3,
+                'biodiversidad': 0.25,  # Reducido de 0.3
                 'ndvi_base': 0.45,
                 'resiliencia': 0.4
             },
             'Sabana Arborizada': {
                 'carbono': {'min': 25, 'max': 45},
-                'biodiversidad': 0.4,
+                'biodiversidad': 0.35,  # Reducido de 0.4
                 'ndvi_base': 0.35,
                 'resiliencia': 0.5
             },
             'Herbazal Natural': {
                 'carbono': {'min': 8, 'max': 18},
-                'biodiversidad': 0.2,
+                'biodiversidad': 0.15,  # Reducido de 0.2
                 'ndvi_base': 0.25,
                 'resiliencia': 0.3
             },
             'Zona de Transición': {
                 'carbono': {'min': 15, 'max': 30},
-                'biodiversidad': 0.3,
+                'biodiversidad': 0.25,  # Reducido de 0.3
                 'ndvi_base': 0.30,
                 'resiliencia': 0.4
             },
             'Área de Restauración': {
                 'carbono': {'min': 30, 'max': 90},
-                'biodiversidad': 0.6,
+                'biodiversidad': 0.50,  # Reducido de 0.6
                 'ndvi_base': 0.55,
                 'resiliencia': 0.7
             }
@@ -370,8 +370,8 @@ class AnalizadorBiodiversidad:
             vegetacion_info = self._analizar_vegetacion(area, params)
             vegetacion_data.append(vegetacion_info)
             
-            # 3. ANÁLISIS DE BIODIVERSIDAD
-            biodiversidad_info = self._analizar_biodiversidad(area, params)
+            # 3. ANÁLISIS DE BIODIVERSIDAD (MEJORADO)
+            biodiversidad_info = self._analizar_biodiversidad(area, params, area['area_ha'])
             biodiversidad_data.append(biodiversidad_info)
             
             # 4. ANÁLISIS HÍDRICO
@@ -460,23 +460,56 @@ class AnalizadorBiodiversidad:
             'centroid': area['centroid']
         }
     
-    def _analizar_biodiversidad(self, area, params):
-        """Analizar indicadores de biodiversidad"""
-        biodiversidad_base = params['biodiversidad']
-        riqueza_especies = int(biodiversidad_base * 100 + np.random.uniform(0, 30))
-        shannon_index = biodiversidad_base * 2.5 + np.random.uniform(0, 0.5)
+    def _analizar_biodiversidad(self, area, params, area_ha):
+        """Analizar indicadores de biodiversidad de forma más realista"""
         
-        if biodiversidad_base > 0.7:
-            estado = "Alto"
-            color = '#006400'
-        elif biodiversidad_base > 0.5:
-            estado = "Medio"
-            color = '#32CD32'
-        elif biodiversidad_base > 0.3:
-            estado = "Bajo"
-            color = '#FFD700'
+        # Factores que afectan la biodiversidad
+        factor_area = min(1.0, math.log(area_ha + 1) / 6)  # Logarítmico: áreas más grandes = más biodiversidad
+        factor_conectividad = np.random.uniform(0.6, 0.9)  # Conectividad del área
+        factor_perturbacion = np.random.uniform(0.7, 0.95) # Grado de perturbación
+        
+        # Cálculo más realista de riqueza de especies
+        # Para ecosistemas tropicales: 50-300 especies por hectárea es más realista
+        if params['biodiversidad'] > 0.7:  # Bosques maduros
+            riqueza_base = 150
+        elif params['biodiversidad'] > 0.5:  # Bosques secundarios
+            riqueza_base = 80
+        elif params['biodiversidad'] > 0.3:  # Matorrales
+            riqueza_base = 40
+        else:  # Herbazales/áreas degradadas
+            riqueza_base = 20
+        
+        # Ajustar por área (no lineal)
+        riqueza_especies = int(riqueza_base * factor_area * factor_conectividad * factor_perturbacion)
+        
+        # Índice de Shannon más realista
+        # En ecosistemas reales raramente supera 4.5, normalmente 1.5-3.5
+        if params['biodiversidad'] > 0.7:
+            shannon_base = 3.0
+        elif params['biodiversidad'] > 0.5:
+            shannon_base = 2.2
+        elif params['biodiversidad'] > 0.3:
+            shannon_base = 1.5
         else:
-            estado = "Crítico"
+            shannon_base = 0.8
+        
+        shannon_index = shannon_base * factor_conectividad * factor_perturbacion
+        
+        # Clasificación más estricta
+        if shannon_index > 2.5:
+            estado = "Muy Alto"
+            color = '#006400'
+        elif shannon_index > 2.0:
+            estado = "Alto"
+            color = '#32CD32'
+        elif shannon_index > 1.5:
+            estado = "Moderado"
+            color = '#FFD700'
+        elif shannon_index > 1.0:
+            estado = "Bajo"
+            color = '#FFA500'
+        else:
+            estado = "Muy Bajo"
             color = '#FF4500'
         
         return {
@@ -485,6 +518,8 @@ class AnalizadorBiodiversidad:
             'indice_shannon': round(shannon_index, 2),
             'estado_conservacion': estado,
             'color_estado': color,
+            'factor_area': round(factor_area, 2),
+            'factor_conectividad': round(factor_conectividad, 2),
             'geometry': area['geometry'],
             'centroid': area['centroid']
         }
@@ -637,7 +672,7 @@ class AnalizadorBiodiversidad:
         }
     
     def _calcular_estado_general(self, biodiversidad, presiones, conectividad):
-        score = (biodiversidad / 2.5 * 0.4 + (1 - presiones) * 0.4 + conectividad * 0.2)
+        score = (biodiversidad / 3.0 * 0.4 + (1 - presiones) * 0.4 + conectividad * 0.2)
         if score > 0.7: return "Excelente"
         elif score > 0.5: return "Bueno"
         elif score > 0.3: return "Moderado"
@@ -1446,10 +1481,10 @@ INDICADORES PRINCIPALES:
                     (2.0, 3.0): '#006400'
                 },
                 'leyenda': {
-                    (0, 1.0): 'Baja (0-1.0)',
-                    (1.0, 1.5): 'Moderada (1.0-1.5)', 
-                    (1.5, 2.0): 'Alta (1.5-2.0)',
-                    (2.0, 3.0): 'Muy Alta (2.0-3.0)'
+                    (0, 1.0): 'Muy Bajo (0-1.0)',
+                    (1.0, 1.5): 'Bajo (1.0-1.5)', 
+                    (1.5, 2.0): 'Moderado (1.5-2.0)',
+                    (2.0, 3.0): 'Alto (2.0-3.0)'
                 }
             },
             {
