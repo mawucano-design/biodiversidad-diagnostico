@@ -657,20 +657,20 @@ def crear_mapa_base():
 # 📊 FUNCIONES DE VISUALIZACIÓN MEJORADAS
 # ===============================
 
-def crear_grafico_radar(datos, categorias):
+def crear_grafico_radar(datos_combinados, categorias):
     """Crear gráfico radar para comparación de indicadores"""
-    if not datos:
+    if not datos_combinados:
         return go.Figure()
     
     fig = go.Figure()
     
-    for area in datos[:5]:  # Mostrar solo las primeras 5 áreas para claridad
-        valores = [area.get(cat, 0) for cat in categorias.keys()]
+    for area_data in datos_combinados[:5]:  # Mostrar solo las primeras 5 áreas para claridad
+        valores = [area_data.get(cat, 0) for cat in categorias.keys()]
         fig.add_trace(go.Scatterpolar(
             r=valores,
             theta=list(categorias.values()),
             fill='toself',
-            name=area['area']
+            name=area_data['area']
         ))
     
     fig.update_layout(
@@ -689,58 +689,138 @@ def crear_grafico_sunburst(datos, columna_valor, columna_estado, titulo):
     if not datos:
         return go.Figure()
     
-    df = pd.DataFrame(datos)
-    conteo_estado = df[columna_estado].value_counts()
-    
-    fig = px.sunburst(
-        names=conteo_estado.index,
-        parents=[''] * len(conteo_estado),
-        values=conteo_estado.values,
-        title=titulo
-    )
-    
-    fig.update_layout(paper_bgcolor='white', plot_bgcolor='white')
-    return fig
+    try:
+        df = pd.DataFrame(datos)
+        # Usar columna_estado si existe, sino usar columna_valor para categorizar
+        if columna_estado in df.columns:
+            conteo_estado = df[columna_estado].value_counts()
+        else:
+            # Crear categorías basadas en los valores
+            df['categoria'] = pd.cut(df[columna_valor], bins=4, labels=['Bajo', 'Medio', 'Alto', 'Muy Alto'])
+            conteo_estado = df['categoria'].value_counts()
+        
+        fig = px.sunburst(
+            names=conteo_estado.index,
+            parents=[''] * len(conteo_estado),
+            values=conteo_estado.values,
+            title=titulo
+        )
+        
+        fig.update_layout(paper_bgcolor='white', plot_bgcolor='white')
+        return fig
+    except Exception as e:
+        # Fallback: gráfico simple de pastel
+        fig = go.Figure()
+        fig.add_trace(go.Pie(
+            values=[1],
+            labels=['Datos no disponibles'],
+            title=titulo
+        ))
+        return fig
 
-def crear_grafico_3d_scatter(datos, ejes_config):
+def crear_grafico_3d_scatter(datos_combinados, ejes_config):
     """Crear gráfico 3D scatter para relación entre indicadores"""
-    if not datos:
+    if not datos_combinados:
         return go.Figure()
     
-    df = pd.DataFrame(datos)
-    
-    fig = px.scatter_3d(
-        df,
-        x=ejes_config['x'],
-        y=ejes_config['y'],
-        z=ejes_config['z'],
-        color=ejes_config.get('color', ejes_config['x']),
-        size=ejes_config.get('size', ejes_config['x']),
-        hover_name='area',
-        title=ejes_config['titulo']
-    )
-    
-    fig.update_layout(paper_bgcolor='white', scene=dict(bgcolor='white'))
-    return fig
+    try:
+        df = pd.DataFrame(datos_combinados)
+        
+        # Verificar que las columnas existan
+        columnas_necesarias = [ejes_config['x'], ejes_config['y'], ejes_config['z']]
+        columnas_existentes = [col for col in columnas_necesarias if col in df.columns]
+        
+        if len(columnas_existentes) < 3:
+            st.warning(f"Faltan columnas para el gráfico 3D: {set(columnas_necesarias) - set(columnas_existentes)}")
+            return go.Figure()
+        
+        fig = px.scatter_3d(
+            df,
+            x=ejes_config['x'],
+            y=ejes_config['y'],
+            z=ejes_config['z'],
+            color=ejes_config.get('color', ejes_config['x']),
+            size=ejes_config.get('size', ejes_config['x']),
+            hover_name='area',
+            title=ejes_config['titulo']
+        )
+        
+        fig.update_layout(paper_bgcolor='white', scene=dict(bgcolor='white'))
+        return fig
+    except Exception as e:
+        st.error(f"Error creando gráfico 3D: {str(e)}")
+        return go.Figure()
 
-def crear_heatmap_correlacion(datos, indicadores):
+def crear_heatmap_correlacion(datos_combinados, indicadores):
     """Crear heatmap de correlación entre indicadores"""
+    if not datos_combinados:
+        return go.Figure()
+    
+    try:
+        df = pd.DataFrame(datos_combinados)
+        
+        # Filtrar solo las columnas que existen
+        columnas_existentes = [col for col in indicadores.keys() if col in df.columns]
+        
+        if len(columnas_existentes) < 2:
+            st.warning("No hay suficientes indicadores para calcular correlaciones")
+            return go.Figure()
+        
+        correlaciones = df[columnas_existentes].corr()
+        
+        fig = ff.create_annotated_heatmap(
+            z=correlaciones.values,
+            x=[indicadores[col] for col in columnas_existentes],
+            y=[indicadores[col] for col in columnas_existentes],
+            annotation_text=correlaciones.round(2).values,
+            colorscale='Viridis'
+        )
+        
+        fig.update_layout(
+            title="Correlación entre Indicadores",
+            paper_bgcolor='white',
+            plot_bgcolor='white'
+        )
+        return fig
+    except Exception as e:
+        st.error(f"Error creando heatmap: {str(e)}")
+        return go.Figure()
+
+def crear_grafico_treemap(datos, columna_valor, columna_estado, titulo):
+    """Crear gráfico treemap para visualización jerárquica"""
     if not datos:
         return go.Figure()
     
-    df = pd.DataFrame(datos)
-    correlaciones = df[list(indicadores.keys())].corr()
-    
-    fig = ff.create_annotated_heatmap(
-        z=correlaciones.values,
-        x=list(indicadores.values()),
-        y=list(indicadores.values()),
-        annotation_text=correlaciones.round(2).values,
-        colorscale='Viridis'
-    )
-    
-    fig.update_layout(title="Correlación entre Indicadores")
-    return fig
+    try:
+        df = pd.DataFrame(datos)
+        
+        # Crear estructura jerárquica
+        if columna_estado in df.columns:
+            grouped = df.groupby(columna_estado).agg({columna_valor: 'sum', 'area': 'count'}).reset_index()
+            fig = px.treemap(
+                grouped,
+                path=[columna_estado],
+                values=columna_valor,
+                title=titulo,
+                color=columna_valor,
+                color_continuous_scale='Viridis'
+            )
+        else:
+            # Si no hay columna de estado, usar las áreas directamente
+            fig = px.treemap(
+                df,
+                path=['area'],
+                values=columna_valor,
+                title=titulo,
+                color=columna_valor,
+                color_continuous_scale='Viridis'
+            )
+        
+        fig.update_layout(paper_bgcolor='white')
+        return fig
+    except Exception as e:
+        st.error(f"Error creando treemap: {str(e)}")
+        return go.Figure()
 
 # ===============================
 # 📁 MANEJO DE ARCHIVOS
@@ -994,38 +1074,49 @@ def main():
             
             with col_viz1:
                 # Gráfico Sunburst para distribución
+                estado_col = next((k for k in resultados['resultados'][config['key']][0].keys() if 'estado' in k), None)
                 st.plotly_chart(
                     crear_grafico_sunburst(
                         resultados['resultados'][config['key']],
                         config['columna'],
-                        next((k for k in resultados['resultados'][config['key']][0].keys() if 'estado' in k), config['columna']),
+                        estado_col,
                         f"Distribución de {config['titulo']}"
                     ),
                     use_container_width=True
                 )
             
             with col_viz2:
-                # Heatmap de correlación para los primeros indicadores
-                if config['key'] in ['carbono', 'vegetacion']:
-                    indicadores_corr = {
-                        'ndvi': 'Salud Vegetación',
-                        'co2_total_ton': 'Carbono',
-                        'indice_shannon': 'Biodiversidad', 
-                        'disponibilidad_agua': 'Agua'
-                    }
-                    st.plotly_chart(
-                        crear_heatmap_correlacion(
-                            resultados['resultados'][config['key']],
-                            indicadores_corr
-                        ),
-                        use_container_width=True
-                    )
+                # Treemap como alternativa
+                st.plotly_chart(
+                    crear_grafico_treemap(
+                        resultados['resultados'][config['key']],
+                        config['columna'],
+                        estado_col,
+                        f"Distribución Jerárquica - {config['titulo']}"
+                    ),
+                    use_container_width=True
+                )
             
             st.markdown('</div>', unsafe_allow_html=True)
         
         # VISUALIZACIONES AVANZADAS
         st.markdown('<div class="custom-card">', unsafe_allow_html=True)
         st.subheader("📈 Análisis Multivariado")
+        
+        # Combinar datos para análisis multivariado
+        datos_combinados = []
+        for i in range(len(resultados['resultados']['vegetacion'])):
+            combo = {
+                'area': resultados['resultados']['vegetacion'][i]['area'],
+                'ndvi': resultados['resultados']['vegetacion'][i]['ndvi'],
+                'co2_total_ton': resultados['resultados']['carbono'][i]['co2_total_ton'],
+                'indice_shannon': resultados['resultados']['biodiversidad'][i]['indice_shannon'],
+                'disponibilidad_agua': resultados['resultados']['agua'][i]['disponibilidad_agua'],
+                'salud_suelo': resultados['resultados']['suelo'][i]['salud_suelo'],
+                'conectividad_total': resultados['resultados']['conectividad'][i]['conectividad_total'],
+                'presion_total': resultados['resultados']['presiones'][i]['presion_total']
+            }
+            datos_combinados.append(combo)
         
         col_adv1, col_adv2 = st.columns(2)
         
@@ -1039,35 +1130,40 @@ def main():
                 'conectividad_total': 'Conectividad'
             }
             st.plotly_chart(
-                crear_grafico_radar(resultados['resultados']['vegetacion'], categorias_radar),
+                crear_grafico_radar(datos_combinados, categorias_radar),
                 use_container_width=True
             )
         
         with col_adv2:
-            # Gráfico 3D
-            ejes_3d = {
-                'x': 'ndvi',
-                'y': 'indice_shannon', 
-                'z': 'co2_total_ton',
-                'color': 'ndvi',
-                'size': 'co2_total_ton',
-                'titulo': 'Relación Vegetación-Biodiversidad-Carbono'
+            # Heatmap de correlación
+            indicadores_corr = {
+                'ndvi': 'Salud Vegetación',
+                'co2_total_ton': 'Carbono',
+                'indice_shannon': 'Biodiversidad', 
+                'disponibilidad_agua': 'Agua',
+                'salud_suelo': 'Suelo',
+                'conectividad_total': 'Conectividad'
             }
-            # Combinar datos para 3D
-            datos_combinados = []
-            for i in range(len(resultados['resultados']['vegetacion'])):
-                combo = {
-                    'area': resultados['resultados']['vegetacion'][i]['area'],
-                    'ndvi': resultados['resultados']['vegetacion'][i]['ndvi'],
-                    'indice_shannon': resultados['resultados']['biodiversidad'][i]['indice_shannon'],
-                    'co2_total_ton': resultados['resultados']['carbono'][i]['co2_total_ton']
-                }
-                datos_combinados.append(combo)
-            
             st.plotly_chart(
-                crear_grafico_3d_scatter(datos_combinados, ejes_3d),
+                crear_heatmap_correlacion(datos_combinados, indicadores_corr),
                 use_container_width=True
             )
+        
+        # Gráfico 3D en fila completa
+        st.subheader("🔍 Relación Tridimensional de Indicadores")
+        ejes_3d = {
+            'x': 'ndvi',
+            'y': 'indice_shannon', 
+            'z': 'co2_total_ton',
+            'color': 'ndvi',
+            'size': 'co2_total_ton',
+            'titulo': 'Relación Vegetación-Biodiversidad-Carbono'
+        }
+        
+        st.plotly_chart(
+            crear_grafico_3d_scatter(datos_combinados, ejes_3d),
+            use_container_width=True
+        )
         
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -1082,7 +1178,7 @@ def main():
         **Nuevas Características:**
         - 🗺️ **Mapas con ESRI Satellite** - Imágenes satelitales de alta calidad
         - 🔲 **Análisis por Áreas** - Divisiones regulares del territorio
-        - 📊 **Visualizaciones Avanzadas** - Gráficos 3D, radar, sunburst
+        - 📊 **Visualizaciones Avanzadas** - Gráficos 3D, radar, sunburst, treemap
         - 🎨 **Leyendas Detalladas** - Información clara y comprensible
         - 🔗 **Análisis Multivariado** - Relaciones entre indicadores
         
