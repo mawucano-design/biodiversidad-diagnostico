@@ -34,6 +34,8 @@ except ImportError:
     st.warning("⚠️ La librería python-docx no está instalada. La generación de informes Word estará deshabilitada.")
 
 import base64
+import random
+from typing import List, Dict, Any
 
 # ===============================
 # 🌿 CONFIGURACIÓN Y ESTILOS GLOBALES
@@ -127,6 +129,22 @@ def aplicar_estilos_globales():
         padding: 15px;
         margin: 10px 0;
     }
+    /* Estilos para la visualización 3D */
+    .tree-3d-container {
+        background: linear-gradient(135deg, #1a2a3a 0%, #0d1b2a 100%);
+        border-radius: 12px;
+        padding: 20px;
+        margin: 20px 0;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    }
+    .tree-3d-header {
+        color: white;
+        text-align: center;
+        margin-bottom: 20px;
+        font-size: 1.5rem;
+        font-weight: bold;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -139,6 +157,467 @@ def crear_header():
     """, unsafe_allow_html=True)
 
 # ===============================
+# 🌳 CLASE PARA VISUALIZACIÓN 3D DE ÁRBOLES (SIMILAR A LiDAR)
+# ===============================
+
+class Visualizador3DArboles:
+    """Clase para crear visualizaciones 3D de árboles similares a LiDAR"""
+    
+    def __init__(self):
+        self.especies_colores = {
+            'Pino': {'tronco': '#8B4513', 'copa': '#228B22'},
+            'Roble': {'tronco': '#654321', 'copa': '#006400'},
+            'Encina': {'tronco': '#A0522D', 'copa': '#2E8B57'},
+            'Eucalipto': {'tronco': '#D2691E', 'copa': '#32CD32'},
+            'Cedro': {'tronco': '#5D4037', 'copa': '#388E3C'},
+            'Palm': {'tronco': '#795548', 'copa': '#4CAF50'},
+            'Abeto': {'tronco': '#5D4037', 'copa': '#2E7D32'},
+            'Mangle': {'tronco': '#8D6E63', 'copa': '#43A047'}
+        }
+        
+        self.especies_formas = {
+            'Pino': 'cono',      # Forma cónica para pinos
+            'Roble': 'esfera',   # Forma esférica para robles
+            'Encina': 'cubo',    # Forma cubica para encinas
+            'Eucalipto': 'cilindro',
+            'Cedro': 'cono',
+            'Palm': 'cilindro',
+            'Abeto': 'cono',
+            'Mangle': 'cilindro'
+        }
+    
+    def generar_datos_arboles(self, area_hectareas, ndvi_promedio, indice_biodiversidad, num_arboles=100):
+        """Generar datos simulados de árboles basados en indicadores ecológicos"""
+        arboles = []
+        
+        # Determinar densidad de árboles basada en NDVI
+        if ndvi_promedio > 0.7:
+            densidad = 500  # Alta densidad (bosque denso)
+        elif ndvi_promedio > 0.5:
+            densidad = 300  # Media densidad
+        elif ndvi_promedio > 0.3:
+            densidad = 150  # Baja densidad
+        else:
+            densidad = 50   # Muy baja densidad
+            
+        # Ajustar por área
+        num_arboles = min(int(area_hectareas * densidad / 100), 1000)
+        num_arboles = max(num_arboles, 50)
+        
+        especies = list(self.especies_colores.keys())
+        # Ajustar diversidad de especies basada en índice de biodiversidad
+        num_especies = max(2, int(indice_biodiversidad * 5))
+        especies_activas = especies[:num_especies]
+        
+        for i in range(num_arboles):
+            # Determinar especie basada en biodiversidad
+            if indice_biodiversidad > 0.7:
+                especie = random.choice(especies_activas)
+            else:
+                # Menor biodiversidad = dominancia de pocas especies
+                especie = random.choice(especies_activas[:2])
+            
+            # Generar altura basada en NDVI
+            altura_base = 5 + (ndvi_promedio * 25)  # 5-30 metros
+            altura = np.random.normal(altura_base, altura_base * 0.2)
+            altura = max(3, min(40, altura))
+            
+            # Generar diámetro basado en altura
+            diametro_tronco = altura * 0.08 + np.random.normal(0, 0.1)
+            diametro_tronco = max(0.2, min(1.5, diametro_tronco))
+            
+            # Generar diámetro de copa
+            diametro_copa = altura * 0.6 + np.random.normal(0, 2)
+            diametro_copa = max(2, min(15, diametro_copa))
+            
+            # Generar posición aleatoria
+            x = np.random.uniform(-area_hectareas**0.5, area_hectareas**0.5)
+            y = np.random.uniform(-area_hectareas**0.5, area_hectareas**0.5)
+            
+            # Determinar salud basada en NDVI
+            salud = np.random.normal(ndvi_promedio, 0.1)
+            salud = max(0.1, min(1.0, salud))
+            
+            arboles.append({
+                'id': i,
+                'especie': especie,
+                'altura': altura,
+                'diametro_tronco': diametro_tronco,
+                'diametro_copa': diametro_copa,
+                'posicion': [x, y, 0],
+                'salud': salud,
+                'edad': np.random.uniform(1, 100),
+                'biomasa': altura * diametro_tronco * 50,
+                'color_tronco': self.especies_colores[especie]['tronco'],
+                'color_copa': self.especies_colores[especie]['copa'],
+                'forma_copa': self.especies_formas[especie]
+            })
+        
+        return arboles
+    
+    def crear_tronco_3d(self, arbol):
+        """Crear geometría 3D para el tronco del árbol"""
+        x, y, z_base = arbol['posicion']
+        altura = arbol['altura']
+        diametro = arbol['diametro_tronco']
+        color = arbol['color_tronco']
+        
+        # Crear cilindro para el tronco
+        theta = np.linspace(0, 2*np.pi, 8)
+        z = np.linspace(0, altura, 3)
+        
+        theta_grid, z_grid = np.meshgrid(theta, z)
+        x_grid = diametro/2 * np.cos(theta_grid) + x
+        y_grid = diametro/2 * np.sin(theta_grid) + y
+        
+        return {
+            'x': x_grid.flatten(),
+            'y': y_grid.flatten(),
+            'z': np.tile(z_grid.flatten(), 1) + z_base,
+            'color': color,
+            'opacity': 0.9
+        }
+    
+    def crear_copa_3d(self, arbol):
+        """Crear geometría 3D para la copa del árbol"""
+        x, y, z_base = arbol['posicion']
+        altura = arbol['altura']
+        diametro = arbol['diametro_copa']
+        color = arbol['color_copa']
+        forma = arbol['forma_copa']
+        salud = arbol['salud']
+        
+        # Ajustar color basado en salud
+        r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+        r = int(r * salud)
+        g = int(g * (0.7 + salud * 0.3))
+        b = int(b * 0.8)
+        color_ajustado = f'rgb({r},{g},{b})'
+        
+        z_copa = z_base + altura * 0.7  # La copa comienza a 70% de la altura
+        
+        if forma == 'cono':
+            # Crear cono para la copa
+            theta = np.linspace(0, 2*np.pi, 16)
+            r = np.linspace(0, diametro/2, 8)
+            
+            theta_grid, r_grid = np.meshgrid(theta, r)
+            x_grid = r_grid * np.cos(theta_grid) + x
+            y_grid = r_grid * np.sin(theta_grid) + y
+            z_grid = altura * 0.3 * (1 - r_grid/(diametro/2)) + z_copa
+            
+            return {
+                'type': 'mesh3d',
+                'x': x_grid.flatten(),
+                'y': y_grid.flatten(),
+                'z': z_grid.flatten(),
+                'color': color_ajustado,
+                'opacity': 0.7,
+                'intensity': np.ones_like(x_grid.flatten()) * salud
+            }
+            
+        elif forma == 'esfera':
+            # Crear esfera para la copa
+            phi = np.linspace(0, np.pi, 8)
+            theta = np.linspace(0, 2*np.pi, 16)
+            
+            phi_grid, theta_grid = np.meshgrid(phi, theta)
+            radius = diametro/3
+            
+            x_grid = radius * np.sin(phi_grid) * np.cos(theta_grid) + x
+            y_grid = radius * np.sin(phi_grid) * np.sin(theta_grid) + y
+            z_grid = radius * np.cos(phi_grid) + z_copa + radius/2
+            
+            return {
+                'type': 'mesh3d',
+                'x': x_grid.flatten(),
+                'y': y_grid.flatten(),
+                'z': z_grid.flatten(),
+                'color': color_ajustado,
+                'opacity': 0.6,
+                'intensity': np.ones_like(x_grid.flatten()) * salud
+            }
+            
+        else:  # cilindro por defecto
+            # Crear cilindro para la copa
+            theta = np.linspace(0, 2*np.pi, 12)
+            z = np.linspace(0, altura * 0.3, 4)
+            
+            theta_grid, z_grid = np.meshgrid(theta, z)
+            x_grid = diametro/2 * np.cos(theta_grid) + x
+            y_grid = diametro/2 * np.sin(theta_grid) + y
+            
+            return {
+                'type': 'mesh3d',
+                'x': x_grid.flatten(),
+                'y': y_grid.flatten(),
+                'z': z_grid.flatten() + z_copa,
+                'color': color_ajustado,
+                'opacity': 0.65,
+                'intensity': np.ones_like(x_grid.flatten()) * salud
+            }
+    
+    def crear_visualizacion_3d(self, arboles, max_arboles=200):
+        """Crear visualización 3D completa similar a LiDAR"""
+        if len(arboles) > max_arboles:
+            # Muestrear árboles para mejor rendimiento
+            arboles = random.sample(arboles, max_arboles)
+        
+        fig = go.Figure()
+        
+        # Crear terreno base
+        self._agregar_terreno(fig, arboles)
+        
+        # Agregar árboles
+        for i, arbol in enumerate(arboles[:150]):  # Limitar para rendimiento
+            # Agregar tronco
+            tronco = self.crear_tronco_3d(arbol)
+            fig.add_trace(go.Mesh3d(
+                x=tronco['x'],
+                y=tronco['y'],
+                z=tronco['z'],
+                color=tronco['color'],
+                opacity=tronco['opacity'],
+                flatshading=True,
+                name=f"Tronco {arbol['especie']}",
+                showlegend=False
+            ))
+            
+            # Agregar copa
+            copa = self.crear_copa_3d(arbol)
+            if copa['type'] == 'mesh3d':
+                fig.add_trace(go.Mesh3d(
+                    x=copa['x'],
+                    y=copa['y'],
+                    z=copa['z'],
+                    color=copa['color'],
+                    opacity=copa['opacity'],
+                    intensity=copa['intensity'],
+                    colorscale=[[0, 'rgb(150,50,50)'], [0.5, 'rgb(100,150,100)'], [1, copa['color']]],
+                    showscale=False,
+                    name=f"Copa {arbol['especie']}",
+                    showlegend=False
+                ))
+        
+        # Configurar layout 3D
+        self._configurar_layout_3d(fig, arboles)
+        
+        return fig
+    
+    def _agregar_terreno(self, fig, arboles):
+        """Agregar terreno base a la visualización 3D"""
+        if not arboles:
+            return
+        
+        # Crear terreno ondulado
+        x_vals = [arbol['posicion'][0] for arbol in arboles]
+        y_vals = [arbol['posicion'][1] for arbol in arboles]
+        
+        x_min, x_max = min(x_vals), max(x_vals)
+        y_min, y_max = min(y_vals), max(y_vals)
+        
+        # Extender el terreno un poco más allá de los árboles
+        x_range = x_max - x_min
+        y_range = y_max - y_min
+        x_min -= x_range * 0.1
+        x_max += x_range * 0.1
+        y_min -= y_range * 0.1
+        y_max += y_range * 0.1
+        
+        # Crear grid para el terreno
+        x_grid = np.linspace(x_min, x_max, 20)
+        y_grid = np.linspace(y_min, y_max, 20)
+        x_mesh, y_mesh = np.meshgrid(x_grid, y_grid)
+        
+        # Crear ondulaciones naturales
+        z_terreno = np.zeros_like(x_mesh)
+        for i in range(3):  # 3 ondulaciones
+            freq = np.random.uniform(0.5, 2.0)
+            amp = np.random.uniform(0.1, 0.5)
+            z_terreno += amp * np.sin(freq * x_mesh + np.random.uniform(0, np.pi)) * \
+                         np.cos(freq * y_mesh + np.random.uniform(0, np.pi))
+        
+        # Suavizar el terreno
+        z_terreno = np.clip(z_terreno, -1, 1)
+        
+        # Agregar terreno a la figura
+        fig.add_trace(go.Surface(
+            x=x_mesh,
+            y=y_mesh,
+            z=z_terreno,
+            colorscale=[[0, '#8B4513'], [0.5, '#A0522D'], [1, '#D2691E']],
+            opacity=0.9,
+            showscale=False,
+            name='Terreno',
+            contours={
+                "z": {"show": True, "usecolormap": True, "highlightcolor": "limegreen", "project": {"z": True}}
+            }
+        ))
+    
+    def _configurar_layout_3d(self, fig, arboles):
+        """Configurar el layout de la visualización 3D"""
+        if not arboles:
+            return
+        
+        # Calcular límites de la escena
+        x_vals = [arbol['posicion'][0] for arbol in arboles]
+        y_vals = [arbol['posicion'][1] for arbol in arboles]
+        z_vals = [arbol['altura'] for arbol in arboles]
+        
+        x_range = max(x_vals) - min(x_vals)
+        y_range = max(y_vals) - min(y_vals)
+        
+        # Configurar cámara 3D (similar al video)
+        camera = dict(
+            eye=dict(x=2, y=2, z=1.5),  # Vista aérea oblicua
+            up=dict(x=0, y=0, z=1),
+            center=dict(x=0, y=0, z=0)
+        )
+        
+        fig.update_layout(
+            title={
+                'text': '🌳 Visualización 3D de Estructura Forestal (Similar a LiDAR)',
+                'y': 0.95,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top',
+                'font': {'size': 24, 'color': 'white'}
+            },
+            scene=dict(
+                xaxis=dict(
+                    title='X (m)',
+                    backgroundcolor='rgba(0, 0, 0, 0)',
+                    gridcolor='rgba(100, 100, 100, 0.3)',
+                    showbackground=True,
+                    zerolinecolor='rgba(100, 100, 100, 0.5)'
+                ),
+                yaxis=dict(
+                    title='Y (m)',
+                    backgroundcolor='rgba(0, 0, 0, 0)',
+                    gridcolor='rgba(100, 100, 100, 0.3)',
+                    showbackground=True,
+                    zerolinecolor='rgba(100, 100, 100, 0.5)'
+                ),
+                zaxis=dict(
+                    title='Altura (m)',
+                    backgroundcolor='rgba(0, 0, 0, 0)',
+                    gridcolor='rgba(100, 100, 100, 0.3)',
+                    showbackground=True,
+                    zerolinecolor='rgba(100, 100, 100, 0.5)'
+                ),
+                aspectmode='manual',
+                aspectratio=dict(x=2, y=2, z=1),
+                camera=camera,
+                bgcolor='rgba(10, 20, 30, 1)'
+            ),
+            showlegend=True,
+            legend=dict(
+                yanchor="top",
+                y=0.99,
+                xanchor="left",
+                x=0.01,
+                bgcolor='rgba(0, 0, 0, 0.7)',
+                bordercolor='rgba(255, 255, 255, 0.3)',
+                borderwidth=1,
+                font=dict(color='white')
+            ),
+            paper_bgcolor='rgba(0, 0, 0, 0)',
+            plot_bgcolor='rgba(0, 0, 0, 0)',
+            height=700,
+            margin=dict(l=0, r=0, t=80, b=0)
+        )
+    
+    def crear_visualizacion_nube_puntos(self, arboles):
+        """Crear visualización alternativa tipo nube de puntos 3D"""
+        if not arboles:
+            return go.Figure()
+        
+        # Preparar datos
+        datos = []
+        for arbol in arboles[:500]:  # Limitar para rendimiento
+            x, y, z = arbol['posicion']
+            altura = arbol['altura']
+            salud = arbol['salud']
+            
+            # Puntos para tronco
+            for z_tr in np.linspace(0, altura * 0.7, 5):
+                datos.append({
+                    'x': x,
+                    'y': y,
+                    'z': z_tr,
+                    'tipo': 'tronco',
+                    'especie': arbol['especie'],
+                    'altura': altura,
+                    'salud': salud,
+                    'color': arbol['color_tronco']
+                })
+            
+            # Puntos para copa
+            num_puntos_copa = int(arbol['diametro_copa'] * 3)
+            for _ in range(num_puntos_copa):
+                angulo = np.random.uniform(0, 2*np.pi)
+                radio = np.random.uniform(0, arbol['diametro_copa']/2)
+                z_copa = altura * 0.7 + np.random.uniform(0, altura * 0.3)
+                
+                x_copa = x + radio * np.cos(angulo)
+                y_copa = y + radio * np.sin(angulo)
+                
+                datos.append({
+                    'x': x_copa,
+                    'y': y_copa,
+                    'z': z_copa,
+                    'tipo': 'copa',
+                    'especie': arbol['especie'],
+                    'altura': altura,
+                    'salud': salud,
+                    'color': arbol['color_copa']
+                })
+        
+        df = pd.DataFrame(datos)
+        
+        if df.empty:
+            return go.Figure()
+        
+        # Crear figura de dispersión 3D
+        fig = px.scatter_3d(
+            df,
+            x='x',
+            y='y',
+            z='z',
+            color='especie',
+            size='altura',
+            hover_data=['especie', 'altura', 'salud'],
+            title='🌳 Nube de Puntos 3D - Distribución de Árboles'
+        )
+        
+        # Configurar estilo similar a LiDAR
+        fig.update_traces(
+            marker=dict(
+                size=3,
+                opacity=0.7,
+                line=dict(width=0)
+            )
+        )
+        
+        fig.update_layout(
+            scene=dict(
+                xaxis_title='X (m)',
+                yaxis_title='Y (m)',
+                zaxis_title='Altura (m)',
+                bgcolor='rgba(0, 0, 0, 1)',
+                camera=dict(
+                    eye=dict(x=1.5, y=1.5, z=1)
+                )
+            ),
+            paper_bgcolor='rgba(0, 0, 0, 0)',
+            plot_bgcolor='rgba(0, 0, 0, 0)',
+            font=dict(color='white'),
+            height=600
+        )
+        
+        return fig
+
+# ===============================
 # 🧩 CLASE PRINCIPAL DE ANÁLISIS MEJORADA
 # ===============================
 
@@ -149,92 +628,82 @@ class AnalizadorBiodiversidad:
         self.parametros_ecosistemas = {
             'Bosque Denso Primario': {
                 'carbono': {'min': 180, 'max': 320},
-                'biodiversidad': 0.85,  # Reducido de 0.9
+                'biodiversidad': 0.85,
                 'ndvi_base': 0.85,
                 'resiliencia': 0.8
             },
             'Bosque Secundario': {
                 'carbono': {'min': 80, 'max': 160},
-                'biodiversidad': 0.65,  # Reducido de 0.7
+                'biodiversidad': 0.65,
                 'ndvi_base': 0.75,
                 'resiliencia': 0.6
             },
             'Bosque Ripario': {
                 'carbono': {'min': 120, 'max': 220},
-                'biodiversidad': 0.75,  # Reducido de 0.8
+                'biodiversidad': 0.75,
                 'ndvi_base': 0.80,
                 'resiliencia': 0.7
             },
             'Matorral Denso': {
                 'carbono': {'min': 40, 'max': 70},
-                'biodiversidad': 0.45,  # Reducido de 0.5
+                'biodiversidad': 0.45,
                 'ndvi_base': 0.65,
                 'resiliencia': 0.5
             },
             'Matorral Abierto': {
                 'carbono': {'min': 20, 'max': 40},
-                'biodiversidad': 0.25,  # Reducido de 0.3
+                'biodiversidad': 0.25,
                 'ndvi_base': 0.45,
                 'resiliencia': 0.4
             },
             'Sabana Arborizada': {
                 'carbono': {'min': 25, 'max': 45},
-                'biodiversidad': 0.35,  # Reducido de 0.4
+                'biodiversidad': 0.35,
                 'ndvi_base': 0.35,
                 'resiliencia': 0.5
             },
             'Herbazal Natural': {
                 'carbono': {'min': 8, 'max': 18},
-                'biodiversidad': 0.15,  # Reducido de 0.2
+                'biodiversidad': 0.15,
                 'ndvi_base': 0.25,
                 'resiliencia': 0.3
             },
             'Zona de Transición': {
                 'carbono': {'min': 15, 'max': 30},
-                'biodiversidad': 0.25,  # Reducido de 0.3
+                'biodiversidad': 0.25,
                 'ndvi_base': 0.30,
                 'resiliencia': 0.4
             },
             'Área de Restauración': {
                 'carbono': {'min': 30, 'max': 90},
-                'biodiversidad': 0.50,  # Reducido de 0.6
+                'biodiversidad': 0.50,
                 'ndvi_base': 0.55,
                 'resiliencia': 0.7
             }
         }
+        self.visualizador_3d = Visualizador3DArboles()
     
     def _calcular_area_hectareas(self, poligono):
         """Calcular área en hectáreas de forma precisa usando proyección UTM"""
         try:
-            # Verificar si el polígono está en coordenadas geográficas (EPSG:4326)
             if poligono.is_valid:
-                # Crear un GeoDataFrame temporal
                 gdf_temp = gpd.GeoDataFrame([1], geometry=[poligono], crs="EPSG:4326")
-                
-                # Proyectar a un sistema de coordenadas planas para cálculo preciso
                 centroid = poligono.centroid
                 utm_zone = self._determinar_zona_utm(centroid.y, centroid.x)
-                
-                # Proyectar y calcular área
                 gdf_projected = gdf_temp.to_crs(utm_zone)
                 area_m2 = gdf_projected.geometry.area.iloc[0]
                 area_hectareas = area_m2 / 10000
-                
                 return round(area_hectareas, 2)
             else:
-                # Fallback: cálculo aproximado mejorado
                 return self._calcular_area_aproximada(poligono)
-                
         except Exception as e:
             st.warning(f"Usando cálculo aproximado debido a: {str(e)}")
             return self._calcular_area_aproximada(poligono)
 
     def _determinar_zona_utm(self, lat, lon):
         """Determinar la zona UTM automáticamente"""
-        # La zona UTM va de 1 a 60
         zona = int((lon + 180) / 6) + 1
         hemisferio = 'north' if lat >= 0 else 'south'
-        
         return f"EPSG:326{zona:02d}" if hemisferio == 'north' else f"EPSG:327{zona:02d}"
 
     def _calcular_area_aproximada(self, poligono):
@@ -242,54 +711,38 @@ class AnalizadorBiodiversidad:
         try:
             bounds = poligono.bounds
             minx, miny, maxx, maxy = bounds
-            
-            # Calcular grados a metros más preciso considerando latitud
             lat_media = (miny + maxy) / 2
-            metros_por_grado_lat = 111320  # Aproximadamente constante
+            metros_por_grado_lat = 111320
             metros_por_grado_lon = 111320 * math.cos(math.radians(lat_media))
-            
-            # Calcular área en metros cuadrados del bounding box
             ancho_m = (maxx - minx) * metros_por_grado_lon
             alto_m = (maxy - miny) * metros_por_grado_lat
             area_bbox_m2 = ancho_m * alto_m
-            
-            # Estimar área real del polígono (no todo el bbox)
             bbox_area_grados = (maxx - minx) * (maxy - miny)
             if bbox_area_grados > 0:
-                # Calcular relación polígono/bbox usando una aproximación
-                relacion_aproximada = 0.75  # Valor conservador para polígonos típicos
+                relacion_aproximada = 0.75
                 area_m2_ajustada = area_bbox_m2 * relacion_aproximada
             else:
                 area_m2_ajustada = area_bbox_m2
-            
             area_hectareas = area_m2_ajustada / 10000
-            return round(max(area_hectareas, 0.01), 2)  # Mínimo 0.01 ha
-            
+            return round(max(area_hectareas, 0.01), 2)
         except Exception as e:
             st.error(f"Error en cálculo aproximado: {str(e)}")
-            return 1000  # Fallback extremo
+            return 1000
     
     def procesar_poligono(self, gdf, vegetation_type, divisiones=5):
         """Procesar el polígono cargado dividiéndolo en áreas regulares"""
-        
         if gdf is None or gdf.empty:
             return None
         
         try:
-            # Obtener el polígono principal
             poligono = gdf.geometry.iloc[0]
-            
-            # Calcular área en hectáreas (PRECISA)
             area_hectareas = self._calcular_area_hectareas(poligono)
-            
-            # Mostrar información del área calculada
             st.info(f"**Área calculada:** {area_hectareas:,.2f} hectáreas")
-            
-            # Generar áreas regulares dentro del polígono
             areas_data = self._generar_areas_regulares(poligono, divisiones)
-            
-            # Realizar análisis integral en cada área
             resultados = self._analisis_integral(areas_data, vegetation_type, area_hectareas)
+            
+            # Generar datos para visualización 3D
+            arboles_3d = self._generar_datos_3d(resultados, area_hectareas)
             
             return {
                 'poligono': poligono,
@@ -297,10 +750,45 @@ class AnalizadorBiodiversidad:
                 'areas_analisis': areas_data,
                 'resultados': resultados,
                 'centroide': poligono.centroid,
-                'tipo_vegetacion': vegetation_type
+                'tipo_vegetacion': vegetation_type,
+                'arboles_3d': arboles_3d
             }
         except Exception as e:
             st.error(f"Error procesando polígono: {str(e)}")
+            return None
+    
+    def _generar_datos_3d(self, resultados, area_hectareas):
+        """Generar datos para visualización 3D de árboles"""
+        try:
+            # Calcular promedios para toda el área
+            if 'summary_metrics' in resultados:
+                summary = resultados['summary_metrics']
+                ndvi_promedio = summary.get('ndvi_promedio', 0.5)
+                indice_biodiversidad = summary.get('indice_biodiversidad_promedio', 0.5)
+            else:
+                # Si no hay summary, calcular de los datos disponibles
+                ndvi_promedio = np.mean([v['ndvi'] for v in resultados.get('vegetacion', [])]) if resultados.get('vegetacion') else 0.5
+                indice_biodiversidad = np.mean([b['indice_shannon']/3.0 for b in resultados.get('biodiversidad', [])]) if resultados.get('biodiversidad') else 0.5
+            
+            # Generar árboles 3D
+            arboles = self.visualizador_3d.generar_datos_arboles(
+                area_hectareas=area_hectareas,
+                ndvi_promedio=ndvi_promedio,
+                indice_biodiversidad=indice_biodiversidad,
+                num_arboles=min(int(area_hectareas * 10), 500)
+            )
+            
+            return {
+                'arboles': arboles,
+                'estadisticas': {
+                    'total_arboles': len(arboles),
+                    'ndvi_promedio': ndvi_promedio,
+                    'indice_biodiversidad': indice_biodiversidad,
+                    'area_hectareas': area_hectareas
+                }
+            }
+        except Exception as e:
+            st.warning(f"No se pudieron generar datos 3D: {str(e)}")
             return None
     
     def _generar_areas_regulares(self, poligono, divisiones):
@@ -308,14 +796,11 @@ class AnalizadorBiodiversidad:
         areas = []
         bounds = poligono.bounds
         minx, miny, maxx, maxy = bounds
-        
-        # Calcular tamaño de cada celda
         delta_x = (maxx - minx) / divisiones
         delta_y = (maxy - miny) / divisiones
         
         for i in range(divisiones):
             for j in range(divisiones):
-                # Crear polígono de la celda
                 cell_minx = minx + i * delta_x
                 cell_maxx = minx + (i + 1) * delta_x
                 cell_miny = miny + j * delta_y
@@ -329,7 +814,6 @@ class AnalizadorBiodiversidad:
                     (cell_minx, cell_miny)
                 ])
                 
-                # Verificar si la celda intersecta con el polígono principal
                 if poligono.intersects(cell_polygon):
                     intersection = poligono.intersection(cell_polygon)
                     if not intersection.is_empty:
@@ -341,15 +825,12 @@ class AnalizadorBiodiversidad:
                             'area_ha': self._calcular_area_hectareas(intersection),
                             'bounds': intersection.bounds
                         })
-        
         return areas
     
     def _analisis_integral(self, areas_data, vegetation_type, area_total):
         """Realizar análisis integral con todos los indicadores"""
-        
         params = self.parametros_ecosistemas.get(vegetation_type, self.parametros_ecosistemas['Bosque Secundario'])
         
-        # Inicializar listas de resultados
         carbono_data = []
         vegetacion_data = []
         biodiversidad_data = []
@@ -362,39 +843,30 @@ class AnalizadorBiodiversidad:
         for area in areas_data:
             centroid = area['centroid']
             
-            # 1. ANÁLISIS DE CARBONO
             carbono_info = self._analizar_carbono(area, params, area['area_ha'])
             carbono_data.append(carbono_info)
             
-            # 2. ANÁLISIS DE VEGETACIÓN
             vegetacion_info = self._analizar_vegetacion(area, params)
             vegetacion_data.append(vegetacion_info)
             
-            # 3. ANÁLISIS DE BIODIVERSIDAD (MEJORADO)
             biodiversidad_info = self._analizar_biodiversidad(area, params, area['area_ha'])
             biodiversidad_data.append(biodiversidad_info)
             
-            # 4. ANÁLISIS HÍDRICO
             agua_info = self._analizar_recursos_hidricos(area)
             agua_data.append(agua_info)
             
-            # 5. ANÁLISIS DE SUELO
             suelo_info = self._analizar_suelo(area)
             suelo_data.append(suelo_info)
             
-            # 6. ANÁLISIS CLIMÁTICO
             clima_info = self._analizar_clima(area)
             clima_data.append(clima_info)
             
-            # 7. ANÁLISIS DE PRESIONES
             presiones_info = self._analizar_presiones(area)
             presiones_data.append(presiones_info)
             
-            # 8. ANÁLISIS DE CONECTIVIDAD
             conectividad_info = self._analizar_conectividad(area)
             conectividad_data.append(conectividad_info)
         
-        # Calcular métricas resumen
         summary_metrics = self._calcular_metricas_resumen(
             carbono_data, vegetacion_data, biodiversidad_data, agua_data,
             suelo_data, clima_data, presiones_data, conectividad_data
@@ -416,7 +888,6 @@ class AnalizadorBiodiversidad:
         """Analizar indicadores de carbono"""
         base_carbon = np.random.uniform(params['carbono']['min'], params['carbono']['max'])
         ndvi = max(0.1, min(0.9, np.random.normal(params['ndvi_base'], 0.08)))
-        
         carbono_ajustado = base_carbon * (0.3 + ndvi * 0.7)
         co2_potencial = carbono_ajustado * 3.67
         
@@ -462,28 +933,21 @@ class AnalizadorBiodiversidad:
     
     def _analizar_biodiversidad(self, area, params, area_ha):
         """Analizar indicadores de biodiversidad de forma más realista"""
+        factor_area = min(1.0, math.log(area_ha + 1) / 6)
+        factor_conectividad = np.random.uniform(0.6, 0.9)
+        factor_perturbacion = np.random.uniform(0.7, 0.95)
         
-        # Factores que afectan la biodiversidad
-        factor_area = min(1.0, math.log(area_ha + 1) / 6)  # Logarítmico: áreas más grandes = más biodiversidad
-        factor_conectividad = np.random.uniform(0.6, 0.9)  # Conectividad del área
-        factor_perturbacion = np.random.uniform(0.7, 0.95) # Grado de perturbación
-        
-        # Cálculo más realista de riqueza de especies
-        # Para ecosistemas tropicales: 50-300 especies por hectárea es más realista
-        if params['biodiversidad'] > 0.7:  # Bosques maduros
+        if params['biodiversidad'] > 0.7:
             riqueza_base = 150
-        elif params['biodiversidad'] > 0.5:  # Bosques secundarios
+        elif params['biodiversidad'] > 0.5:
             riqueza_base = 80
-        elif params['biodiversidad'] > 0.3:  # Matorrales
+        elif params['biodiversidad'] > 0.3:
             riqueza_base = 40
-        else:  # Herbazales/áreas degradadas
+        else:
             riqueza_base = 20
         
-        # Ajustar por área (no lineal)
         riqueza_especies = int(riqueza_base * factor_area * factor_conectividad * factor_perturbacion)
         
-        # Índice de Shannon más realista
-        # En ecosistemas reales raramente supera 4.5, normalmente 1.5-3.5
         if params['biodiversidad'] > 0.7:
             shannon_base = 3.0
         elif params['biodiversidad'] > 0.5:
@@ -495,7 +959,6 @@ class AnalizadorBiodiversidad:
         
         shannon_index = shannon_base * factor_conectividad * factor_perturbacion
         
-        # Clasificación más estricta
         if shannon_index > 2.5:
             estado = "Muy Alto"
             color = '#006400'
@@ -652,13 +1115,13 @@ class AnalizadorBiodiversidad:
     
     def _calcular_metricas_resumen(self, carbono, vegetacion, biodiversidad, agua, suelo, clima, presiones, conectividad):
         """Calcular métricas resumen para el dashboard"""
-        
-        avg_carbono = np.mean([p['co2_total_ton'] for p in carbono])
-        avg_biodiversidad = np.mean([p['indice_shannon'] for p in biodiversidad])
-        avg_agua = np.mean([p['disponibilidad_agua'] for p in agua])
-        avg_suelo = np.mean([p['salud_suelo'] for p in suelo])
-        avg_presiones = np.mean([p['presion_total'] for p in presiones])
-        avg_conectividad = np.mean([p['conectividad_total'] for p in conectividad])
+        avg_carbono = np.mean([p['co2_total_ton'] for p in carbono]) if carbono else 0
+        avg_biodiversidad = np.mean([p['indice_shannon'] for p in biodiversidad]) if biodiversidad else 0
+        avg_agua = np.mean([p['disponibilidad_agua'] for p in agua]) if agua else 0
+        avg_suelo = np.mean([p['salud_suelo'] for p in suelo]) if suelo else 0
+        avg_presiones = np.mean([p['presion_total'] for p in presiones]) if presiones else 0
+        avg_conectividad = np.mean([p['conectividad_total'] for p in conectividad]) if conectividad else 0
+        avg_ndvi = np.mean([v['ndvi'] for v in vegetacion]) if vegetacion else 0
         
         return {
             'carbono_total_co2_ton': round(avg_carbono * len(carbono), 1),
@@ -667,6 +1130,7 @@ class AnalizadorBiodiversidad:
             'salud_suelo_promedio': round(avg_suelo, 2),
             'presion_antropica_promedio': round(avg_presiones, 2),
             'conectividad_promedio': round(avg_conectividad, 2),
+            'ndvi_promedio': round(avg_ndvi, 2),
             'areas_analizadas': len(carbono),
             'estado_general': self._calcular_estado_general(avg_biodiversidad, avg_presiones, avg_conectividad)
         }
@@ -686,24 +1150,17 @@ def calcular_bounds_optimos(gdf, datos_areas=None, padding_factor=0.1):
     """Calcular los límites óptimos para el zoom del mapa"""
     try:
         if datos_areas and len(datos_areas) > 0:
-            # Usar las geometrías de las áreas analizadas
             geometrias = [area['geometry'] for area in datos_areas]
             gdf_areas = gpd.GeoDataFrame(geometry=geometrias, crs="EPSG:4326")
             bounds = gdf_areas.total_bounds
         else:
-            # Usar el polígono principal
             bounds = gdf.total_bounds
         
-        # Calcular centroide
         minx, miny, maxx, maxy = bounds
         center_lat = (miny + maxy) / 2
         center_lon = (minx + maxx) / 2
-        
-        # Calcular extensión
         lat_span = maxy - miny
         lon_span = maxx - minx
-        
-        # Aplicar padding
         lat_padding = lat_span * padding_factor
         lon_padding = lon_span * padding_factor
         
@@ -714,27 +1171,25 @@ def calcular_bounds_optimos(gdf, datos_areas=None, padding_factor=0.1):
             maxy + lat_padding
         ]
         
-        # Calcular zoom automático basado en el tamaño del área
         max_span = max(lat_span, lon_span)
         
-        # Fórmula para calcular zoom (ajustable según necesidades)
-        if max_span < 0.01:  # Área muy pequeña (~1km)
+        if max_span < 0.01:
             zoom = 15
-        elif max_span < 0.05:  # Área pequeña (~5km)
+        elif max_span < 0.05:
             zoom = 13
-        elif max_span < 0.1:   # Área mediana (~10km)
+        elif max_span < 0.1:
             zoom = 12
-        elif max_span < 0.5:   # Área grande (~50km)
+        elif max_span < 0.5:
             zoom = 10
-        elif max_span < 1.0:   # Área muy grande (~100km)
+        elif max_span < 1.0:
             zoom = 9
-        else:                  # Área extensa
+        else:
             zoom = 8
         
         return {
             'center': [center_lat, center_lon],
             'bounds': bounds_padded,
-            'zoom': min(max(zoom, 8), 18),  # Limitar entre 8 y 18
+            'zoom': min(max(zoom, 8), 18),
             'lat_span': lat_span,
             'lon_span': lon_span
         }
@@ -754,7 +1209,6 @@ def crear_mapa_indicador(gdf, datos, indicador_config, zoom_config=None):
         return crear_mapa_base()
     
     try:
-        # Calcular configuración de zoom si no se proporciona
         if zoom_config is None:
             zoom_config = calcular_bounds_optimos(gdf, datos)
         
@@ -765,7 +1219,6 @@ def crear_mapa_indicador(gdf, datos, indicador_config, zoom_config=None):
             control_scale=True
         )
         
-        # Agregar ESRI Satellite como capa base
         folium.TileLayer(
             tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
             attr='Esri',
@@ -773,23 +1226,19 @@ def crear_mapa_indicador(gdf, datos, indicador_config, zoom_config=None):
             overlay=False
         ).add_to(m)
         
-        # Agregar OpenStreetMap como alternativa
         folium.TileLayer(
             tiles='OpenStreetMap',
             name='OpenStreetMap'
         ).add_to(m)
         
-        # Agregar polígono principal como contorno
         if hasattr(gdf, 'geometry') and not gdf.empty:
             try:
-                # Crear capa del polígono principal
                 poligono_geojson = gdf.__geo_interface__
-                
                 folium.GeoJson(
                     poligono_geojson,
                     style_function=lambda x: {
                         'fillColor': 'transparent',
-                        'color': '#FFD700',  # Color dorado para el contorno
+                        'color': '#FFD700',
                         'weight': 3,
                         'fillOpacity': 0.0,
                         'dashArray': '5, 5'
@@ -800,21 +1249,16 @@ def crear_mapa_indicador(gdf, datos, indicador_config, zoom_config=None):
             except Exception as e:
                 st.warning(f"No se pudo agregar el polígono principal: {str(e)}")
         
-        # Agregar áreas del indicador
         for area_data in datos:
             valor = area_data[indicador_config['columna']]
             geometry = area_data['geometry']
-            
-            # Determinar color basado en el valor
             color = 'gray'
             for rango, color_rango in indicador_config['colores'].items():
                 if valor >= rango[0] and valor <= rango[1]:
                     color = color_rango
                     break
             
-            # Crear GeoJSON para el área
             area_geojson = gpd.GeoSeries([geometry]).__geo_interface__
-            
             folium.GeoJson(
                 area_geojson,
                 style_function=lambda x, color=color: {
@@ -837,7 +1281,6 @@ def crear_mapa_indicador(gdf, datos, indicador_config, zoom_config=None):
                 tooltip=f"{area_data['area']}: {valor}"
             ).add_to(m)
         
-        # Agregar leyenda detallada
         legend_html = f'''
         <div style="position: fixed; bottom: 50px; left: 50px; width: 300px; 
                     background-color: white; border:2px solid grey; z-index:9999; 
@@ -854,11 +1297,9 @@ def crear_mapa_indicador(gdf, datos, indicador_config, zoom_config=None):
         legend_html += '</div>'
         m.get_root().html.add_child(folium.Element(legend_html))
         
-        # Agregar controles de mapa
         Fullscreen().add_to(m)
         MousePosition().add_to(m)
         
-        # Agregar botón de reset zoom
         reset_html = f'''
         <div style="position: fixed; top: 50px; right: 50px; z-index:9999;">
             <button onclick="resetMapView()" style="background-color: white; border: 2px solid #2E8B57; border-radius: 4px; padding: 8px 12px; cursor: pointer; font-weight: bold; color: #2E8B57;">
@@ -875,7 +1316,6 @@ def crear_mapa_indicador(gdf, datos, indicador_config, zoom_config=None):
         '''
         
         m.get_root().html.add_child(folium.Element(reset_html))
-        
         folium.LayerControl().add_to(m)
         
         return m
@@ -913,7 +1353,7 @@ def crear_grafico_radar(datos_combinados, categorias):
     
     fig = go.Figure()
     
-    for area_data in datos_combinados[:5]:  # Mostrar solo las primeras 5 áreas para claridad
+    for area_data in datos_combinados[:5]:
         valores = [area_data.get(cat, 0) for cat in categorias.keys()]
         fig.add_trace(go.Scatterpolar(
             r=valores,
@@ -940,11 +1380,9 @@ def crear_grafico_sunburst(datos, columna_valor, columna_estado, titulo):
     
     try:
         df = pd.DataFrame(datos)
-        # Usar columna_estado si existe, sino usar columna_valor para categorizar
         if columna_estado in df.columns:
             conteo_estado = df[columna_estado].value_counts()
         else:
-            # Crear categorías basadas en los valores
             df['categoria'] = pd.cut(df[columna_valor], bins=4, labels=['Bajo', 'Medio', 'Alto', 'Muy Alto'])
             conteo_estado = df['categoria'].value_counts()
         
@@ -958,7 +1396,6 @@ def crear_grafico_sunburst(datos, columna_valor, columna_estado, titulo):
         fig.update_layout(paper_bgcolor='white', plot_bgcolor='white')
         return fig
     except Exception as e:
-        # Fallback: gráfico simple de pastel
         fig = go.Figure()
         fig.add_trace(go.Pie(
             values=[1],
@@ -974,8 +1411,6 @@ def crear_grafico_3d_scatter(datos_combinados, ejes_config):
     
     try:
         df = pd.DataFrame(datos_combinados)
-        
-        # Verificar que las columnas existan
         columnas_necesarias = [ejes_config['x'], ejes_config['y'], ejes_config['z']]
         columnas_existentes = [col for col in columnas_necesarias if col in df.columns]
         
@@ -1007,8 +1442,6 @@ def crear_heatmap_correlacion(datos_combinados, indicadores):
     
     try:
         df = pd.DataFrame(datos_combinados)
-        
-        # Filtrar solo las columnas que existen
         columnas_existentes = [col for col in indicadores.keys() if col in df.columns]
         
         if len(columnas_existentes) < 2:
@@ -1042,8 +1475,6 @@ def crear_grafico_treemap(datos, columna_valor, columna_estado, titulo):
     
     try:
         df = pd.DataFrame(datos)
-        
-        # Crear estructura jerárquica
         if columna_estado in df.columns:
             grouped = df.groupby(columna_estado).agg({columna_valor: 'sum', 'area': 'count'}).reset_index()
             fig = px.treemap(
@@ -1055,7 +1486,6 @@ def crear_grafico_treemap(datos, columna_valor, columna_estado, titulo):
                 color_continuous_scale='Viridis'
             )
         else:
-            # Si no hay columna de estado, usar las áreas directamente
             fig = px.treemap(
                 df,
                 path=['area'],
@@ -1072,7 +1502,7 @@ def crear_grafico_treemap(datos, columna_valor, columna_estado, titulo):
         return go.Figure()
 
 # ===============================
-# 📁 MANEJO DE ARCHIVOS Y DESCARGAS CORREGIDO
+# 📁 MANEJO DE ARCHIVOS Y DESCARGAS
 # ===============================
 
 def procesar_archivo_cargado(uploaded_file):
@@ -1095,42 +1525,31 @@ def procesar_archivo_cargado(uploaded_file):
         return None
 
 def generar_geojson_indicador(datos, nombre_indicador):
-    """Generar GeoJSON para un indicador específico - CORREGIDO"""
+    """Generar GeoJSON para un indicador específico"""
     try:
-        # Crear una copia de los datos sin las columnas problemáticas
         datos_limpios = []
         for item in datos:
             item_limpio = item.copy()
-            # Remover columnas que no son serializables
             if 'centroid' in item_limpio:
                 del item_limpio['centroid']
             if 'geometry' in item_limpio:
-                # Convertir la geometría a WKT para serialización
                 item_limpio['geometry_wkt'] = item_limpio['geometry'].wkt
                 del item_limpio['geometry']
             datos_limpios.append(item_limpio)
         
-        # Crear DataFrame limpio
         df_limpio = pd.DataFrame(datos_limpios)
-        
-        # Convertir a JSON seguro
         json_str = df_limpio.to_json(orient='records', indent=2)
         return json_str
-        
     except Exception as e:
         st.error(f"Error generando GeoJSON: {str(e)}")
         return None
 
 def generar_geojson_completo(resultados):
-    """Generar un GeoJSON completo con todos los indicadores - NUEVA FUNCIÓN"""
+    """Generar un GeoJSON completo con todos los indicadores"""
     try:
-        # Combinar todos los datos en un solo DataFrame
         todos_datos = []
-        
         for i in range(len(resultados['resultados']['vegetacion'])):
             area_id = resultados['resultados']['vegetacion'][i]['area']
-            
-            # Encontrar la geometría correspondiente
             geometry = None
             for area in resultados['areas_analisis']:
                 if area['id'] == area_id:
@@ -1138,7 +1557,6 @@ def generar_geojson_completo(resultados):
                     break
             
             if geometry:
-                # Combinar datos de todos los indicadores
                 area_data = {
                     'area': area_id,
                     'geometry': geometry,
@@ -1153,14 +1571,10 @@ def generar_geojson_completo(resultados):
                 }
                 todos_datos.append(area_data)
         
-        # Crear GeoDataFrame
         gdf = gpd.GeoDataFrame(todos_datos, geometry='geometry')
         gdf.crs = "EPSG:4326"
-        
-        # Convertir a GeoJSON
         geojson_str = gdf.to_json()
         return geojson_str
-        
     except Exception as e:
         st.error(f"Error generando GeoJSON completo: {str(e)}")
         return None
@@ -1173,16 +1587,10 @@ def crear_documento_word(resultados):
         
     try:
         doc = Document()
-        
-        # Título
         title = doc.add_heading('Informe de Análisis de Biodiversidad', 0)
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        
-        # Fecha
         doc.add_paragraph(f"Fecha de generación: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
         doc.add_paragraph()
-        
-        # Resumen ejecutivo
         doc.add_heading('Resumen Ejecutivo', level=1)
         summary = resultados['resultados']['summary_metrics']
         
@@ -1199,8 +1607,6 @@ def crear_documento_word(resultados):
         
         doc.add_paragraph(resumen_text)
         doc.add_paragraph()
-        
-        # Indicadores principales
         doc.add_heading('Indicadores Principales', level=1)
         
         indicadores_data = [
@@ -1218,8 +1624,6 @@ def crear_documento_word(resultados):
             p.add_run(valor)
         
         doc.add_paragraph()
-        
-        # Recomendaciones
         doc.add_heading('Recomendaciones', level=1)
         
         if summary['estado_general'] in ['Crítico', 'Moderado']:
@@ -1242,18 +1646,16 @@ def crear_documento_word(resultados):
         for rec in recomendaciones:
             doc.add_paragraph(rec, style='List Bullet')
         
-        # Guardar documento en memoria
         buffer = BytesIO()
         doc.save(buffer)
         buffer.seek(0)
-        
         return buffer
     except Exception as e:
         st.error(f"Error generando documento Word: {str(e)}")
         return None
 
 def crear_boton_descarga(data, filename, button_text, file_type):
-    """Crear botón de descarga para diferentes tipos de archivos - MEJORADO"""
+    """Crear botón de descarga para diferentes tipos de archivos"""
     try:
         if file_type == 'geojson':
             if data is None:
@@ -1292,6 +1694,8 @@ def initialize_session_state():
         st.session_state.analyzer = AnalizadorBiodiversidad()
     if 'zoom_config' not in st.session_state:
         st.session_state.zoom_config = None
+    if 'show_3d_visualization' not in st.session_state:
+        st.session_state.show_3d_visualization = False
 
 def tiene_poligono_data():
     return (st.session_state.poligono_data is not None and 
@@ -1318,6 +1722,7 @@ def sidebar_config():
                     st.session_state.file_processed = True
                     st.session_state.analysis_complete = False
                     st.session_state.zoom_config = None
+                    st.session_state.show_3d_visualization = False
                     st.success(f"✅ Polígono cargado: {uploaded_file.name}")
                     st.rerun()
         
@@ -1332,6 +1737,16 @@ def sidebar_config():
         
         divisiones = st.slider("🔲 Divisiones del área", 3, 8, 5,
                              help="Número de divisiones para crear la grilla de análisis")
+        
+        # Configuración para visualización 3D
+        st.markdown("---")
+        st.header("🌳 Visualización 3D")
+        mostrar_3d = st.checkbox("Mostrar visualización 3D de árboles", 
+                                help="Visualización similar a LiDAR de la estructura forestal")
+        st.session_state.show_3d_visualization = mostrar_3d
+        
+        if mostrar_3d:
+            st.info("La visualización 3D mostrará una representación de la estructura forestal basada en los indicadores analizados.")
         
         return uploaded_file, vegetation_type, divisiones
 
@@ -1392,6 +1807,94 @@ def main():
         resultados = st.session_state.results
         summary = resultados['resultados']['summary_metrics']
         
+        # SECCIÓN DE VISUALIZACIÓN 3D DE ÁRBOLES (Similar a LiDAR)
+        if st.session_state.show_3d_visualization and 'arboles_3d' in resultados:
+            st.markdown('<div class="tree-3d-container">', unsafe_allow_html=True)
+            st.markdown('<div class="tree-3d-header">🌳 VISUALIZACIÓN 3D DE ESTRUCTURA FORESTAL</div>', unsafe_allow_html=True)
+            
+            arboles_3d = resultados['arboles_3d']
+            
+            if arboles_3d and 'arboles' in arboles_3d:
+                col_3d1, col_3d2, col_3d3 = st.columns([2, 1, 1])
+                
+                with col_3d1:
+                    st.markdown("**📊 Estadísticas Forestales:**")
+                    if 'estadisticas' in arboles_3d:
+                        stats = arboles_3d['estadisticas']
+                        st.metric("Total de árboles simulados", f"{stats.get('total_arboles', 0):,}")
+                        st.metric("NDVI promedio", f"{stats.get('ndvi_promedio', 0):.2f}")
+                        st.metric("Índice biodiversidad", f"{stats.get('indice_biodiversidad', 0):.2f}")
+                
+                with col_3d2:
+                    st.markdown("**🎨 Configuración 3D:**")
+                    tipo_visualizacion = st.radio(
+                        "Tipo de visualización:",
+                        ["Modelado 3D", "Nube de puntos"],
+                        index=0,
+                        horizontal=True
+                    )
+                    
+                    densidad = st.slider(
+                        "Densidad de visualización:",
+                        1, 5, 3,
+                        help="Controla el nivel de detalle de la visualización 3D"
+                    )
+                
+                with col_3d3:
+                    st.markdown("**📐 Vista de cámara:**")
+                    vista_camara = st.selectbox(
+                        "Ángulo de vista:",
+                        ["Vista aérea", "Vista frontal", "Vista isométrica"],
+                        index=0
+                    )
+                    
+                    if st.button("🔄 Actualizar visualización", type="secondary"):
+                        st.rerun()
+                
+                # Separador visual
+                st.markdown("---")
+                
+                # Mostrar visualización 3D
+                with st.spinner("Generando visualización 3D..."):
+                    try:
+                        if tipo_visualizacion == "Modelado 3D":
+                            # Filtrar árboles según densidad
+                            arboles_filtrados = arboles_3d['arboles']
+                            if densidad < 5:
+                                factor = [1.0, 0.7, 0.5, 0.3, 0.2][densidad-1]
+                                num_arboles = int(len(arboles_filtrados) * factor)
+                                arboles_filtrados = random.sample(arboles_filtrados, num_arboles)
+                            
+                            # Crear visualización 3D
+                            fig_3d = st.session_state.analyzer.visualizador_3d.crear_visualizacion_3d(arboles_filtrados)
+                            st.plotly_chart(fig_3d, use_container_width=True, height=700)
+                        else:
+                            # Visualización de nube de puntos
+                            fig_puntos = st.session_state.analyzer.visualizador_3d.crear_visualizacion_nube_puntos(arboles_3d['arboles'])
+                            st.plotly_chart(fig_puntos, use_container_width=True, height=600)
+                        
+                        # Leyenda de especies
+                        st.markdown("**🌿 Leyenda de especies:**")
+                        especies_col = st.columns(4)
+                        especies = st.session_state.analyzer.visualizador_3d.especies_colores
+        
+                        for idx, (especie, colores) in enumerate(especies_colores.items()):
+                            with especies_col[idx % 4]:
+                                st.markdown(f"""
+                                <div style="background: {colores['copa']}; padding: 8px; border-radius: 6px; margin: 5px 0; color: white; text-align: center;">
+                                    {especie}
+                                </div>
+                                """, unsafe_allow_html=True)
+                    
+                    except Exception as e:
+                        st.error(f"Error generando visualización 3D: {str(e)}")
+                        st.info("Intente reducir la densidad de visualización o actualice la página.")
+            
+            else:
+                st.warning("No se pudieron generar datos 3D para la visualización.")
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+        
         # SECCIÓN DE DESCARGAS MEJORADA
         st.markdown('<div class="custom-card">', unsafe_allow_html=True)
         st.subheader("📥 Descargas")
@@ -1400,8 +1903,6 @@ def main():
         
         with col_dl1:
             st.markdown("**🗺️ Mapas GeoJSON**")
-            
-            # GeoJSON completo con todos los indicadores
             geojson_completo = generar_geojson_completo(resultados)
             if geojson_completo:
                 crear_boton_descarga(
@@ -1411,7 +1912,6 @@ def main():
                     'geojson'
                 )
             
-            # GeoJSON individuales para cada indicador (formato seguro)
             indicadores_geojson = [
                 ('carbono', 'Carbono', 'co2_total_ton'),
                 ('vegetacion', 'Vegetación', 'ndvi'),
@@ -1434,7 +1934,6 @@ def main():
         
         with col_dl2:
             st.markdown("**📊 Datos Completos**")
-            # Datos combinados en CSV
             datos_combinados = []
             for i in range(len(resultados['resultados']['vegetacion'])):
                 combo = {
@@ -1459,7 +1958,6 @@ def main():
                 'csv'
             )
             
-            # Datos resumen
             datos_resumen = {
                 'Metrica': [
                     'Área Total (ha)', 'Tipo Vegetación', 'Estado General',
@@ -1489,7 +1987,6 @@ def main():
         
         with col_dl3:
             st.markdown("**📄 Informe Ejecutivo**")
-            # Generar documento Word
             if DOCX_AVAILABLE:
                 doc_buffer = crear_documento_word(resultados)
                 if doc_buffer:
@@ -1502,7 +1999,6 @@ def main():
             else:
                 st.warning("⚠️ python-docx no disponible")
                 
-            # Informe en texto simple como alternativa
             informe_texto = f"""
 INFORME DE ANÁLISIS DE BIODIVERSIDAD
 Fecha: {datetime.now().strftime('%d/%m/%Y %H:%M')}
@@ -1526,7 +2022,7 @@ INDICADORES PRINCIPALES:
                 informe_texto,
                 "informe_biodiversidad.txt",
                 "Descargar Informe Texto",
-                'csv'  # Usamos CSV para texto también
+                'csv'
             )
         
         st.markdown('</div>', unsafe_allow_html=True)
@@ -1640,7 +2136,6 @@ INDICADORES PRINCIPALES:
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.subheader(config['titulo'])
             
-            # Mapa con áreas y zoom automático
             mapa = crear_mapa_indicador(
                 st.session_state.poligono_data,
                 resultados['resultados'][config['key']],
@@ -1649,7 +2144,6 @@ INDICADORES PRINCIPALES:
             )
             st_folium(mapa, width=800, height=500, key=f"map_{config['key']}")
             
-            # Mostrar información del zoom
             with st.expander("ℹ️ Información de la vista del mapa"):
                 col_info1, col_info2, col_info3 = st.columns(3)
                 with col_info1:
@@ -1664,16 +2158,13 @@ INDICADORES PRINCIPALES:
                         st.metric("Nivel de Zoom", "No disponible")
                 with col_info3:
                     if st.session_state.zoom_config and 'lat_span' in st.session_state.zoom_config:
-                        span_km = st.session_state.zoom_config['lat_span'] * 111  # Aprox 111km por grado
+                        span_km = st.session_state.zoom_config['lat_span'] * 111
                         st.metric("Extensión", f"{span_km:.1f} km")
                     else:
                         st.metric("Extensión", "No disponible")
             
-            # Visualizaciones alternativas
             col_viz1, col_viz2 = st.columns(2)
-            
             with col_viz1:
-                # Gráfico Sunburst para distribución
                 estado_col = next((k for k in resultados['resultados'][config['key']][0].keys() if 'estado' in k), None)
                 st.plotly_chart(
                     crear_grafico_sunburst(
@@ -1686,7 +2177,6 @@ INDICADORES PRINCIPALES:
                 )
             
             with col_viz2:
-                # Treemap como alternativa
                 st.plotly_chart(
                     crear_grafico_treemap(
                         resultados['resultados'][config['key']],
@@ -1703,7 +2193,6 @@ INDICADORES PRINCIPALES:
         st.markdown('<div class="custom-card">', unsafe_allow_html=True)
         st.subheader("📈 Análisis Multivariado")
         
-        # Combinar datos para análisis multivariado
         datos_combinados = []
         for i in range(len(resultados['resultados']['vegetacion'])):
             combo = {
@@ -1719,9 +2208,7 @@ INDICADORES PRINCIPALES:
             datos_combinados.append(combo)
         
         col_adv1, col_adv2 = st.columns(2)
-        
         with col_adv1:
-            # Gráfico Radar
             categorias_radar = {
                 'ndvi': 'Vegetación',
                 'indice_shannon': 'Biodiversidad',
@@ -1735,7 +2222,6 @@ INDICADORES PRINCIPALES:
             )
         
         with col_adv2:
-            # Heatmap de correlación
             indicadores_corr = {
                 'ndvi': 'Salud Vegetación',
                 'co2_total_ton': 'Carbono',
@@ -1749,7 +2235,6 @@ INDICADORES PRINCIPALES:
                 use_container_width=True
             )
         
-        # Gráfico 3D en fila completa
         st.subheader("🔍 Relación Tridimensional de Indicadores")
         ejes_3d = {
             'x': 'ndvi',
@@ -1783,6 +2268,7 @@ INDICADORES PRINCIPALES:
         - 🔗 **Análisis Multivariado** - Relaciones entre indicadores
         - 📥 **Descargas Mejoradas** - GeoJSON + Informes Word ejecutivos
         - 🔍 **Zoom Automático** - Los mapas se ajustan automáticamente al polígono
+        - 🌳 **VISUALIZACIÓN 3D LiDAR** - Representación de estructura forestal en 3D similar a escaneo LiDAR
         
         **¡Comienza cargando tu archivo en el sidebar!** ←
         """)
