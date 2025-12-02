@@ -679,20 +679,90 @@ class AnalizadorBiodiversidad:
         else: return "Crítico"
 
 # ===============================
-# 🗺️ FUNCIONES DE MAPAS MEJORADAS
+# 🗺️ FUNCIONES DE MAPAS MEJORADAS CON ZOOM AUTOMÁTICO
 # ===============================
 
-def crear_mapa_indicador(gdf, datos, indicador_config):
-    """Crear mapa con áreas para un indicador específico usando ESRI Satellite"""
+def calcular_bounds_optimos(gdf, datos_areas=None, padding_factor=0.1):
+    """Calcular los límites óptimos para el zoom del mapa"""
+    try:
+        if datos_areas and len(datos_areas) > 0:
+            # Usar las geometrías de las áreas analizadas
+            geometrias = [area['geometry'] for area in datos_areas]
+            gdf_areas = gpd.GeoDataFrame(geometry=geometrias, crs="EPSG:4326")
+            bounds = gdf_areas.total_bounds
+        else:
+            # Usar el polígono principal
+            bounds = gdf.total_bounds
+        
+        # Calcular centroide
+        minx, miny, maxx, maxy = bounds
+        center_lat = (miny + maxy) / 2
+        center_lon = (minx + maxx) / 2
+        
+        # Calcular extensión
+        lat_span = maxy - miny
+        lon_span = maxx - minx
+        
+        # Aplicar padding
+        lat_padding = lat_span * padding_factor
+        lon_padding = lon_span * padding_factor
+        
+        bounds_padded = [
+            minx - lon_padding,
+            miny - lat_padding,
+            maxx + lon_padding,
+            maxy + lat_padding
+        ]
+        
+        # Calcular zoom automático basado en el tamaño del área
+        max_span = max(lat_span, lon_span)
+        
+        # Fórmula para calcular zoom (ajustable según necesidades)
+        if max_span < 0.01:  # Área muy pequeña (~1km)
+            zoom = 15
+        elif max_span < 0.05:  # Área pequeña (~5km)
+            zoom = 13
+        elif max_span < 0.1:   # Área mediana (~10km)
+            zoom = 12
+        elif max_span < 0.5:   # Área grande (~50km)
+            zoom = 10
+        elif max_span < 1.0:   # Área muy grande (~100km)
+            zoom = 9
+        else:                  # Área extensa
+            zoom = 8
+        
+        return {
+            'center': [center_lat, center_lon],
+            'bounds': bounds_padded,
+            'zoom': min(max(zoom, 8), 18),  # Limitar entre 8 y 18
+            'lat_span': lat_span,
+            'lon_span': lon_span
+        }
+    except Exception as e:
+        st.warning(f"Error calculando bounds: {str(e)}")
+        return {
+            'center': [-14.0, -60.0],
+            'bounds': None,
+            'zoom': 12,
+            'lat_span': 0.1,
+            'lon_span': 0.1
+        }
+
+def crear_mapa_indicador(gdf, datos, indicador_config, zoom_config=None):
+    """Crear mapa con áreas para un indicador específico usando ESRI Satellite con zoom automático"""
     if gdf is None or datos is None:
         return crear_mapa_base()
     
     try:
-        centroide = gdf.geometry.iloc[0].centroid
+        # Calcular configuración de zoom si no se proporciona
+        if zoom_config is None:
+            zoom_config = calcular_bounds_optimos(gdf, datos)
+        
         m = folium.Map(
-            location=[centroide.y, centroide.x], 
-            zoom_start=12, 
-            tiles=None  # Desactivamos tiles por defecto
+            location=zoom_config['center'], 
+            zoom_start=zoom_config['zoom'],
+            tiles=None,
+            control_scale=True
         )
         
         # Agregar ESRI Satellite como capa base
@@ -708,6 +778,27 @@ def crear_mapa_indicador(gdf, datos, indicador_config):
             tiles='OpenStreetMap',
             name='OpenStreetMap'
         ).add_to(m)
+        
+        # Agregar polígono principal como contorno
+        if hasattr(gdf, 'geometry') and not gdf.empty:
+            try:
+                # Crear capa del polígono principal
+                poligono_geojson = gdf.__geo_interface__
+                
+                folium.GeoJson(
+                    poligono_geojson,
+                    style_function=lambda x: {
+                        'fillColor': 'transparent',
+                        'color': '#FFD700',  # Color dorado para el contorno
+                        'weight': 3,
+                        'fillOpacity': 0.0,
+                        'dashArray': '5, 5'
+                    },
+                    name='Polígono Principal',
+                    tooltip='Área de estudio'
+                ).add_to(m)
+            except Exception as e:
+                st.warning(f"No se pudo agregar el polígono principal: {str(e)}")
         
         # Agregar áreas del indicador
         for area_data in datos:
@@ -729,7 +820,7 @@ def crear_mapa_indicador(gdf, datos, indicador_config):
                 style_function=lambda x, color=color: {
                     'fillColor': color,
                     'color': color,
-                    'weight': 2,
+                    'weight': 1,
                     'fillOpacity': 0.6
                 },
                 popup=folium.Popup(
@@ -763,8 +854,28 @@ def crear_mapa_indicador(gdf, datos, indicador_config):
         legend_html += '</div>'
         m.get_root().html.add_child(folium.Element(legend_html))
         
+        # Agregar controles de mapa
         Fullscreen().add_to(m)
         MousePosition().add_to(m)
+        
+        # Agregar botón de reset zoom
+        reset_html = f'''
+        <div style="position: fixed; top: 50px; right: 50px; z-index:9999;">
+            <button onclick="resetMapView()" style="background-color: white; border: 2px solid #2E8B57; border-radius: 4px; padding: 8px 12px; cursor: pointer; font-weight: bold; color: #2E8B57;">
+                🔍 Restaurar Vista
+            </button>
+        </div>
+        <script>
+        function resetMapView() {{
+            if (typeof currentMap !== 'undefined') {{
+                currentMap.setView([{zoom_config['center'][0]}, {zoom_config['center'][1]}], {zoom_config['zoom']});
+            }}
+        }}
+        </script>
+        '''
+        
+        m.get_root().html.add_child(folium.Element(reset_html))
+        
         folium.LayerControl().add_to(m)
         
         return m
@@ -772,15 +883,22 @@ def crear_mapa_indicador(gdf, datos, indicador_config):
         st.error(f"Error creando mapa: {str(e)}")
         return crear_mapa_base()
 
-def crear_mapa_base():
+def crear_mapa_base(center=None, zoom=None):
     """Crear mapa base con ESRI Satellite"""
-    m = folium.Map(location=[-14.0, -60.0], zoom_start=4, tiles=None)
+    if center is None:
+        center = [-14.0, -60.0]
+    if zoom is None:
+        zoom = 4
+    
+    m = folium.Map(location=center, zoom_start=zoom, tiles=None, control_scale=True)
     folium.TileLayer(
         tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
         attr='Esri',
         name='Satélite ESRI'
     ).add_to(m)
     folium.TileLayer('OpenStreetMap').add_to(m)
+    Fullscreen().add_to(m)
+    MousePosition().add_to(m)
     folium.LayerControl().add_to(m)
     return m
 
@@ -1172,6 +1290,8 @@ def initialize_session_state():
         st.session_state.file_processed = False
     if 'analyzer' not in st.session_state:
         st.session_state.analyzer = AnalizadorBiodiversidad()
+    if 'zoom_config' not in st.session_state:
+        st.session_state.zoom_config = None
 
 def tiene_poligono_data():
     return (st.session_state.poligono_data is not None and 
@@ -1197,6 +1317,7 @@ def sidebar_config():
                     st.session_state.poligono_data = gdf
                     st.session_state.file_processed = True
                     st.session_state.analysis_complete = False
+                    st.session_state.zoom_config = None
                     st.success(f"✅ Polígono cargado: {uploaded_file.name}")
                     st.rerun()
         
@@ -1255,6 +1376,13 @@ def main():
                 if resultados:
                     st.session_state.results = resultados
                     st.session_state.analysis_complete = True
+                    
+                    # Calcular configuración de zoom
+                    st.session_state.zoom_config = calcular_bounds_optimos(
+                        st.session_state.poligono_data,
+                        resultados['areas_analisis']
+                    )
+                    
                     st.success("✅ Análisis completado exitosamente!")
                     st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
@@ -1507,18 +1635,39 @@ INDICADORES PRINCIPALES:
             }
         ]
         
-        # MAPAS POR INDICADOR
+        # MAPAS POR INDICADOR CON ZOOM AUTOMÁTICO
         for config in indicadores_config:
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.subheader(config['titulo'])
             
-            # Mapa con áreas
+            # Mapa con áreas y zoom automático
             mapa = crear_mapa_indicador(
                 st.session_state.poligono_data,
                 resultados['resultados'][config['key']],
-                config
+                config,
+                st.session_state.zoom_config
             )
             st_folium(mapa, width=800, height=500, key=f"map_{config['key']}")
+            
+            # Mostrar información del zoom
+            with st.expander("ℹ️ Información de la vista del mapa"):
+                col_info1, col_info2, col_info3 = st.columns(3)
+                with col_info1:
+                    if st.session_state.zoom_config:
+                        st.metric("Centro", f"{st.session_state.zoom_config['center'][0]:.4f}, {st.session_state.zoom_config['center'][1]:.4f}")
+                    else:
+                        st.metric("Centro", "No disponible")
+                with col_info2:
+                    if st.session_state.zoom_config:
+                        st.metric("Nivel de Zoom", st.session_state.zoom_config['zoom'])
+                    else:
+                        st.metric("Nivel de Zoom", "No disponible")
+                with col_info3:
+                    if st.session_state.zoom_config and 'lat_span' in st.session_state.zoom_config:
+                        span_km = st.session_state.zoom_config['lat_span'] * 111  # Aprox 111km por grado
+                        st.metric("Extensión", f"{span_km:.1f} km")
+                    else:
+                        st.metric("Extensión", "No disponible")
             
             # Visualizaciones alternativas
             col_viz1, col_viz2 = st.columns(2)
@@ -1633,6 +1782,7 @@ INDICADORES PRINCIPALES:
         - 🎨 **Leyendas Detalladas** - Información clara y comprensible
         - 🔗 **Análisis Multivariado** - Relaciones entre indicadores
         - 📥 **Descargas Mejoradas** - GeoJSON + Informes Word ejecutivos
+        - 🔍 **Zoom Automático** - Los mapas se ajustan automáticamente al polígono
         
         **¡Comienza cargando tu archivo en el sidebar!** ←
         """)
