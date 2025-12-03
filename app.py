@@ -272,7 +272,8 @@ class AnalizadorBiodiversidad:
                 'areas_analisis': areas_data,
                 'resultados': resultados,
                 'centroide': poligono.centroid,
-                'tipo_vegetacion': vegetation_type
+                'tipo_vegetacion': vegetation_type,
+                'bounds': poligono.bounds  # Agregar bounds para zoom automático
             }
         except Exception as e:
             st.error(f"Error procesando polígono: {str(e)}")
@@ -628,22 +629,83 @@ class AnalizadorBiodiversidad:
         else: return "Crítico"
 
 # ===============================
-# 🗺️ FUNCIONES DE MAPAS MEJORADAS
+# 🗺️ FUNCIONES DE MAPAS MEJORADAS CON ZOOM AUTOMÁTICO
 # ===============================
 
-def crear_mapa_indicador(gdf, datos, indicador_config):
-    """Crear mapa con áreas para un indicador específico usando ESRI Satellite"""
+def calcular_bounds_poligono(gdf):
+    """Calcular los límites del polígono para zoom automático"""
+    if gdf is None or gdf.empty:
+        return None
+    
+    try:
+        poligono = gdf.geometry.iloc[0]
+        bounds = poligono.bounds  # (minx, miny, maxx, maxy)
+        
+        # Convertir a formato Folium [[lat_min, lon_min], [lat_max, lon_max]]
+        # Nota: Folium usa [lat, lon], y bounds son (lon, lat, lon, lat)
+        return [[bounds[1], bounds[0]], [bounds[3], bounds[2]]]
+    except Exception as e:
+        st.error(f"Error calculando bounds: {str(e)}")
+        return None
+
+def calcular_zoom_ajustado(bounds):
+    """Calcular un nivel de zoom apropiado basado en el tamaño del área"""
+    if bounds is None:
+        return 12
+    
+    try:
+        # Calcular diferencia en grados
+        lat_diff = bounds[1][0] - bounds[0][0]
+        lon_diff = bounds[1][1] - bounds[0][1]
+        
+        # Determinar zoom basado en el tamaño
+        max_diff = max(lat_diff, lon_diff)
+        
+        if max_diff > 10:  # Área muy grande
+            return 6
+        elif max_diff > 5:
+            return 8
+        elif max_diff > 2:
+            return 10
+        elif max_diff > 1:
+            return 11
+        elif max_diff > 0.5:
+            return 12
+        elif max_diff > 0.2:
+            return 13
+        elif max_diff > 0.1:
+            return 14
+        elif max_diff > 0.05:
+            return 15
+        else:
+            return 16
+    except:
+        return 12
+
+def crear_mapa_indicador(gdf, datos, indicador_config, zoom_auto=True):
+    """Crear mapa con áreas para un indicador específico con zoom automático"""
     if gdf is None or datos is None:
         return crear_mapa_base()
     
     try:
+        # Calcular centroide y bounds para zoom automático
         centroide = gdf.geometry.iloc[0].centroid
+        bounds_poligono = calcular_bounds_poligono(gdf)
+        
+        # Determinar zoom inicial
+        zoom_inicial = 12
+        if zoom_auto and bounds_poligono:
+            zoom_inicial = calcular_zoom_ajustado(bounds_poligono)
+        
+        # Crear mapa con ubicación inicial en el centroide
         m = folium.Map(
             location=[centroide.y, centroide.x], 
-            zoom_start=12, 
-            tiles=None
+            zoom_start=zoom_inicial, 
+            tiles=None,
+            control_scale=True
         )
         
+        # Agregar ESRI Satellite como capa base
         folium.TileLayer(
             tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
             attr='Esri',
@@ -651,21 +713,33 @@ def crear_mapa_indicador(gdf, datos, indicador_config):
             overlay=False
         ).add_to(m)
         
+        # Agregar OpenStreetMap como alternativa
         folium.TileLayer(
             tiles='OpenStreetMap',
             name='OpenStreetMap'
         ).add_to(m)
         
+        # Añadir capa de relieve
+        folium.TileLayer(
+            tiles='https://stamen-tiles.a.ssl.fastly.net/terrain/{z}/{x}/{y}.png',
+            attr='Stamen Terrain',
+            name='Relieve',
+            overlay=False
+        ).add_to(m)
+        
+        # Agregar áreas del indicador
         for area_data in datos:
             valor = area_data[indicador_config['columna']]
             geometry = area_data['geometry']
             
+            # Determinar color basado en el valor
             color = 'gray'
             for rango, color_rango in indicador_config['colores'].items():
                 if valor >= rango[0] and valor <= rango[1]:
                     color = color_rango
                     break
             
+            # Crear GeoJSON para el área
             area_geojson = gpd.GeoSeries([geometry]).__geo_interface__
             
             folium.GeoJson(
@@ -690,6 +764,11 @@ def crear_mapa_indicador(gdf, datos, indicador_config):
                 tooltip=f"{area_data['area']}: {valor}"
             ).add_to(m)
         
+        # Ajustar zoom automáticamente si está habilitado
+        if zoom_auto and bounds_poligono:
+            m.fit_bounds(bounds_poligono, padding=(50, 50))
+        
+        # Agregar leyenda detallada
         legend_html = f'''
         <div style="position: fixed; bottom: 50px; left: 50px; width: 300px; 
                     background-color: white; border:2px solid grey; z-index:9999; 
@@ -706,9 +785,28 @@ def crear_mapa_indicador(gdf, datos, indicador_config):
         legend_html += '</div>'
         m.get_root().html.add_child(folium.Element(legend_html))
         
+        # Agregar controles adicionales
         Fullscreen().add_to(m)
         MousePosition().add_to(m)
         folium.LayerControl().add_to(m)
+        
+        # Agregar botón para reajustar zoom
+        if zoom_auto and bounds_poligono:
+            folium.plugins.LocateControl(
+                auto_start=False,
+                strings={"title": "Mostrar mi ubicación"}
+            ).add_to(m)
+            
+            # Agregar botón para ajustar zoom al polígono
+            folium.plugins.FloatImage(
+                'https://cdn-icons-png.flaticon.com/512/64/64722.png',
+                bottom=100,
+                left=50,
+                width='30px',
+                height='30px',
+                position='absolute',
+                z_index=9999
+            ).add_to(m)
         
         return m
     except Exception as e:
@@ -728,7 +826,7 @@ def crear_mapa_base():
     return m
 
 # ===============================
-# 🗺️ FUNCIONES PARA CURVAS DE NIVEL
+# 🗺️ FUNCIONES PARA CURVAS DE NIVEL CORREGIDAS
 # ===============================
 
 def generar_curvas_nivel(datos, variable, variable_nombre, res=100):
@@ -760,11 +858,17 @@ def generar_curvas_nivel(datos, variable, variable_nombre, res=100):
         
         # Interpolación
         points = np.column_stack((x_vals, y_vals))
-        zi = interpolate.griddata(points, z_vals, (xi, yi), method='cubic')
         
-        # Reemplazar NaN con valores interpolados cercanos
+        try:
+            # Intentar interpolación cúbica primero
+            zi = interpolate.griddata(points, z_vals, (xi, yi), method='cubic')
+        except:
+            # Fallback a interpolación lineal
+            zi = interpolate.griddata(points, z_vals, (xi, yi), method='linear')
+        
+        # Reemplazar NaN con valores interpolados cercanos si es necesario
         mask = np.isnan(zi)
-        if mask.any():
+        if mask.any() and not mask.all():
             zi[mask] = interpolate.griddata(
                 points, z_vals, (xi[mask], yi[mask]), method='nearest'
             )
@@ -776,17 +880,24 @@ def generar_curvas_nivel(datos, variable, variable_nombre, res=100):
         return None, None, None
 
 def crear_visualizacion_curvas_nivel(xi, yi, zi, x_vals, y_vals, z_vals, variable_nombre, num_contours=20):
-    """Crear visualización de curvas de nivel con Plotly"""
+    """Crear visualización de curvas de nivel con Plotly - CORREGIDO"""
     try:
         if xi is None or yi is None or zi is None:
             return None
         
-        # Crear figura con subplots
+        # Asegurarse de que zi no tenga NaN
+        if np.isnan(zi).any():
+            # Reemplazar NaN con el valor mínimo
+            zi_filled = np.nan_to_num(zi, nan=np.nanmin(zi))
+        else:
+            zi_filled = zi
+        
+        # Crear figura con contorno
         fig = go.Figure()
         
-        # Añadir contorno
+        # Añadir contorno con configuración corregida
         fig.add_trace(go.Contour(
-            z=zi,
+            z=zi_filled,
             x=xi[0],  # Primera fila de xi
             y=yi[:,0],  # Primera columna de yi
             colorscale='Viridis',
@@ -797,8 +908,11 @@ def crear_visualizacion_curvas_nivel(xi, yi, zi, x_vals, y_vals, z_vals, variabl
                 labelfont=dict(size=8, color='white')
             ),
             colorbar=dict(
-                title=variable_nombre,
-                titleside='right'
+                title=dict(
+                    text=variable_nombre,
+                    side='right'
+                ),
+                len=0.8
             ),
             name='Curvas de nivel'
         ))
@@ -813,7 +927,9 @@ def crear_visualizacion_curvas_nivel(xi, yi, zi, x_vals, y_vals, z_vals, variabl
                 color=z_vals,
                 colorscale='Viridis',
                 showscale=False,
-                line=dict(color='black', width=1)
+                line=dict(color='black', width=1),
+                cmin=np.nanmin(zi_filled),
+                cmax=np.nanmax(zi_filled)
             ),
             text=[f'Valor: {z:.2f}' for z in z_vals],
             hoverinfo='text',
@@ -833,8 +949,14 @@ def crear_visualizacion_curvas_nivel(xi, yi, zi, x_vals, y_vals, z_vals, variabl
                 xanchor="left",
                 x=0.01
             ),
-            margin=dict(l=0, r=0, t=50, b=0)
+            margin=dict(l=50, r=50, t=80, b=50),
+            plot_bgcolor='white',
+            paper_bgcolor='white'
         )
+        
+        # Configurar ejes
+        fig.update_xaxes(gridcolor='lightgray')
+        fig.update_yaxes(gridcolor='lightgray')
         
         return fig
         
@@ -845,19 +967,35 @@ def crear_visualizacion_curvas_nivel(xi, yi, zi, x_vals, y_vals, z_vals, variabl
 def crear_superficie_3d(xi, yi, zi, x_vals, y_vals, z_vals, variable_nombre):
     """Crear visualización 3D de la superficie"""
     try:
+        if xi is None or yi is None or zi is None:
+            return None
+        
+        # Asegurarse de que zi no tenga NaN
+        if np.isnan(zi).any():
+            zi_filled = np.nan_to_num(zi, nan=np.nanmin(zi))
+        else:
+            zi_filled = zi
+        
         fig = go.Figure()
         
         # Añadir superficie
         fig.add_trace(go.Surface(
-            z=zi,
+            z=zi_filled,
             x=xi[0],
             y=yi[:,0],
             colorscale='Viridis',
             opacity=0.8,
             contours=dict(
-                z=dict(show=True, usecolormap=True, highlightcolor="limegreen", project=dict(z=True))
+                z=dict(show=True, usecolormap=True, highlightcolor="limegreen")
             ),
-            name='Superficie'
+            name='Superficie',
+            showscale=True,
+            colorbar=dict(
+                title=dict(
+                    text=variable_nombre,
+                    side='right'
+                )
+            )
         ))
         
         # Añadir puntos originales
@@ -883,7 +1021,8 @@ def crear_superficie_3d(xi, yi, zi, x_vals, y_vals, z_vals, variable_nombre):
                 zaxis_title=variable_nombre,
                 camera=dict(
                     eye=dict(x=1.5, y=1.5, z=1.5)
-                )
+                ),
+                bgcolor='white'
             ),
             width=800,
             height=600,
@@ -894,6 +1033,53 @@ def crear_superficie_3d(xi, yi, zi, x_vals, y_vals, z_vals, variable_nombre):
         
     except Exception as e:
         st.error(f"Error creando superficie 3D: {str(e)}")
+        return None
+
+def crear_visualizacion_matplotlib(xi, yi, zi, x_vals, y_vals, z_vals, variable_nombre, num_contours=20):
+    """Alternativa usando Matplotlib para curvas de nivel"""
+    try:
+        if xi is None or yi is None or zi is None:
+            return None
+        
+        # Crear figura con subplots
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+        
+        # Primer subplot: Curvas de nivel
+        contour = ax1.contour(xi, yi, zi, levels=num_contours, colors='black', linewidths=0.5, alpha=0.7)
+        ax1.clabel(contour, inline=True, fontsize=8, fmt='%1.1f')
+        
+        # Contorno relleno
+        contour_filled = ax1.contourf(xi, yi, zi, levels=num_contours, alpha=0.5, cmap='viridis')
+        plt.colorbar(contour_filled, ax=ax1, label=variable_nombre)
+        
+        # Puntos originales
+        scatter = ax1.scatter(x_vals, y_vals, c=z_vals, s=50, alpha=0.8, 
+                            edgecolors='black', linewidth=0.5, cmap='viridis')
+        
+        ax1.set_xlabel('Longitud')
+        ax1.set_ylabel('Latitud')
+        ax1.set_title(f'Curvas de Nivel - {variable_nombre}')
+        ax1.grid(True, alpha=0.3)
+        
+        # Segundo subplot: Superficie 3D
+        ax2 = fig.add_subplot(122, projection='3d')
+        surf = ax2.plot_surface(xi, yi, zi, cmap='viridis', 
+                              alpha=0.8, linewidth=0, antialiased=True)
+        
+        ax2.scatter(x_vals, y_vals, z_vals, c='red', s=20, alpha=0.6, depthshade=True)
+        
+        ax2.set_xlabel('Longitud')
+        ax2.set_ylabel('Latitud')
+        ax2.set_zlabel(variable_nombre)
+        ax2.set_title('Superficie 3D')
+        
+        plt.colorbar(surf, ax=ax2, shrink=0.5, aspect=5, label=variable_nombre)
+        
+        plt.tight_layout()
+        return fig
+        
+    except Exception as e:
+        st.error(f"Error creando visualización matplotlib: {str(e)}")
         return None
 
 # ===============================
@@ -1261,8 +1447,11 @@ def initialize_session_state():
             'indicador': 'ndvi',
             'num_contours': 20,
             'resolucion': 100,
-            'mostrar_3d': True
+            'mostrar_3d': True,
+            'usar_matplotlib': False
         }
+    if 'zoom_auto' not in st.session_state:
+        st.session_state.zoom_auto = True
 
 def tiene_poligono_data():
     return (st.session_state.poligono_data is not None and 
@@ -1303,6 +1492,13 @@ def sidebar_config():
         divisiones = st.slider("🔲 Divisiones del área", 3, 8, 5,
                              help="Número de divisiones para crear la grilla de análisis")
         
+        # Configuración de zoom automático
+        st.session_state.zoom_auto = st.checkbox(
+            "Zoom automático en polígono", 
+            value=True,
+            help="Ajustar automáticamente el zoom para enfocar el polígono completo"
+        )
+        
         # Configuración de curvas de nivel
         if st.session_state.analysis_complete:
             st.markdown("---")
@@ -1340,11 +1536,19 @@ def sidebar_config():
                 help="Resolución de la interpolación (mayor = más suave)"
             )
             
-            st.session_state.curvas_nivel_config['mostrar_3d'] = st.checkbox(
-                "Mostrar superficie 3D",
-                value=True,
-                help="Mostrar visualización 3D además de las curvas de nivel"
-            )
+            col_curvas1, col_curvas2 = st.columns(2)
+            with col_curvas1:
+                st.session_state.curvas_nivel_config['mostrar_3d'] = st.checkbox(
+                    "Mostrar 3D",
+                    value=True,
+                    help="Mostrar visualización 3D además de las curvas de nivel"
+                )
+            with col_curvas2:
+                st.session_state.curvas_nivel_config['usar_matplotlib'] = st.checkbox(
+                    "Usar Matplotlib",
+                    value=False,
+                    help="Usar Matplotlib en lugar de Plotly para curvas de nivel"
+                )
         
         return uploaded_file, vegetation_type, divisiones
 
@@ -1374,6 +1578,12 @@ def main():
             st.metric("Tipo de vegetación", vegetation_type)
         with col3:
             st.metric("Áreas de análisis", f"{divisiones}x{divisiones}")
+        
+        # Mostrar bounds del polígono
+        if st.session_state.zoom_auto:
+            bounds = poligono.bounds
+            st.info(f"**Límites del polígono:** Lon: {bounds[0]:.4f} a {bounds[2]:.4f}, Lat: {bounds[1]:.4f} a {bounds[3]:.4f}")
+        
         st.markdown('</div>', unsafe_allow_html=True)
     
     if tiene_poligono_data() and not st.session_state.analysis_complete:
@@ -1631,10 +1841,12 @@ INDICADORES PRINCIPALES:
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.subheader(config['titulo'])
             
+            # Mapa con zoom automático
             mapa = crear_mapa_indicador(
                 st.session_state.poligono_data,
                 resultados['resultados'][config['key']],
-                config
+                config,
+                zoom_auto=st.session_state.zoom_auto
             )
             st_folium(mapa, width=800, height=500, key=f"map_{config['key']}")
             
@@ -1728,7 +1940,7 @@ INDICADORES PRINCIPALES:
         
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # NUEVA SECCIÓN: CURVAS DE NIVEL
+        # NUEVA SECCIÓN: CURVAS DE NIVEL CORREGIDAS
         st.markdown('<div class="custom-card">', unsafe_allow_html=True)
         st.subheader("🗺️ Análisis de Curvas de Nivel")
         
@@ -1784,61 +1996,86 @@ INDICADORES PRINCIPALES:
                 )
                 
                 if xi is not None and yi is not None and zi is not None:
-                    # Mostrar curvas de nivel 2D
-                    fig_contour = crear_visualizacion_curvas_nivel(
-                        xi, yi, zi,
-                        x_vals, y_vals, z_vals,
-                        nombre_indicador,
-                        config_curvas['num_contours']
-                    )
                     
-                    if fig_contour:
-                        st.plotly_chart(fig_contour, use_container_width=True)
+                    if config_curvas['usar_matplotlib']:
+                        # Usar Matplotlib para curvas de nivel
+                        fig_matplotlib = crear_visualizacion_matplotlib(
+                            xi, yi, zi,
+                            x_vals, y_vals, z_vals,
+                            nombre_indicador,
+                            config_curvas['num_contours']
+                        )
                         
-                        # Mostrar superficie 3D si está habilitado
-                        if config_curvas['mostrar_3d']:
-                            fig_3d = crear_superficie_3d(
-                                xi, yi, zi,
-                                x_vals, y_vals, z_vals,
-                                nombre_indicador
-                            )
-                            if fig_3d:
-                                st.plotly_chart(fig_3d, use_container_width=True)
-                        
-                        # Estadísticas de las curvas
-                        with st.expander("📊 Estadísticas de las Curvas de Nivel"):
-                            col_stat1, col_stat2, col_stat3 = st.columns(3)
-                            with col_stat1:
-                                st.metric("Valor máximo", f"{np.nanmax(zi):.2f}")
-                            with col_stat2:
-                                st.metric("Valor mínimo", f"{np.nanmin(zi):.2f}")
-                            with col_stat3:
-                                st.metric("Valor promedio", f"{np.nanmean(zi):.2f}")
-                            
-                            gradiente = np.gradient(zi)
-                            st.metric("Gradiente promedio", f"{np.mean(np.abs(gradiente[0])):.4f}")
-                        
-                        # Información interpretativa
-                        with st.expander("📝 Interpretación de las Curvas"):
-                            st.markdown("""
-                            **Cómo interpretar las curvas de nivel:**
-                            
-                            1. **Líneas cercanas** = Cambios rápidos en el valor
-                            2. **Líneas separadas** = Cambios graduales
-                            3. **Áreas cerradas** = Picos o valles de concentración
-                            4. **Patrón radial** = Gradiente desde un centro
-                            
-                            **Para este indicador:**
-                            - Valores más altos indican mejor estado ecológico
-                            - Las áreas con valores similares están conectadas por las líneas
-                            - Los cambios bruscos pueden indicar transiciones ecológicas
-                            """)
+                        if fig_matplotlib:
+                            st.pyplot(fig_matplotlib)
+                            plt.close()
                     else:
-                        st.warning("No se pudo generar la visualización de curvas de nivel")
+                        # Usar Plotly para curvas de nivel (CORREGIDO)
+                        fig_contour = crear_visualizacion_curvas_nivel(
+                            xi, yi, zi,
+                            x_vals, y_vals, z_vals,
+                            nombre_indicador,
+                            config_curvas['num_contours']
+                        )
+                        
+                        if fig_contour:
+                            st.plotly_chart(fig_contour, use_container_width=True)
+                        else:
+                            st.warning("No se pudo generar la visualización con Plotly")
+                    
+                    # Mostrar superficie 3D si está habilitado
+                    if config_curvas['mostrar_3d'] and not config_curvas['usar_matplotlib']:
+                        fig_3d = crear_superficie_3d(
+                            xi, yi, zi,
+                            x_vals, y_vals, z_vals,
+                            nombre_indicador
+                        )
+                        if fig_3d:
+                            st.plotly_chart(fig_3d, use_container_width=True)
+                    
+                    # Estadísticas de las curvas
+                    with st.expander("📊 Estadísticas de las Curvas de Nivel"):
+                        col_stat1, col_stat2, col_stat3 = st.columns(3)
+                        with col_stat1:
+                            st.metric("Valor máximo", f"{np.nanmax(zi):.2f}")
+                        with col_stat2:
+                            st.metric("Valor mínimo", f"{np.nanmin(zi):.2f}")
+                        with col_stat3:
+                            st.metric("Valor promedio", f"{np.nanmean(zi):.2f}")
+                        
+                        if not np.isnan(zi).all():
+                            try:
+                                gradiente_x, gradiente_y = np.gradient(zi)
+                                gradiente_promedio = np.mean(np.sqrt(gradiente_x**2 + gradiente_y**2))
+                                st.metric("Gradiente promedio", f"{gradiente_promedio:.4f}")
+                            except:
+                                pass
+                    
+                    # Información interpretativa
+                    with st.expander("📝 Interpretación de las Curvas"):
+                        st.markdown(f"""
+                        **Cómo interpretar las curvas de nivel para {nombre_indicador}:**
+                        
+                        1. **Líneas cercanas** = Cambios rápidos en el valor del indicador
+                        2. **Líneas separadas** = Cambios graduales
+                        3. **Áreas cerradas** = Picos o valles de concentración
+                        4. **Patrón radial** = Gradiente desde un centro
+                        
+                        **Interpretación específica:**
+                        - Valores más altos indican mejor estado ecológico
+                        - Las áreas con valores similares están conectadas por las líneas
+                        - Los cambios bruscos pueden indicar transiciones ecológicas
+                        - Las áreas con curvas densas requieren atención especial
+                        
+                        **Recomendaciones basadas en el patrón:**
+                        - Si las curvas son uniformes: Mantener prácticas actuales
+                        - Si hay cambios abruptos: Investigar causas locales
+                        - Si hay "islas" de valores: Considerar corredores ecológicos
+                        """)
                 else:
                     st.warning("No se pudieron generar curvas de nivel con los datos disponibles")
             else:
-                st.warning("Se necesitan al menos 4 puntos para generar curvas de nivel")
+                st.warning("Se necesitan al menos 4 puntos con coordenadas válidas para generar curvas de nivel")
         
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -1857,6 +2094,7 @@ INDICADORES PRINCIPALES:
         - 🔗 **Análisis Multivariado** - Relaciones entre indicadores
         - 📥 **Descargas Mejoradas** - GeoJSON + Informes Word ejecutivos
         - 🗺️ **Curvas de Nivel** - Análisis topográfico de indicadores ecológicos
+        - 🔍 **Zoom Automático** - Ajuste automático del mapa al polígono
         
         **¡Comienza cargando tu archivo en el sidebar!** ←
         """)
