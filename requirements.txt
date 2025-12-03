@@ -16,3 +16,4 @@ geopandas
 shapely
 python-docx
 rasterstats
+owslib>=0.24.0
