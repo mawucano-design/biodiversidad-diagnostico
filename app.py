@@ -18,6 +18,7 @@ import base64
 from scipy import interpolate
 import warnings
 warnings.filterwarnings('ignore')
+
 # Librerías para análisis geoespacial
 import folium
 from streamlit_folium import st_folium
@@ -27,6 +28,7 @@ from shapely.geometry import Polygon, Point
 import pyproj
 from branca.colormap import LinearColormap
 import matplotlib.cm as cm
+
 # Manejo de la librería docx con fallback
 try:
     from docx import Document
@@ -35,16 +37,18 @@ try:
     DOCX_AVAILABLE = True
 except ImportError:
     DOCX_AVAILABLE = False
-    st.warning("⚠️ La librería python-docx no está instalada. La generación de informes Word estará deshabilitada.")
+
 # ===============================
 # 🌿 CONFIGURACIÓN Y ESTILOS GLOBALES
 # ===============================
+
 st.set_page_config(
     page_title="Análisis Integral de Biodiversidad",
     page_icon="🌍",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
 def aplicar_estilos_globales():
     st.markdown("""
     <style>
@@ -139,6 +143,7 @@ def aplicar_estilos_globales():
         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         margin-bottom: 1rem;
     }
+    
     /* Nuevos estilos para las capas */
     .layer-card {
         background: white;
@@ -212,6 +217,7 @@ def aplicar_estilos_globales():
     }
     </style>
     """, unsafe_allow_html=True)
+
 def crear_header():
     st.markdown("""
     <div class="custom-header">
@@ -219,11 +225,14 @@ def crear_header():
         <p>Sistema de evaluación ecológica con múltiples indicadores ambientales</p>
     </div>
     """, unsafe_allow_html=True)
+
 # ===============================
 # 🧩 CLASE PRINCIPAL DE ANÁLISIS MEJORADA
 # ===============================
+
 class AnalizadorBiodiversidad:
     """Analizador integral de biodiversidad para el polígono cargado"""
+    
     def __init__(self):
         self.parametros_ecosistemas = {
             'Bosque Denso Primario': {
@@ -290,6 +299,7 @@ class AnalizadorBiodiversidad:
                 'humedad': 0.75
             }
         }
+    
     def _calcular_area_hectareas(self, poligono):
         """Calcular área en hectáreas de forma precisa usando proyección UTM"""
         try:
@@ -306,11 +316,13 @@ class AnalizadorBiodiversidad:
         except Exception as e:
             st.warning(f"Usando cálculo aproximado debido a: {str(e)}")
             return self._calcular_area_aproximada(poligono)
+
     def _determinar_zona_utm(self, lat, lon):
         """Determinar la zona UTM automáticamente"""
         zona = int((lon + 180) / 6) + 1
         hemisferio = 'north' if lat >= 0 else 'south'
         return f"EPSG:326{zona:02d}" if hemisferio == 'north' else f"EPSG:327{zona:02d}"
+
     def _calcular_area_aproximada(self, poligono):
         """Cálculo aproximado mejorado cuando falla la proyección"""
         try:
@@ -333,6 +345,7 @@ class AnalizadorBiodiversidad:
         except Exception as e:
             st.error(f"Error en cálculo aproximado: {str(e)}")
             return 1000
+
     def procesar_poligono(self, gdf, vegetation_type, divisiones=5):
         """Procesar el polígono cargado dividiéndolo en áreas regulares"""
         if gdf is None or gdf.empty:
@@ -354,6 +367,7 @@ class AnalizadorBiodiversidad:
         except Exception as e:
             st.error(f"Error procesando polígono: {str(e)}")
             return None
+
     def _generar_areas_regulares(self, poligono, divisiones):
         """Generar áreas regulares (grid) dentro del polígono"""
         areas = []
@@ -361,12 +375,14 @@ class AnalizadorBiodiversidad:
         minx, miny, maxx, maxy = bounds
         delta_x = (maxx - minx) / divisiones
         delta_y = (maxy - miny) / divisiones
+        
         for i in range(divisiones):
             for j in range(divisiones):
                 cell_minx = minx + i * delta_x
                 cell_maxx = minx + (i + 1) * delta_x
                 cell_miny = miny + j * delta_y
                 cell_maxy = miny + (j + 1) * delta_y
+                
                 cell_polygon = Polygon([
                     (cell_minx, cell_miny),
                     (cell_maxx, cell_miny),
@@ -374,6 +390,7 @@ class AnalizadorBiodiversidad:
                     (cell_minx, cell_maxy),
                     (cell_minx, cell_miny)
                 ])
+                
                 if poligono.intersects(cell_polygon):
                     intersection = poligono.intersection(cell_polygon)
                     if not intersection.is_empty:
@@ -386,9 +403,11 @@ class AnalizadorBiodiversidad:
                             'bounds': intersection.bounds
                         })
         return areas
+
     def _analisis_integral(self, areas_data, vegetation_type, area_total):
         """Realizar análisis integral con todos los indicadores"""
         params = self.parametros_ecosistemas.get(vegetation_type, self.parametros_ecosistemas['Bosque Secundario'])
+        
         carbono_data = []
         vegetacion_data = []
         biodiversidad_data = []
@@ -398,30 +417,42 @@ class AnalizadorBiodiversidad:
         presiones_data = []
         conectividad_data = []
         humedad_data = []
+        
         for area in areas_data:
             centroid = area['centroid']
+            
             carbono_info = self._analizar_carbono(area, params, area['area_ha'])
             carbono_data.append(carbono_info)
+            
             vegetacion_info = self._analizar_vegetacion(area, params)
             vegetacion_data.append(vegetacion_info)
+            
             biodiversidad_info = self._analizar_biodiversidad(area, params, area['area_ha'])
             biodiversidad_data.append(biodiversidad_info)
+            
             agua_info = self._analizar_recursos_hidricos(area)
             agua_data.append(agua_info)
+            
             suelo_info = self._analizar_suelo(area)
             suelo_data.append(suelo_info)
+            
             clima_info = self._analizar_clima(area)
             clima_data.append(clima_info)
+            
             presiones_info = self._analizar_presiones(area)
             presiones_data.append(presiones_info)
+            
             conectividad_info = self._analizar_conectividad(area)
             conectividad_data.append(conectividad_info)
+            
             humedad_info = self._analizar_humedad(area, params)
             humedad_data.append(humedad_info)
+        
         summary_metrics = self._calcular_metricas_resumen(
             carbono_data, vegetacion_data, biodiversidad_data, agua_data,
             suelo_data, clima_data, presiones_data, conectividad_data, humedad_data
         )
+        
         return {
             'carbono': carbono_data,
             'vegetacion': vegetacion_data,
@@ -434,12 +465,14 @@ class AnalizadorBiodiversidad:
             'humedad': humedad_data,
             'summary_metrics': summary_metrics
         }
+
     def _analizar_carbono(self, area, params, area_ha):
         """Analizar indicadores de carbono"""
         base_carbon = np.random.uniform(params['carbono']['min'], params['carbono']['max'])
         ndvi = max(0.1, min(0.9, np.random.normal(params['ndvi_base'], 0.08)))
         carbono_ajustado = base_carbon * (0.3 + ndvi * 0.7)
         co2_potencial = carbono_ajustado * 3.67
+        
         return {
             'area': area['id'],
             'carbono_almacenado_tha': round(carbono_ajustado, 1),
@@ -450,10 +483,12 @@ class AnalizadorBiodiversidad:
             'geometry': area['geometry'],
             'centroid': area['centroid']
         }
+
     def _analizar_vegetacion(self, area, params):
         """Analizar estado de la vegetación"""
         ndvi = max(0.1, min(0.9, np.random.normal(params['ndvi_base'], 0.08)))
         evi = ndvi * 0.9 + np.random.normal(0, 0.03)
+        
         if ndvi > 0.7:
             salud = "Excelente"
             color = '#006400'
@@ -466,6 +501,7 @@ class AnalizadorBiodiversidad:
         else:
             salud = "Degradada"
             color = '#FF4500'
+        
         return {
             'area': area['id'],
             'ndvi': ndvi,
@@ -476,11 +512,13 @@ class AnalizadorBiodiversidad:
             'geometry': area['geometry'],
             'centroid': area['centroid']
         }
+
     def _analizar_biodiversidad(self, area, params, area_ha):
         """Analizar indicadores de biodiversidad de forma más realista"""
         factor_area = min(1.0, math.log(area_ha + 1) / 6)
         factor_conectividad = np.random.uniform(0.6, 0.9)
         factor_perturbacion = np.random.uniform(0.7, 0.95)
+        
         if params['biodiversidad'] > 0.7:
             riqueza_base = 150
         elif params['biodiversidad'] > 0.5:
@@ -489,7 +527,9 @@ class AnalizadorBiodiversidad:
             riqueza_base = 40
         else:
             riqueza_base = 20
+        
         riqueza_especies = int(riqueza_base * factor_area * factor_conectividad * factor_perturbacion)
+        
         if params['biodiversidad'] > 0.7:
             shannon_base = 3.0
         elif params['biodiversidad'] > 0.5:
@@ -498,7 +538,9 @@ class AnalizadorBiodiversidad:
             shannon_base = 1.5
         else:
             shannon_base = 0.8
+        
         shannon_index = shannon_base * factor_conectividad * factor_perturbacion
+        
         if shannon_index > 2.5:
             estado = "Muy Alto"
             color = '#006400'
@@ -514,6 +556,7 @@ class AnalizadorBiodiversidad:
         else:
             estado = "Muy Bajo"
             color = '#FF4500'
+        
         return {
             'area': area['id'],
             'riqueza_especies': riqueza_especies,
@@ -525,9 +568,11 @@ class AnalizadorBiodiversidad:
             'geometry': area['geometry'],
             'centroid': area['centroid']
         }
+
     def _analizar_recursos_hidricos(self, area):
         """Analizar indicadores hídricos"""
         disponibilidad_agua = np.random.uniform(0.2, 0.9)
+        
         if disponibilidad_agua > 0.7:
             estado_agua = "Alta"
             color_agua = '#1E90FF'
@@ -540,6 +585,7 @@ class AnalizadorBiodiversidad:
         else:
             estado_agua = "Crítica"
             color_agua = '#FF4500'
+        
         return {
             'area': area['id'],
             'disponibilidad_agua': round(disponibilidad_agua, 2),
@@ -548,10 +594,12 @@ class AnalizadorBiodiversidad:
             'geometry': area['geometry'],
             'centroid': area['centroid']
         }
+
     def _analizar_humedad(self, area, params):
         """Analizar índice de humedad"""
         humedad_base = params.get('humedad', 0.5)
         humedad = max(0.1, min(0.95, np.random.normal(humedad_base, 0.1)))
+        
         if humedad > 0.7:
             estado_humedad = "Muy Húmedo"
             color_humedad = '#1E90FF'
@@ -567,6 +615,7 @@ class AnalizadorBiodiversidad:
         else:
             estado_humedad = "Muy Seco"
             color_humedad = '#FF4500'
+        
         return {
             'area': area['id'],
             'indice_humedad': round(humedad, 2),
@@ -575,10 +624,12 @@ class AnalizadorBiodiversidad:
             'geometry': area['geometry'],
             'centroid': area['centroid']
         }
+
     def _analizar_suelo(self, area):
         """Analizar calidad del suelo"""
         materia_organica = np.random.uniform(1.0, 8.0)
         salud_suelo = materia_organica / 8.0 * 0.6 + np.random.uniform(0, 0.4)
+        
         if salud_suelo > 0.7:
             estado_suelo = "Excelente"
             color_suelo = '#8B4513'
@@ -591,6 +642,7 @@ class AnalizadorBiodiversidad:
         else:
             estado_suelo = "Degradado"
             color_suelo = '#D2691E'
+        
         return {
             'area': area['id'],
             'salud_suelo': round(salud_suelo, 2),
@@ -599,9 +651,11 @@ class AnalizadorBiodiversidad:
             'geometry': area['geometry'],
             'centroid': area['centroid']
         }
+
     def _analizar_presiones(self, area):
         """Analizar presiones antrópicas"""
         presion_total = np.random.uniform(0, 1)
+        
         if presion_total < 0.3:
             nivel_presion = "Bajo"
             color_presion = '#32CD32'
@@ -611,6 +665,7 @@ class AnalizadorBiodiversidad:
         else:
             nivel_presion = "Alto"
             color_presion = '#FF4500'
+        
         return {
             'area': area['id'],
             'presion_total': round(presion_total, 2),
@@ -619,9 +674,11 @@ class AnalizadorBiodiversidad:
             'geometry': area['geometry'],
             'centroid': area['centroid']
         }
+
     def _analizar_conectividad(self, area):
         """Analizar conectividad ecológica"""
         conectividad = np.random.uniform(0.2, 0.9)
+        
         if conectividad > 0.7:
             estado_conectividad = "Alta"
             color_conectividad = '#006400'
@@ -634,6 +691,7 @@ class AnalizadorBiodiversidad:
         else:
             estado_conectividad = "Crítica"
             color_conectividad = '#FF4500'
+        
         return {
             'area': area['id'],
             'conectividad_total': round(conectividad, 2),
@@ -642,10 +700,12 @@ class AnalizadorBiodiversidad:
             'geometry': area['geometry'],
             'centroid': area['centroid']
         }
+
     def _analizar_clima(self, area):
         """Analizar indicadores climáticos"""
         temperatura = np.random.uniform(15, 35)
         vulnerabilidad = (temperatura - 15) / 20
+        
         if vulnerabilidad < 0.3:
             riesgo_climatico = "Bajo"
             color_clima = '#32CD32'
@@ -655,6 +715,7 @@ class AnalizadorBiodiversidad:
         else:
             riesgo_climatico = "Alto"
             color_clima = '#FF4500'
+        
         return {
             'area': area['id'],
             'vulnerabilidad_climatica': round(vulnerabilidad, 2),
@@ -663,6 +724,7 @@ class AnalizadorBiodiversidad:
             'geometry': area['geometry'],
             'centroid': area['centroid']
         }
+
     def _calcular_metricas_resumen(self, carbono, vegetacion, biodiversidad, agua, suelo, clima, presiones, conectividad, humedad):
         """Calcular métricas resumen para el dashboard"""
         avg_carbono = np.mean([p['co2_total_ton'] for p in carbono])
@@ -672,6 +734,7 @@ class AnalizadorBiodiversidad:
         avg_presiones = np.mean([p['presion_total'] for p in presiones])
         avg_conectividad = np.mean([p['conectividad_total'] for p in conectividad])
         avg_humedad = np.mean([p['indice_humedad'] for p in humedad])
+        
         return {
             'carbono_total_co2_ton': round(avg_carbono * len(carbono), 1),
             'indice_biodiversidad_promedio': round(avg_biodiversidad, 2),
@@ -683,15 +746,18 @@ class AnalizadorBiodiversidad:
             'areas_analizadas': len(carbono),
             'estado_general': self._calcular_estado_general(avg_biodiversidad, avg_presiones, avg_conectividad)
         }
+
     def _calcular_estado_general(self, biodiversidad, presiones, conectividad):
         score = (biodiversidad / 3.0 * 0.4 + (1 - presiones) * 0.4 + conectividad * 0.2)
         if score > 0.7: return "Excelente"
         elif score > 0.5: return "Bueno"
         elif score > 0.3: return "Moderado"
         else: return "Crítico"
+
 # ===============================
 # 🗺️ FUNCIONES DE MAPAS MEJORADAS
 # ===============================
+
 def crear_mapa_base():
     """Crear mapa base con ESRI Satellite"""
     m = folium.Map(location=[-14.0, -60.0], zoom_start=4, tiles=None)
@@ -703,19 +769,28 @@ def crear_mapa_base():
     folium.TileLayer('OpenStreetMap').add_to(m)
     folium.LayerControl().add_to(m)
     return m
-def crear_mapa_para_capa(gdf, datos_capa, config_capa):
-    """Crear un mapa específico para una capa"""
-    if gdf is None or datos_capa is None:
+
+def crear_mapa_para_capa(gdf, datos_capa, config_capa, mapa_key):
+    """Crear un mapa específico para una capa con clave única"""
+    if gdf is None or datos_capa is None or len(datos_capa) == 0:
         return crear_mapa_base()
+    
     try:
-        centroide = gdf.geometry.iloc[0].centroid
-        bounds = gdf.geometry.iloc[0].bounds
+        # Obtener el centroide del polígono principal
+        if hasattr(gdf, 'geometry') and len(gdf) > 0:
+            centroide = gdf.geometry.iloc[0].centroid
+            bounds = gdf.geometry.iloc[0].bounds
+        else:
+            centroide = Point(-60, -14)  # Centro de América del Sur
+            bounds = [-70, -30, -50, 10]
+        
         m = folium.Map(
             location=[centroide.y, centroide.x], 
             zoom_start=12, 
             tiles=None,
             control_scale=True
         )
+        
         # Agregar ESRI Satellite como capa base
         folium.TileLayer(
             tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -723,25 +798,33 @@ def crear_mapa_para_capa(gdf, datos_capa, config_capa):
             name='Satélite ESRI',
             overlay=False
         ).add_to(m)
+        
         # Agregar áreas de análisis
         for area_data in datos_capa:
-            valor = area_data[config_capa['columna']]
+            if 'geometry' not in area_data or area_data['geometry'] is None:
+                continue
+                
+            valor = area_data.get(config_capa['columna'], 0)
+            
             # Normalizar valor para el color
             valor_norm = (valor - config_capa['rango'][0]) / (config_capa['rango'][1] - config_capa['rango'][0])
             valor_norm = max(0, min(1, valor_norm))
+            
             # Determinar color basado en el valor normalizado
             num_colores = len(config_capa['colores'])
             color_idx = min(num_colores - 1, int(valor_norm * num_colores))
             color = config_capa['colores'][color_idx] if num_colores > 0 else '#808080'
+            
             # Crear tooltip
             tooltip_text = f"""
             <div style='font-family: Arial; font-size: 12px;'>
                 <b>{config_capa['nombre']}</b><br>
-                Área: {area_data['area']}<br>
+                Área: {area_data.get('area', 'N/A')}<br>
                 Valor: {valor:.2f}<br>
-                Estado: {area_data.get('estado_conservacion', area_data.get('salud_vegetacion', area_data.get('estado_hidrico', 'N/A')))}
+                Estado: {area_data.get('estado_conservacion', area_data.get('salud_vegetacion', area_data.get('estado_hidrico', area_data.get('estado_suelo', area_data.get('nivel_presion', area_data.get('estado_conectividad', area_data.get('estado_humedad', 'N/A')))))))}
             </div>
             """
+            
             folium.GeoJson(
                 area_data['geometry'],
                 style_function=lambda feature, color=color: {
@@ -753,116 +836,165 @@ def crear_mapa_para_capa(gdf, datos_capa, config_capa):
                 },
                 tooltip=folium.Tooltip(tooltip_text, sticky=True)
             ).add_to(m)
-        # Agregar el polígono principal
-        folium.GeoJson(
-            gdf.geometry.iloc[0],
-            style_function=lambda x: {
-                'fillColor': 'transparent',
-                'color': '#FF0000',
-                'weight': 3,
-                'fillOpacity': 0
-            },
-            name='Polígono de estudio'
-        ).add_to(m)
-        # Agregar leyenda (CORREGIDO)
-        agregar_leyenda_al_mapa(m, config_capa)
-        # Ajustar zoom
-        m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
+        
+        # Agregar el polígono principal si existe
+        if hasattr(gdf, 'geometry') and len(gdf) > 0:
+            folium.GeoJson(
+                gdf.geometry.iloc[0],
+                style_function=lambda x: {
+                    'fillColor': 'transparent',
+                    'color': '#FF0000',
+                    'weight': 3,
+                    'fillOpacity': 0
+                },
+                name='Polígono de estudio'
+            ).add_to(m)
+        
+        # Agregar leyenda
+        try:
+            colores = config_capa['colores']
+            nombre = config_capa['nombre']
+            rango_min, rango_max = config_capa['rango']
+            
+            # Calcular etiquetas para la leyenda
+            num_colores = len(colores)
+            valores = np.linspace(rango_min, rango_max, num_colores + 1)
+            
+            leyenda_html = f"""
+            <div style="position: fixed; bottom: 50px; left: 50px; width: 180px; 
+                        background-color: white; border: 2px solid grey; border-radius: 5px; 
+                        padding: 10px; font-size: 12px; z-index: 9999;">
+                <b>{nombre}</b><br>
+            """
+            
+            for i in range(num_colores):
+                leyenda_html += f"""
+                <div style="margin: 5px 0;">
+                    <div style="width: 20px; height: 15px; background-color: {colores[i]}; 
+                                display: inline-block; margin-right: 5px; border: 1px solid #000;"></div>
+                    {valores[i]:.2f} - {valores[i+1]:.2f}
+                </div>
+                """
+            
+            leyenda_html += "</div>"
+            
+            m.get_root().html.add_child(folium.Element(leyenda_html))
+        except:
+            pass
+        
+        # Ajustar zoom si hay bounds válidos
+        try:
+            m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
+        except:
+            pass
+        
         # Agregar controles
         Fullscreen().add_to(m)
         MousePosition().add_to(m)
         folium.LayerControl().add_to(m)
+        
         return m
+        
     except Exception as e:
-        st.error(f"Error creando mapa para capa {config_capa['nombre']}: {str(e)}")
         return crear_mapa_base()
-# ✅ FUNCIÓN CORREGIDA: usar LinearColormap (seguro con Streamlit)
-def agregar_leyenda_al_mapa(mapa, config_capa):
-    """Agregar leyenda segura usando LinearColormap (compatible con Streamlit)"""
-    try:
-        colores = config_capa['colores']
-        rango_min, rango_max = config_capa['rango']
-        nombre = config_capa['nombre']
 
-        # Asegurar que haya al menos 2 colores para LinearColormap
-        if len(colores) == 1:
-            colores = [colores[0], colores[0]]
-        elif len(colores) == 0:
-            colores = ['#cccccc', '#666666']
-
-        # Crear colormap de branca
-        colormap = LinearColormap(
-            colors=colores,
-            vmin=rango_min,
-            vmax=rango_max,
-            caption=nombre
-        )
-        mapa.add_child(colormap)
-    except Exception as e:
-        st.warning(f"No se pudo agregar leyenda segura: {str(e)}")
 # ===============================
 # 📊 FUNCIONES DE VISUALIZACIÓN MEJORADAS
 # ===============================
+
 def crear_grafico_barras_horizontales(datos, titulo, columna_valor, columna_etiqueta):
     """Crear gráfico de barras horizontales para comparar áreas"""
-    df = pd.DataFrame(datos)
-    df = df.sort_values(by=columna_valor, ascending=True)
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        y=df[columna_etiqueta],
-        x=df[columna_valor],
-        orientation='h',
-        marker=dict(
-            color=df[columna_valor],
-            colorscale='Viridis',
-            showscale=True
-        ),
-        text=df[columna_valor].round(2),
-        textposition='auto'
-    ))
-    fig.update_layout(
-        title=titulo,
-        xaxis_title=columna_valor,
-        yaxis_title="Áreas",
-        template='plotly_white',
-        height=max(300, len(datos) * 30)
-    )
-    return fig
+    if not datos or len(datos) == 0:
+        return go.Figure()
+    
+    try:
+        df = pd.DataFrame(datos)
+        if columna_valor not in df.columns or columna_etiqueta not in df.columns:
+            return go.Figure()
+            
+        df = df.sort_values(by=columna_valor, ascending=True)
+        
+        fig = go.Figure()
+        
+        fig.add_trace(go.Bar(
+            y=df[columna_etiqueta],
+            x=df[columna_valor],
+            orientation='h',
+            marker=dict(
+                color=df[columna_valor],
+                colorscale='Viridis',
+                showscale=True
+            ),
+            text=df[columna_valor].round(2),
+            textposition='auto'
+        ))
+        
+        fig.update_layout(
+            title=titulo,
+            xaxis_title=columna_valor,
+            yaxis_title="Áreas",
+            template='plotly_white',
+            height=max(300, len(datos) * 30)
+        )
+        
+        return fig
+    except Exception as e:
+        return go.Figure()
+
 def crear_grafico_distribucion(datos, titulo, columna_valor):
     """Crear gráfico de distribución (histograma + boxplot)"""
-    valores = [d[columna_valor] for d in datos]
-    fig = go.Figure()
-    # Histograma
-    fig.add_trace(go.Histogram(
-        x=valores,
-        nbinsx=20,
-        name="Distribución",
-        marker_color='#2E8B57',
-        opacity=0.7
-    ))
-    # Boxplot
-    fig.add_trace(go.Box(
-        x=valores,
-        name="Resumen",
-        boxpoints='outliers',
-        marker_color='#228B22',
-        line_color='#006400'
-    ))
-    fig.update_layout(
-        title=f"{titulo} - Distribución",
-        xaxis_title=columna_valor,
-        yaxis_title="Frecuencia",
-        template='plotly_white',
-        showlegend=False,
-        height=300
-    )
-    return fig
+    if not datos or len(datos) == 0:
+        return go.Figure()
+    
+    try:
+        valores = [d.get(columna_valor, 0) for d in datos if columna_valor in d]
+        
+        if not valores:
+            return go.Figure()
+        
+        fig = go.Figure()
+        
+        # Histograma
+        fig.add_trace(go.Histogram(
+            x=valores,
+            nbinsx=20,
+            name="Distribución",
+            marker_color='#2E8B57',
+            opacity=0.7
+        ))
+        
+        # Boxplot
+        fig.add_trace(go.Box(
+            x=valores,
+            name="Resumen",
+            boxpoints='outliers',
+            marker_color='#228B22',
+            line_color='#006400'
+        ))
+        
+        fig.update_layout(
+            title=f"{titulo} - Distribución",
+            xaxis_title=columna_valor,
+            yaxis_title="Frecuencia",
+            template='plotly_white',
+            showlegend=False,
+            height=300
+        )
+        
+        return fig
+    except Exception as e:
+        return go.Figure()
+
 # ===============================
 # 📁 MANEJO DE ARCHIVOS Y DESCARGAS
 # ===============================
+
 def procesar_archivo_cargado(uploaded_file):
     """Procesar archivo KML/ZIP cargado"""
     try:
+        if uploaded_file is None:
+            return None
+            
         if uploaded_file.name.endswith('.kml'):
             gdf = gpd.read_file(uploaded_file, driver='KML')
             return gdf
@@ -878,9 +1010,13 @@ def procesar_archivo_cargado(uploaded_file):
     except Exception as e:
         st.error(f"Error procesando archivo: {str(e)}")
         return None
+
 def crear_boton_descarga(data, filename, button_text, file_type):
     """Crear botón de descarga para diferentes tipos de archivos"""
     try:
+        if data is None:
+            return
+            
         if file_type == 'geojson':
             b64 = base64.b64encode(data.encode()).decode()
             href = f'<a href="data:application/json;base64,{b64}" download="{filename}" class="download-btn">📥 {button_text}</a>'
@@ -890,108 +1026,148 @@ def crear_boton_descarga(data, filename, button_text, file_type):
         elif file_type == 'csv':
             b64 = base64.b64encode(data.encode()).decode()
             href = f'<a href="data:file/csv;base64,{b64}" download="{filename}" class="download-btn">📥 {button_text}</a>'
+        elif file_type == 'txt':
+            b64 = base64.b64encode(data.encode()).decode()
+            href = f'<a href="data:text/plain;base64,{b64}" download="{filename}" class="download-btn">📥 {button_text}</a>'
+        
         st.markdown(f'<div style="margin: 10px 0;">{href}</div>', unsafe_allow_html=True)
     except Exception as e:
-        st.error(f"Error creando botón de descarga: {str(e)}")
+        pass
+
 # ===============================
 # 🎨 COMPONENTES DE INTERFAZ MEJORADOS
 # ===============================
-def crear_capa_ui(capa_key, capa_config, datos, resultados, gdf):
+
+def crear_capa_ui(capa_key, capa_config, datos, gdf, capa_index):
     """Crear interfaz de usuario para una capa específica"""
-    if capa_key not in datos:
+    if capa_key not in datos or not datos[capa_key] or len(datos[capa_key]) == 0:
         return
-    st.markdown(f"""
-    <div class="layer-card">
-        <div class="layer-header">
-            <div class="layer-icon">{capa_config['icono']}</div>
-            <div>
-                <h3 class="layer-title">{capa_config['nombre']}</h3>
-                <p class="layer-description">{capa_config['descripcion']}</p>
+    
+    # Usar un contenedor con key única para cada capa
+    with st.container(key=f"cont_{capa_key}_{capa_index}"):
+        st.markdown(f"""
+        <div class="layer-card">
+            <div class="layer-header">
+                <div class="layer-icon">{capa_config['icono']}</div>
+                <div>
+                    <h3 class="layer-title">{capa_config['nombre']}</h3>
+                    <p class="layer-description">{capa_config['descripcion']}</p>
+                </div>
             </div>
         </div>
-    </div>
-    """, unsafe_allow_html=True)
-    # Calcular estadísticas
-    valores = [d[capa_config['columna']] for d in datos[capa_key]]
-    promedio = np.mean(valores)
-    maximo = np.max(valores)
-    minimo = np.min(valores)
-    estado = datos[capa_key][0].get('estado_conservacion', 
-                                   datos[capa_key][0].get('salud_vegetacion',
-                                   datos[capa_key][0].get('estado_hidrico',
-                                   datos[capa_key][0].get('estado_suelo',
-                                   datos[capa_key][0].get('nivel_presion',
-                                   datos[capa_key][0].get('estado_conectividad',
-                                   datos[capa_key][0].get('estado_humedad', 'N/A')))))))
-    # Mostrar estadísticas
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Promedio", f"{promedio:.2f}")
-    with col2:
-        st.metric("Máximo", f"{maximo:.2f}")
-    with col3:
-        st.metric("Mínimo", f"{minimo:.2f}")
-    with col4:
-        st.metric("Estado", estado)
-    # Crear pestañas para esta capa
-    tab1, tab2, tab3 = st.tabs(["🗺️ Mapa", "📊 Gráficos", "📁 Datos"])
-    with tab1:
-        # Crear y mostrar mapa específico para esta capa
-        mapa_capa = crear_mapa_para_capa(gdf, datos[capa_key], capa_config)
-        st_folium(mapa_capa, width=800, height=500, key=f"mapa_{capa_key}")
-    with tab2:
-        # Gráfico de barras horizontales
-        fig_barras = crear_grafico_barras_horizontales(
-            datos[capa_key],
-            f"Comparación por Área - {capa_config['nombre']}",
-            capa_config['columna'],
-            'area'
-        )
-        st.plotly_chart(fig_barras, use_container_width=True)
-        # Gráfico de distribución
-        fig_dist = crear_grafico_distribucion(
-            datos[capa_key],
-            capa_config['nombre'],
-            capa_config['columna']
-        )
-        st.plotly_chart(fig_dist, use_container_width=True)
-    with tab3:
-        # Mostrar tabla de datos
-        df_capa = pd.DataFrame(datos[capa_key])
-        columnas_a_mostrar = ['area', capa_config['columna']] + [c for c in df_capa.columns if 'estado' in c or 'color' in c]
-        columnas_a_mostrar = [c for c in columnas_a_mostrar if c in df_capa.columns]
-        st.dataframe(
-            df_capa[columnas_a_mostrar].style.format({
-                capa_config['columna']: '{:.2f}'
-            }),
-            use_container_width=True,
-            height=300
-        )
-        # Botones de descarga
-        col_dl1, col_dl2 = st.columns(2)
-        with col_dl1:
-            csv = df_capa.to_csv(index=False)
-            crear_boton_descarga(csv, f"datos_{capa_key}.csv", f"Descargar CSV {capa_config['nombre']}", 'csv')
-        with col_dl2:
-            json_str = df_capa.to_json(orient='records', indent=2)
-            crear_boton_descarga(json_str, f"datos_{capa_key}.json", f"Descargar JSON {capa_config['nombre']}", 'geojson')
-    st.markdown("---")
+        """, unsafe_allow_html=True)
+        
+        try:
+            # Calcular estadísticas
+            valores = []
+            for d in datos[capa_key]:
+                if capa_config['columna'] in d:
+                    valores.append(d[capa_config['columna']])
+            
+            if not valores:
+                return
+                
+            promedio = np.mean(valores)
+            maximo = np.max(valores)
+            minimo = np.min(valores)
+            
+            # Obtener estado (si existe)
+            estado = "N/A"
+            for d in datos[capa_key]:
+                for key in ['estado_conservacion', 'salud_vegetacion', 'estado_hidrico', 
+                           'estado_suelo', 'nivel_presion', 'estado_conectividad', 'estado_humedad']:
+                    if key in d:
+                        estado = d[key]
+                        break
+                if estado != "N/A":
+                    break
+            
+            # Mostrar estadísticas
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Promedio", f"{promedio:.2f}")
+            with col2:
+                st.metric("Máximo", f"{maximo:.2f}")
+            with col3:
+                st.metric("Mínimo", f"{minimo:.2f}")
+            with col4:
+                st.metric("Estado", estado)
+            
+            # Crear pestañas para esta capa
+            tab1, tab2, tab3 = st.tabs(["🗺️ Mapa", "📊 Gráficos", "📁 Datos"])
+            
+            with tab1:
+                # Crear y mostrar mapa específico para esta capa con key única
+                mapa_capa = crear_mapa_para_capa(gdf, datos[capa_key], capa_config, f"mapa_{capa_key}_{capa_index}")
+                if mapa_capa:
+                    st_folium(mapa_capa, width=800, height=500, key=f"folium_{capa_key}_{capa_index}")
+            
+            with tab2:
+                # Gráfico de barras horizontales
+                fig_barras = crear_grafico_barras_horizontales(
+                    datos[capa_key],
+                    f"Comparación por Área - {capa_config['nombre']}",
+                    capa_config['columna'],
+                    'area'
+                )
+                st.plotly_chart(fig_barras, use_container_width=True, key=f"barras_{capa_key}_{capa_index}")
+                
+                # Gráfico de distribución
+                fig_dist = crear_grafico_distribucion(
+                    datos[capa_key],
+                    capa_config['nombre'],
+                    capa_config['columna']
+                )
+                st.plotly_chart(fig_dist, use_container_width=True, key=f"dist_{capa_key}_{capa_index}")
+            
+            with tab3:
+                # Mostrar tabla de datos
+                try:
+                    df_capa = pd.DataFrame(datos[capa_key])
+                    columnas_a_mostrar = ['area', capa_config['columna']] + \
+                        [c for c in df_capa.columns if 'estado' in c or 'color' in c]
+                    columnas_a_mostrar = [c for c in columnas_a_mostrar if c in df_capa.columns]
+                    
+                    if len(columnas_a_mostrar) > 0:
+                        st.dataframe(
+                            df_capa[columnas_a_mostrar].style.format({
+                                capa_config['columna']: '{:.2f}'
+                            }),
+                            use_container_width=True,
+                            height=300,
+                            key=f"tabla_{capa_key}_{capa_index}"
+                        )
+                        
+                        # Botones de descarga
+                        col_dl1, col_dl2 = st.columns(2)
+                        with col_dl1:
+                            csv = df_capa.to_csv(index=False)
+                            crear_boton_descarga(csv, f"datos_{capa_key}.csv", f"Descargar CSV {capa_config['nombre']}", 'csv')
+                        with col_dl2:
+                            json_str = df_capa.to_json(orient='records', indent=2)
+                            crear_boton_descarga(json_str, f"datos_{capa_key}.json", f"Descargar JSON {capa_config['nombre']}", 'geojson')
+                except Exception as e:
+                    st.warning(f"No se pudieron mostrar los datos completos: {str(e)}")
+        
+        except Exception as e:
+            st.error(f"Error en la capa {capa_config['nombre']}: {str(e)}")
+        
+        st.markdown("---")
+
 # ===============================
 # 🚀 CONFIGURACIÓN PRINCIPAL
 # ===============================
+
 def initialize_session_state():
-    if 'analysis_complete' not in st.session_state:
-        st.session_state.analysis_complete = False
-    if 'results' not in st.session_state:
-        st.session_state.results = None
-    if 'poligono_data' not in st.session_state:
-        st.session_state.poligono_data = None
-    if 'file_processed' not in st.session_state:
-        st.session_state.file_processed = False
-    if 'analyzer' not in st.session_state:
-        st.session_state.analyzer = AnalizadorBiodiversidad()
-    if 'capas_config' not in st.session_state:
-        st.session_state.capas_config = {
+    """Inicializar el estado de la sesión de forma segura"""
+    # Estado básico
+    session_keys = {
+        'analysis_complete': False,
+        'results': None,
+        'poligono_data': None,
+        'file_processed': False,
+        'analyzer': AnalizadorBiodiversidad(),
+        'capas_config': {
             'biodiversidad': {
                 'nombre': '🦋 Biodiversidad',
                 'descripcion': 'Índice de Shannon que mide la diversidad de especies en el área',
@@ -1048,8 +1224,36 @@ def initialize_session_state():
                 'colores': ['#FF4500', '#FFD700', '#32CD32', '#006400'],
                 'rango': (0, 1.0)
             }
-        }
+        },
+        'init_done': True
+    }
+    
+    for key, default_value in session_keys.items():
+        if key not in st.session_state:
+            st.session_state[key] = default_value
+
+def tiene_poligono_data():
+    """Verificar de forma segura si hay datos de polígono"""
+    if 'poligono_data' not in st.session_state:
+        return False
+    
+    poligono_data = st.session_state.poligono_data
+    
+    if poligono_data is None:
+        return False
+    
+    # Verificar si es un GeoDataFrame
+    if not hasattr(poligono_data, '__class__'):
+        return False
+    
+    # Verificar si tiene el atributo 'empty' (es un GeoDataFrame)
+    if hasattr(poligono_data, 'empty'):
+        return not poligono_data.empty
+    
+    return False
+
 def sidebar_config():
+    """Configuración de la barra lateral"""
     with st.sidebar:
         st.markdown("""
         <div style='text-align: center; margin-bottom: 2rem; padding: 1rem; background: linear-gradient(135deg, #2E8B57 0%, #228B22 100%); border-radius: 12px;'>
@@ -1057,55 +1261,86 @@ def sidebar_config():
             <h3 style='color: white; margin: 0;'>Análisis de Biodiversidad</h3>
         </div>
         """, unsafe_allow_html=True)
+        
         st.header("🗺️ Cargar Polígono")
-        uploaded_file = st.file_uploader("Sube tu archivo territorial", type=['kml', 'zip'])
-        if uploaded_file is not None and not st.session_state.file_processed:
-            with st.spinner("Procesando archivo..."):
-                gdf = procesar_archivo_cargado(uploaded_file)
-                if gdf is not None:
-                    st.session_state.poligono_data = gdf
-                    st.session_state.file_processed = True
-                    st.session_state.analysis_complete = False
-                    st.success(f"✅ Polígono cargado: {uploaded_file.name}")
-                    st.rerun()
+        uploaded_file = st.file_uploader("Sube tu archivo territorial", type=['kml', 'zip'], key="file_uploader")
+        
+        # Botón para limpiar datos
+        if st.button("🗑️ Limpiar datos", type="secondary", key="clean_button"):
+            for key in ['poligono_data', 'results', 'analysis_complete', 'file_processed']:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.session_state.analysis_complete = False
+            st.session_state.file_processed = False
+            st.rerun()
+        
+        if uploaded_file is not None:
+            if not st.session_state.get('file_processed', False):
+                with st.spinner("Procesando archivo..."):
+                    gdf = procesar_archivo_cargado(uploaded_file)
+                    if gdf is not None and not gdf.empty:
+                        st.session_state.poligono_data = gdf
+                        st.session_state.file_processed = True
+                        st.session_state.analysis_complete = False
+                        st.session_state.results = None
+                        st.success(f"✅ Polígono cargado: {uploaded_file.name}")
+        
         st.markdown("---")
         st.header("📊 Configuración de Análisis")
+        
         vegetation_type = st.selectbox("🌿 Tipo de vegetación predominante", [
             'Bosque Denso Primario', 'Bosque Secundario', 'Bosque Ripario',
             'Matorral Denso', 'Matorral Abierto', 'Sabana Arborizada',
             'Herbazal Natural', 'Zona de Transición', 'Área de Restauración'
-        ])
+        ], key="vegetation_type")
+        
         divisiones = st.slider("🔲 Divisiones del área", 3, 8, 5,
-                             help="Número de divisiones para crear la grilla de análisis")
+                             help="Número de divisiones para crear la grilla de análisis", key="divisiones")
+        
         return uploaded_file, vegetation_type, divisiones
+
 # ===============================
 # 🎯 APLICACIÓN PRINCIPAL
 # ===============================
+
 def main():
+    """Función principal de la aplicación"""
     aplicar_estilos_globales()
     crear_header()
     initialize_session_state()
+    
     uploaded_file, vegetation_type, divisiones = sidebar_config()
-    # Verificar si hay polígono cargado
-    if st.session_state.poligono_data is not None:
+    
+    # SECCIÓN: VERIFICAR SI HAY POLÍGONO CARGADO
+    poligono_cargado = tiene_poligono_data()
+    
+    if poligono_cargado:
         gdf = st.session_state.poligono_data
-        poligono = gdf.geometry.iloc[0]
-        area_ha = st.session_state.analyzer._calcular_area_hectareas(poligono)
-        # Mostrar información del área
+        try:
+            poligono = gdf.geometry.iloc[0]
+            area_ha = st.session_state.analyzer._calcular_area_hectareas(poligono)
+            
+            # Mostrar información del área
+            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
+            st.subheader("📐 Información del Área de Estudio")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Área aproximada", f"{area_ha:,.2f} ha", key="area_metric")
+            with col2:
+                st.metric("Tipo de vegetación", vegetation_type, key="vegetation_metric")
+            with col3:
+                st.metric("Áreas de análisis", f"{divisiones}x{divisiones}", key="divisions_metric")
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+        except Exception as e:
+            st.error(f"Error procesando información del área: {str(e)}")
+    
+    # SECCIÓN: BOTÓN PARA EJECUTAR ANÁLISIS
+    if poligono_cargado and not st.session_state.get('analysis_complete', False):
         st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-        st.subheader("📐 Información del Área de Estudio")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Área aproximada", f"{area_ha:,.2f} ha")
-        with col2:
-            st.metric("Tipo de vegetación", vegetation_type)
-        with col3:
-            st.metric("Áreas de análisis", f"{divisiones}x{divisiones}")
-        st.markdown('</div>', unsafe_allow_html=True)
-    # Botón para ejecutar análisis
-    if st.session_state.poligono_data is not None and not st.session_state.analysis_complete:
-        st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-        if st.button("🚀 EJECUTAR ANÁLISIS INTEGRAL", type="primary", use_container_width=True):
+        if st.button("🚀 EJECUTAR ANÁLISIS INTEGRAL", type="primary", use_container_width=True, key="run_analysis"):
             with st.spinner("Realizando análisis integral de biodiversidad..."):
                 resultados = st.session_state.analyzer.procesar_poligono(
                     st.session_state.poligono_data, vegetation_type, divisiones
@@ -1115,151 +1350,195 @@ def main():
                     st.session_state.analysis_complete = True
                     st.success("✅ Análisis completado exitosamente!")
                     st.rerun()
+                else:
+                    st.error("❌ No se pudo completar el análisis")
         st.markdown('</div>', unsafe_allow_html=True)
-    # Mostrar resultados si el análisis está completo
-    if st.session_state.analysis_complete and st.session_state.results:
+    
+    # SECCIÓN: MOSTRAR RESULTADOS SI EL ANÁLISIS ESTÁ COMPLETO
+    if st.session_state.get('analysis_complete', False) and st.session_state.get('results'):
         resultados = st.session_state.results
+        
+        # Verificar que los resultados tengan la estructura esperada
+        if 'resultados' not in resultados or 'summary_metrics' not in resultados['resultados']:
+            st.error("❌ Los resultados no tienen la estructura esperada")
+            return
+            
         summary = resultados['resultados']['summary_metrics']
+        
         # SECCIÓN: RESUMEN EJECUTIVO
         st.markdown('<div class="custom-card">', unsafe_allow_html=True)
         st.subheader("📊 Resumen Ejecutivo")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("🌳 Carbono Total", f"{summary['carbono_total_co2_ton']:,} ton CO₂")
-        with col2:
-            st.metric("🦋 Biodiversidad", f"{summary['indice_biodiversidad_promedio']}")
-        with col3:
-            st.metric("💧 Índice Humedad", f"{summary['indice_humedad_promedio']}")
-        with col4:
-            st.metric("📈 Estado General", summary['estado_general'])
-        col5, col6, col7, col8 = st.columns(4)
-        with col5:
-            st.metric("🌿 NDVI Promedio", f"{resultados['resultados']['vegetacion'][0]['ndvi']:.2f}")
-        with col6:
-            st.metric("💦 Disponibilidad Agua", f"{summary['disponibilidad_agua_promedio']}")
-        with col7:
-            st.metric("🔗 Conectividad", f"{summary['conectividad_promedio']}")
-        with col8:
-            st.metric("🔍 Áreas Analizadas", summary['areas_analizadas'])
+        
+        try:
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("🌳 Carbono Total", f"{summary.get('carbono_total_co2_ton', 0):,} ton CO₂", key="carbon_metric")
+            with col2:
+                st.metric("🦋 Biodiversidad", f"{summary.get('indice_biodiversidad_promedio', 0):.2f}", key="biodiversity_metric")
+            with col3:
+                st.metric("💧 Índice Humedad", f"{summary.get('indice_humedad_promedio', 0):.2f}", key="humidity_metric")
+            with col4:
+                st.metric("📈 Estado General", summary.get('estado_general', 'N/A'), key="status_metric")
+            
+            col5, col6, col7, col8 = st.columns(4)
+            with col5:
+                ndvi_prom = resultados['resultados']['vegetacion'][0]['ndvi'] if 'vegetacion' in resultados['resultados'] and len(resultados['resultados']['vegetacion']) > 0 else 0
+                st.metric("🌿 NDVI Promedio", f"{ndvi_prom:.2f}", key="ndvi_metric")
+            with col6:
+                st.metric("💦 Disponibilidad Agua", f"{summary.get('disponibilidad_agua_promedio', 0):.2f}", key="water_metric")
+            with col7:
+                st.metric("🔗 Conectividad", f"{summary.get('conectividad_promedio', 0):.2f}", key="connectivity_metric")
+            with col8:
+                st.metric("🔍 Áreas Analizadas", summary.get('areas_analizadas', 0), key="areas_metric")
+        except Exception as e:
+            st.error(f"Error mostrando métricas: {str(e)}")
+        
         st.markdown('</div>', unsafe_allow_html=True)
+        
         # SECCIÓN: TODAS LAS CAPAS
         st.markdown('<div class="custom-card">', unsafe_allow_html=True)
         st.subheader("🗺️ Capas de Análisis")
         st.markdown("Selecciona cada capa para ver detalles, mapas y gráficos específicos.")
-        # Crear un contenedor para todas las capas
-        for capa_key, capa_config in st.session_state.capas_config.items():
-            crear_capa_ui(
-                capa_key,
-                capa_config,
-                resultados['resultados'],
-                resultados,
-                st.session_state.poligono_data
-            )
+        
+        try:
+            # Crear un contenedor para todas las capas
+            for idx, (capa_key, capa_config) in enumerate(st.session_state.capas_config.items()):
+                if capa_key in resultados['resultados'] and resultados['resultados'][capa_key]:
+                    crear_capa_ui(
+                        capa_key,
+                        capa_config,
+                        resultados['resultados'],
+                        st.session_state.poligono_data,
+                        idx
+                    )
+        except Exception as e:
+            st.error(f"Error mostrando capas: {str(e)}")
+        
         st.markdown('</div>', unsafe_allow_html=True)
+        
         # SECCIÓN: DESCARGAS COMPLETAS
         st.markdown('<div class="custom-card">', unsafe_allow_html=True)
         st.subheader("📥 Descargas Completas")
-        col_dl1, col_dl2, col_dl3 = st.columns(3)
-        with col_dl1:
-            st.markdown("**🗺️ Datos Geoespaciales**")
-            # Preparar datos completos para descarga
-            todos_datos = []
-            for i in range(len(resultados['resultados']['vegetacion'])):
-                area_id = resultados['resultados']['vegetacion'][i]['area']
-                geometry = None
-                for area in resultados['areas_analisis']:
-                    if area['id'] == area_id:
-                        geometry = area['geometry']
-                        break
-                if geometry:
-                    area_data = {
-                        'area': area_id,
-                        'geometry': geometry,
+        
+        try:
+            col_dl1, col_dl2, col_dl3 = st.columns(3)
+            
+            with col_dl1:
+                st.markdown("**🗺️ Datos Geoespaciales**")
+                # Preparar datos completos para descarga
+                todos_datos = []
+                for i in range(len(resultados['resultados']['vegetacion'])):
+                    area_id = resultados['resultados']['vegetacion'][i]['area']
+                    
+                    geometry = None
+                    for area in resultados['areas_analisis']:
+                        if area['id'] == area_id:
+                            geometry = area['geometry']
+                            break
+                    
+                    if geometry:
+                        area_data = {
+                            'area': area_id,
+                            'geometry': geometry,
+                            'ndvi': resultados['resultados']['vegetacion'][i]['ndvi'],
+                            'co2_total_ton': resultados['resultados']['carbono'][i]['co2_total_ton'],
+                            'indice_shannon': resultados['resultados']['biodiversidad'][i]['indice_shannon'],
+                            'disponibilidad_agua': resultados['resultados']['agua'][i]['disponibilidad_agua'],
+                            'salud_suelo': resultados['resultados']['suelo'][i]['salud_suelo'],
+                            'conectividad_total': resultados['resultados']['conectividad'][i]['conectividad_total'],
+                            'indice_humedad': resultados['resultados']['humedad'][i]['indice_humedad'],
+                            'presion_total': resultados['resultados']['presiones'][i]['presion_total']
+                        }
+                        todos_datos.append(area_data)
+                
+                if todos_datos:
+                    gdf_completo = gpd.GeoDataFrame(todos_datos, geometry='geometry')
+                    gdf_completo.crs = "EPSG:4326"
+                    geojson_str = gdf_completo.to_json()
+                    crear_boton_descarga(
+                        geojson_str,
+                        "datos_completos.geojson",
+                        "Descargar GeoJSON Completo",
+                        'geojson'
+                    )
+            
+            with col_dl2:
+                st.markdown("**📊 Datos Tabulares**")
+                # CSV completo
+                datos_combinados = []
+                for i in range(len(resultados['resultados']['vegetacion'])):
+                    combo = {
+                        'area': resultados['resultados']['vegetacion'][i]['area'],
                         'ndvi': resultados['resultados']['vegetacion'][i]['ndvi'],
-                        'salud_vegetacion': resultados['resultados']['vegetacion'][i]['salud_vegetacion'],
                         'co2_total_ton': resultados['resultados']['carbono'][i]['co2_total_ton'],
                         'indice_shannon': resultados['resultados']['biodiversidad'][i]['indice_shannon'],
+                        'indice_humedad': resultados['resultados']['humedad'][i]['indice_humedad'],
                         'disponibilidad_agua': resultados['resultados']['agua'][i]['disponibilidad_agua'],
                         'salud_suelo': resultados['resultados']['suelo'][i]['salud_suelo'],
                         'conectividad_total': resultados['resultados']['conectividad'][i]['conectividad_total'],
-                        'indice_humedad': resultados['resultados']['humedad'][i]['indice_humedad'],
                         'presion_total': resultados['resultados']['presiones'][i]['presion_total']
                     }
-                    todos_datos.append(area_data)
-            if todos_datos:
-                gdf_completo = gpd.GeoDataFrame(todos_datos, geometry='geometry')
-                gdf_completo.crs = "EPSG:4326"
-                geojson_str = gdf_completo.to_json()
+                    datos_combinados.append(combo)
+                
+                df_completo = pd.DataFrame(datos_combinados)
+                csv = df_completo.to_csv(index=False)
                 crear_boton_descarga(
-                    geojson_str,
-                    "datos_completos.geojson",
-                    "Descargar GeoJSON Completo",
-                    'geojson'
+                    csv,
+                    "datos_analisis_completo.csv",
+                    "Descargar CSV Completo",
+                    'csv'
                 )
-        with col_dl2:
-            st.markdown("**📊 Datos Tabulares**")
-            # CSV completo
-            datos_combinados = []
-            for i in range(len(resultados['resultados']['vegetacion'])):
-                combo = {
-                    'area': resultados['resultados']['vegetacion'][i]['area'],
-                    'ndvi': resultados['resultados']['vegetacion'][i]['ndvi'],
-                    'co2_total_ton': resultados['resultados']['carbono'][i]['co2_total_ton'],
-                    'indice_shannon': resultados['resultados']['biodiversidad'][i]['indice_shannon'],
-                    'indice_humedad': resultados['resultados']['humedad'][i]['indice_humedad'],
-                    'disponibilidad_agua': resultados['resultados']['agua'][i]['disponibilidad_agua'],
-                    'salud_suelo': resultados['resultados']['suelo'][i]['salud_suelo'],
-                    'conectividad_total': resultados['resultados']['conectividad'][i]['conectividad_total'],
-                    'presion_total': resultados['resultados']['presiones'][i]['presion_total']
-                }
-                datos_combinados.append(combo)
-            df_completo = pd.DataFrame(datos_combinados)
-            csv = df_completo.to_csv(index=False)
-            crear_boton_descarga(
-                csv,
-                "datos_analisis_completo.csv",
-                "Descargar CSV Completo",
-                'csv'
-            )
-        with col_dl3:
-            st.markdown("**📄 Informes**")
-            # Informe en texto
-            informe_texto = f"""
+            
+            with col_dl3:
+                st.markdown("**📄 Informes**")
+                # Informe en texto
+                informe_texto = f"""
 INFORME DE ANÁLISIS DE BIODIVERSIDAD
 Fecha: {datetime.now().strftime('%d/%m/%Y %H:%M')}
+
 RESUMEN EJECUTIVO:
-Área analizada: {resultados['area_hectareas']:,.2f} ha
-Tipo de vegetación: {resultados['tipo_vegetacion']}
-Estado general: {summary['estado_general']}
+Área analizada: {resultados.get('area_hectareas', 0):,.2f} ha
+Tipo de vegetación: {resultados.get('tipo_vegetacion', 'N/A')}
+Estado general: {summary.get('estado_general', 'N/A')}
+
 INDICADORES PRINCIPALES:
-- Carbono total: {summary['carbono_total_co2_ton']:,} ton CO₂
-- Biodiversidad: {summary['indice_biodiversidad_promedio']}
-- Índice de humedad: {summary['indice_humedad_promedio']}
-- Disponibilidad agua: {summary['disponibilidad_agua_promedio']}
-- Salud suelo: {summary['salud_suelo_promedio']}
-- Presión antrópica: {summary['presion_antropica_promedio']}
-- Conectividad: {summary['conectividad_promedio']}
-Áreas analizadas: {summary['areas_analizadas']}
+- Carbono total: {summary.get('carbono_total_co2_ton', 0):,} ton CO₂
+- Biodiversidad: {summary.get('indice_biodiversidad_promedio', 0):.2f}
+- Índice de humedad: {summary.get('indice_humedad_promedio', 0):.2f}
+- Disponibilidad agua: {summary.get('disponibilidad_agua_promedio', 0):.2f}
+- Salud suelo: {summary.get('salud_suelo_promedio', 0):.2f}
+- Presión antrópica: {summary.get('presion_antropica_promedio', 0):.2f}
+- Conectividad: {summary.get('conectividad_promedio', 0):.2f}
+
+Áreas analizadas: {summary.get('areas_analizadas', 0)}
 """
-            crear_boton_descarga(
-                informe_texto,
-                "informe_biodiversidad.txt",
-                "Descargar Informe Texto",
-                'csv'
-            )
+                crear_boton_descarga(
+                    informe_texto,
+                    "informe_biodiversidad.txt",
+                    "Descargar Informe Texto",
+                    'txt'
+                )
+        
+        except Exception as e:
+            st.error(f"Error preparando descargas: {str(e)}")
+        
         st.markdown('</div>', unsafe_allow_html=True)
-    elif st.session_state.poligono_data is None or st.session_state.poligono_data.empty:
-        # Pantalla de inicio
+    
+    # SECCIÓN: PANTALLA DE INICIO (solo si no hay datos de polígono y no se ha realizado análisis)
+    elif not poligono_cargado and not st.session_state.get('analysis_complete', False):
         st.markdown('<div class="custom-card">', unsafe_allow_html=True)
         st.markdown("""
         ## 👋 ¡Bienvenido al Análisis Integral de Biodiversidad!
+        
         ### 🌿 Sistema de Evaluación Ecológica Mejorado
+        
         **Características de la nueva interfaz:**
         - 🎯 **Sin pestañas** - Todas las capas visibles en la página principal
         - 🗺️ **Mapas individuales** - Cada capa tiene su propio mapa interactivo
         - 📊 **Gráficos específicos** - Visualizaciones adaptadas a cada indicador
         - 📱 **Interfaz limpia** - Diseño moderno y fácil de entender
         - 🔍 **Navegación simple** - Scroll para explorar todas las capas
+        
         **Capas disponibles:**
         1. 🦋 **Biodiversidad** - Índice de Shannon y riqueza de especies
         2. 🌳 **Carbono** - Potencial de captura en toneladas de CO₂
@@ -1268,8 +1547,10 @@ INDICADORES PRINCIPALES:
         5. 💦 **Recursos Hídricos** - Disponibilidad de agua
         6. 🌱 **Suelo** - Salud y calidad del suelo
         7. 🔗 **Conectividad** - Conectividad ecológica
+        
         **¡Comienza cargando tu archivo en el sidebar!** ←
         """)
         st.markdown('</div>', unsafe_allow_html=True)
+
 if __name__ == "__main__":
     main()
