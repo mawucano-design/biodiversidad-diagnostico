@@ -1,0 +1,10 @@
+[client]
+showErrorDetails = false
+caching = true
+
+[browser]
+gatherUsageStats = false
+
+[server]
+enableCORS = false
+maxUploadSize = 200
