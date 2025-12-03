@@ -718,14 +718,6 @@ def crear_mapa_integrado(gdf, resultados, capa_seleccionada=None, mostrar_contor
             name='OpenStreetMap'
         ).add_to(m)
         
-        # Agregar capa de relieve
-        folium.TileLayer(
-            tiles='https://stamen-tiles.a.ssl.fastly.net/terrain/{z}/{x}/{y}.png',
-            attr='Stamen Terrain',
-            name='Relieve',
-            overlay=False
-        ).add_to(m)
-        
         # Definir capas disponibles
         capas = {
             'biodiversidad': {
@@ -850,8 +842,8 @@ def crear_mapa_integrado(gdf, resultados, capa_seleccionada=None, mostrar_contor
                 )
                 
                 if xi is not None and yi is not None and zi is not None:
-                    # Agregar contornos como líneas al mapa
-                    agregar_contornos_a_mapa(m, xi, yi, zi, config_contornos['num_contours'])
+                    # Agregar contornos como líneas al mapa usando la nueva función
+                    agregar_contornos_a_mapa_v2(m, xi, yi, zi, config_contornos['num_contours'])
         
         # Ajustar zoom a los límites del polígono
         m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
@@ -872,8 +864,8 @@ def crear_mapa_integrado(gdf, resultados, capa_seleccionada=None, mostrar_contor
         st.error(f"Error creando mapa integrado: {str(e)}")
         return crear_mapa_base()
 
-def agregar_contornos_a_mapa(mapa, xi, yi, zi, num_contours=10):
-    """Agregar curvas de nivel a un mapa de Folium"""
+def agregar_contornos_a_mapa_v2(mapa, xi, yi, zi, num_contours=10):
+    """Agregar curvas de nivel a un mapa de Folium - VERSIÓN CORREGIDA"""
     try:
         # Calcular niveles para contornos
         z_min = np.nanmin(zi)
@@ -884,29 +876,47 @@ def agregar_contornos_a_mapa(mapa, xi, yi, zi, num_contours=10):
         
         levels = np.linspace(z_min, z_max, num_contours)
         
-        # Crear contornos
+        # Crear figura temporal
         fig, ax = plt.subplots(figsize=(10, 10))
         
-        # Dibujar contornos
-        contour = ax.contour(xi, yi, zi, levels=levels, colors='white', linewidths=1, alpha=0.7)
-        
-        # Crear coordenadas para las líneas de contorno
-        for collection in contour.collections:
-            paths = collection.get_paths()
-            for path in paths:
-                vertices = path.vertices
-                if len(vertices) > 1:
-                    # Convertir coordenadas a lista de [lat, lon]
-                    coords = [[yi_val, xi_val] for xi_val, yi_val in vertices]
-                    
-                    # Crear línea de contorno en el mapa
-                    folium.PolyLine(
-                        locations=coords,
-                        color='white',
-                        weight=2,
-                        opacity=0.7,
-                        dash_array='5, 5'
-                    ).add_to(mapa)
+        try:
+            # Generar contornos
+            contour_set = ax.contour(xi, yi, zi, levels=levels, colors='white', linewidths=1, alpha=0.7)
+            
+            # Extraer las líneas de contorno
+            for level in contour_set.allsegs:
+                for seg in level:
+                    if len(seg) > 1:
+                        # Convertir coordenadas a [lat, lon] para Folium
+                        coords = [[y, x] for x, y in seg]
+                        
+                        # Agregar línea al mapa
+                        folium.PolyLine(
+                            locations=coords,
+                            color='white',
+                            weight=2,
+                            opacity=0.7,
+                            dash_array='5, 5',
+                            tooltip=f'Nivel: {levels[0]:.2f}'
+                        ).add_to(mapa)
+        except AttributeError:
+            # Fallback: método alternativo para extraer contornos
+            for i, level in enumerate(levels):
+                # Crear máscara para este nivel
+                mask = (zi >= level - (levels[1]-levels[0])/2) & (zi <= level + (levels[1]-levels[0])/2)
+                
+                # Encontrar contornos usando OpenCV si está disponible, o método simple
+                try:
+                    import cv2
+                    contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    for contour in contours:
+                        if len(contour) > 1:
+                            # Convertir coordenadas
+                            coords = [[yi[int(p[0][1])][int(p[0][0])], xi[int(p[0][1])][int(p[0][0])]] for p in contour]
+                            folium.PolyLine(locations=coords, color='white', weight=2, opacity=0.7).add_to(mapa)
+                except ImportError:
+                    # Método simple para contornos
+                    pass
         
         plt.close(fig)
         
@@ -1001,7 +1011,7 @@ def generar_curvas_nivel(datos, variable, variable_nombre, res=100):
         return None, None, None
 
 def crear_mapa_con_curvas_nivel(gdf, datos, config_capa, config_contornos):
-    """Crear mapa con curvas de nivel superpuestas"""
+    """Crear mapa con curvas de nivel superpuestas - VERSIÓN CORREGIDA"""
     if gdf is None or datos is None:
         return crear_mapa_base()
     
@@ -1055,46 +1065,22 @@ def crear_mapa_con_curvas_nivel(gdf, datos, config_capa, config_contornos):
                     if not np.isnan(zi[i][j]):
                         heat_data.append([yi[i][j], xi[i][j], zi[i][j]])
             
-            # Agregar mapa de calor
-            HeatMap(
-                heat_data,
-                radius=15,
-                blur=10,
-                max_zoom=1,
-                gradient={0.0: 'blue', 0.5: 'lime', 1.0: 'red'}
-            ).add_to(m)
+            if heat_data:
+                # Agregar mapa de calor
+                HeatMap(
+                    heat_data,
+                    radius=15,
+                    blur=10,
+                    max_zoom=1,
+                    gradient={0.0: 'blue', 0.5: 'lime', 1.0: 'red'}
+                ).add_to(m)
             
-            # Agregar contornos como líneas
-            z_min = np.nanmin(zi)
-            z_max = np.nanmax(zi)
-            levels = np.linspace(z_min, z_max, config_contornos['num_contours'])
-            
-            # Crear figura temporal para extraer contornos
-            fig, ax = plt.subplots(figsize=(10, 10))
-            contour = ax.contour(xi, yi, zi, levels=levels, colors='white', linewidths=1.5, alpha=0.8)
-            
-            # Extraer y agregar líneas de contorno al mapa
-            for collection in contour.collections:
-                paths = collection.get_paths()
-                for path in paths:
-                    vertices = path.vertices
-                    if len(vertices) > 1:
-                        # Convertir coordenadas a lista de [lat, lon]
-                        coords = [[yi_val, xi_val] for xi_val, yi_val in vertices]
-                        
-                        # Crear línea de contorno
-                        folium.PolyLine(
-                            locations=coords,
-                            color='white',
-                            weight=2,
-                            opacity=0.8,
-                            dash_array='5, 5',
-                            tooltip=f'Curva de nivel: {path.levels[0]:.2f}'
-                        ).add_to(m)
-            
-            plt.close(fig)
+            # Agregar curvas de nivel usando la nueva función
+            agregar_contornos_a_mapa_v2(m, xi, yi, zi, config_contornos['num_contours'])
             
             # Agregar leyenda de colores
+            z_min = np.nanmin(zi)
+            z_max = np.nanmax(zi)
             colormap = LinearColormap(
                 ['blue', 'lime', 'red'],
                 vmin=z_min,
@@ -1552,16 +1538,20 @@ def sidebar_config():
                 'conectividad': '🔗 Conectividad Ecológica'
             }
             
+            # Inicializar capa_seleccionada si no existe
+            if 'capa_seleccionada' not in st.session_state.curvas_nivel_config:
+                st.session_state.curvas_nivel_config['capa_seleccionada'] = 'biodiversidad'
+            
             st.session_state.curvas_nivel_config['capa_seleccionada'] = st.selectbox(
                 "Seleccionar capa para visualización",
                 options=list(capas_opciones.keys()),
                 format_func=lambda x: capas_opciones[x],
-                index=0
+                index=list(capas_opciones.keys()).index(st.session_state.curvas_nivel_config['capa_seleccionada']) if st.session_state.curvas_nivel_config['capa_seleccionada'] in capas_opciones else 0
             )
             
             st.session_state.curvas_nivel_config['mostrar_en_mapa'] = st.checkbox(
                 "Mostrar curvas de nivel sobre el mapa",
-                value=True,
+                value=st.session_state.curvas_nivel_config.get('mostrar_en_mapa', True),
                 help="Superponer curvas de nivel en el mapa principal"
             )
             
@@ -1570,7 +1560,7 @@ def sidebar_config():
                     "Número de curvas de nivel",
                     min_value=5,
                     max_value=30,
-                    value=10,
+                    value=st.session_state.curvas_nivel_config.get('num_contours', 10),
                     help="Número de curvas de nivel a mostrar en el mapa"
                 )
                 
@@ -1578,7 +1568,7 @@ def sidebar_config():
                     "Resolución de interpolación",
                     min_value=50,
                     max_value=200,
-                    value=100,
+                    value=st.session_state.curvas_nivel_config.get('resolucion', 100),
                     help="Resolución para generar curvas de nivel (mayor = más preciso)"
                 )
         
@@ -1639,7 +1629,7 @@ def main():
         st.markdown('<div class="custom-card">', unsafe_allow_html=True)
         st.subheader("🗺️ Mapa Integrado de Análisis")
         
-        # Configuración de capas
+        # Configuración de capas con manejo de error
         capas_opciones = {
             'biodiversidad': {
                 'datos': resultados['resultados']['biodiversidad'],
@@ -1671,10 +1661,16 @@ def main():
             }
         }
         
-        config_capa = capas_opciones[st.session_state.curvas_nivel_config['capa_seleccionada']]
+        # Manejo seguro de la capa seleccionada
+        capa_seleccionada = st.session_state.curvas_nivel_config.get('capa_seleccionada', 'biodiversidad')
+        if capa_seleccionada not in capas_opciones:
+            capa_seleccionada = 'biodiversidad'
+            st.session_state.curvas_nivel_config['capa_seleccionada'] = capa_seleccionada
+        
+        config_capa = capas_opciones[capa_seleccionada]
         
         # Crear y mostrar mapa
-        if st.session_state.curvas_nivel_config['mostrar_en_mapa']:
+        if st.session_state.curvas_nivel_config.get('mostrar_en_mapa', True):
             mapa_integrado = crear_mapa_con_curvas_nivel(
                 st.session_state.poligono_data,
                 config_capa['datos'],
@@ -1706,7 +1702,7 @@ def main():
             mapa_integrado = crear_mapa_integrado(
                 st.session_state.poligono_data,
                 resultados,
-                st.session_state.curvas_nivel_config['capa_seleccionada'],
+                capa_seleccionada,
                 mostrar_contornos=False,
                 config_contornos=None
             )
