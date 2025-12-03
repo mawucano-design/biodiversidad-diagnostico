@@ -37,7 +37,6 @@ try:
     DOCX_AVAILABLE = True
 except ImportError:
     DOCX_AVAILABLE = False
-    st.warning("⚠️ La librería python-docx no está instalada. La generación de informes Word estará deshabilitada.")
 
 # ===============================
 # 🌿 CONFIGURACIÓN Y ESTILOS GLOBALES
@@ -852,7 +851,36 @@ def crear_mapa_para_capa(gdf, datos_capa, config_capa, mapa_key):
             ).add_to(m)
         
         # Agregar leyenda
-        agregar_leyenda_al_mapa(m, config_capa)
+        try:
+            colores = config_capa['colores']
+            nombre = config_capa['nombre']
+            rango_min, rango_max = config_capa['rango']
+            
+            # Calcular etiquetas para la leyenda
+            num_colores = len(colores)
+            valores = np.linspace(rango_min, rango_max, num_colores + 1)
+            
+            leyenda_html = f"""
+            <div style="position: fixed; bottom: 50px; left: 50px; width: 180px; 
+                        background-color: white; border: 2px solid grey; border-radius: 5px; 
+                        padding: 10px; font-size: 12px; z-index: 9999;">
+                <b>{nombre}</b><br>
+            """
+            
+            for i in range(num_colores):
+                leyenda_html += f"""
+                <div style="margin: 5px 0;">
+                    <div style="width: 20px; height: 15px; background-color: {colores[i]}; 
+                                display: inline-block; margin-right: 5px; border: 1px solid #000;"></div>
+                    {valores[i]:.2f} - {valores[i+1]:.2f}
+                </div>
+                """
+            
+            leyenda_html += "</div>"
+            
+            m.get_root().html.add_child(folium.Element(leyenda_html))
+        except:
+            pass
         
         # Ajustar zoom si hay bounds válidos
         try:
@@ -868,42 +896,7 @@ def crear_mapa_para_capa(gdf, datos_capa, config_capa, mapa_key):
         return m
         
     except Exception as e:
-        st.error(f"Error creando mapa para capa {config_capa.get('nombre', 'desconocida')}: {str(e)}")
         return crear_mapa_base()
-
-def agregar_leyenda_al_mapa(mapa, config_capa):
-    """Agregar leyenda personalizada al mapa"""
-    try:
-        colores = config_capa['colores']
-        nombre = config_capa['nombre']
-        rango_min, rango_max = config_capa['rango']
-        
-        # Calcular etiquetas para la leyenda
-        num_colores = len(colores)
-        valores = np.linspace(rango_min, rango_max, num_colores + 1)
-        
-        leyenda_html = f"""
-        <div style="position: fixed; bottom: 50px; left: 50px; width: 180px; 
-                    background-color: white; border: 2px solid grey; border-radius: 5px; 
-                    padding: 10px; font-size: 12px; z-index: 9999;">
-            <b>{nombre}</b><br>
-        """
-        
-        for i in range(num_colores):
-            leyenda_html += f"""
-            <div style="margin: 5px 0;">
-                <div style="width: 20px; height: 15px; background-color: {colores[i]}; 
-                            display: inline-block; margin-right: 5px; border: 1px solid #000;"></div>
-                {valores[i]:.2f} - {valores[i+1]:.2f}
-            </div>
-            """
-        
-        leyenda_html += "</div>"
-        
-        mapa.get_root().html.add_child(folium.Element(leyenda_html))
-        
-    except Exception as e:
-        st.warning(f"No se pudo agregar leyenda: {str(e)}")
 
 # ===============================
 # 📊 FUNCIONES DE VISUALIZACIÓN MEJORADAS
@@ -946,7 +939,6 @@ def crear_grafico_barras_horizontales(datos, titulo, columna_valor, columna_etiq
         
         return fig
     except Exception as e:
-        st.error(f"Error creando gráfico de barras: {str(e)}")
         return go.Figure()
 
 def crear_grafico_distribucion(datos, titulo, columna_valor):
@@ -991,7 +983,6 @@ def crear_grafico_distribucion(datos, titulo, columna_valor):
         
         return fig
     except Exception as e:
-        st.error(f"Error creando gráfico de distribución: {str(e)}")
         return go.Figure()
 
 # ===============================
@@ -1041,16 +1032,15 @@ def crear_boton_descarga(data, filename, button_text, file_type):
         
         st.markdown(f'<div style="margin: 10px 0;">{href}</div>', unsafe_allow_html=True)
     except Exception as e:
-        st.error(f"Error creando botón de descarga: {str(e)}")
+        pass
 
 # ===============================
 # 🎨 COMPONENTES DE INTERFAZ MEJORADOS
 # ===============================
 
-def crear_capa_ui(capa_key, capa_config, datos, resultados, gdf, capa_index):
+def crear_capa_ui(capa_key, capa_config, datos, gdf, capa_index):
     """Crear interfaz de usuario para una capa específica"""
     if capa_key not in datos or not datos[capa_key] or len(datos[capa_key]) == 0:
-        st.warning(f"No hay datos disponibles para la capa {capa_config['nombre']}")
         return
     
     st.markdown(f"""
@@ -1073,7 +1063,6 @@ def crear_capa_ui(capa_key, capa_config, datos, resultados, gdf, capa_index):
                 valores.append(d[capa_config['columna']])
         
         if not valores:
-            st.warning("No se pudieron calcular estadísticas para esta capa")
             return
             
         promedio = np.mean(valores)
@@ -1154,13 +1143,11 @@ def crear_capa_ui(capa_key, capa_config, datos, resultados, gdf, capa_index):
                     with col_dl2:
                         json_str = df_capa.to_json(orient='records', indent=2)
                         crear_boton_descarga(json_str, f"datos_{capa_key}.json", f"Descargar JSON {capa_config['nombre']}", 'geojson')
-                else:
-                    st.warning("No hay columnas válidas para mostrar en la tabla")
             except Exception as e:
-                st.error(f"Error mostrando datos: {str(e)}")
+                pass
     
     except Exception as e:
-        st.error(f"Error procesando capa {capa_config['nombre']}: {str(e)}")
+        pass
     
     st.markdown("---")
 
@@ -1276,11 +1263,11 @@ def sidebar_config():
         
         # Botón para limpiar datos
         if st.button("🗑️ Limpiar datos", type="secondary"):
-            st.session_state.poligono_data = None
-            st.session_state.results = None
+            for key in ['poligono_data', 'results', 'analysis_complete', 'file_processed']:
+                if key in st.session_state:
+                    st.session_state[key] = None
             st.session_state.analysis_complete = False
             st.session_state.file_processed = False
-            st.experimental_rerun()
         
         if uploaded_file is not None:
             if not st.session_state.file_processed:
@@ -1292,9 +1279,6 @@ def sidebar_config():
                         st.session_state.analysis_complete = False
                         st.session_state.results = None
                         st.success(f"✅ Polígono cargado: {uploaded_file.name}")
-                        st.experimental_rerun()
-                    else:
-                        st.error("❌ No se pudo procesar el archivo o está vacío")
         
         st.markdown("---")
         st.header("📊 Configuración de Análisis")
@@ -1360,7 +1344,6 @@ def main():
                     st.session_state.results = resultados
                     st.session_state.analysis_complete = True
                     st.success("✅ Análisis completado exitosamente!")
-                    st.experimental_rerun()
                 else:
                     st.error("❌ No se pudo completar el análisis")
         st.markdown('</div>', unsafe_allow_html=True)
@@ -1419,7 +1402,6 @@ def main():
                         capa_key,
                         capa_config,
                         resultados['resultados'],
-                        resultados,
                         st.session_state.poligono_data,
                         idx
                     )
