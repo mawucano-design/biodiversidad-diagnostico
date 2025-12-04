@@ -1,4 +1,7 @@
-# ✅ ESTO DEBE IR ABSOLUTAMENTE PRIMERO - sin ningún otro comando de Streamlit antes
+# ✅ ABSOLUTAMENTE PRIMERO: Importar streamlit
+import streamlit as st
+
+# ✅ LUEGO: Configurar la página
 st.set_page_config(
     page_title="Análisis Integral de Biodiversidad",
     page_icon="🌍",
