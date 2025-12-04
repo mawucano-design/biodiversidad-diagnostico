@@ -1,14 +1,4 @@
 import streamlit as st
-
-# ⚠️ ESTO DEBE SER LO PRIMERO, antes que cualquier otro import de streamlit
-st.set_page_config(
-    page_title="Análisis Integral de Biodiversidad",
-    page_icon="🌍",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Ahora sí, el resto de los imports
 import pandas as pd
 import numpy as np
 import tempfile
