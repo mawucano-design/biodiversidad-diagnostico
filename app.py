@@ -1,4 +1,15 @@
+# Solo importar streamlit primero
 import streamlit as st
+
+# ⚠️ ESTO DEBE SER LO PRIMERO
+st.set_page_config(
+    page_title="Análisis Integral de Biodiversidad",
+    page_icon="🌍",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Ahora sí, el resto de los imports
 import pandas as pd
 import numpy as np
 import tempfile
@@ -18,7 +29,8 @@ import base64
 from scipy import interpolate
 import warnings
 warnings.filterwarnings('ignore')
-# Librerías para análisis geoespacial
+
+# Librerías para análisis geoespacial (estas pueden activar Streamlit si van antes de set_page_config)
 import folium
 from streamlit_folium import st_folium
 from folium.plugins import Fullscreen, MousePosition, HeatMap
@@ -27,6 +39,7 @@ from shapely.geometry import Polygon, Point
 import pyproj
 from branca.colormap import LinearColormap
 import matplotlib.cm as cm
+
 # Manejo de la librería docx con fallback
 try:
     from docx import Document
