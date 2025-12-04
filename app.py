@@ -1,4 +1,14 @@
 import streamlit as st
+
+# ⚠️ ESTO DEBE SER LO PRIMERO, antes que cualquier otro import de streamlit
+st.set_page_config(
+    page_title="Análisis Integral de Biodiversidad",
+    page_icon="🌍",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Ahora sí, el resto de los imports
 import pandas as pd
 import numpy as np
 import tempfile
@@ -14,13 +24,19 @@ import plotly.figure_factory as ff
 from io import BytesIO
 from datetime import datetime, timedelta
 import json
+import base64
+from scipy import interpolate
+import warnings
+warnings.filterwarnings('ignore')
 # Librerías para análisis geoespacial
 import folium
 from streamlit_folium import st_folium
-from folium.plugins import Fullscreen, MousePosition
+from folium.plugins import Fullscreen, MousePosition, HeatMap
 import geopandas as gpd
 from shapely.geometry import Polygon, Point
 import pyproj
+from branca.colormap import LinearColormap
+import matplotlib.cm as cm
 # Manejo de la librería docx con fallback
 try:
     from docx import Document
@@ -30,7 +46,6 @@ try:
 except ImportError:
     DOCX_AVAILABLE = False
     st.warning("⚠️ La librería python-docx no está instalada. La generación de informes Word estará deshabilitada.")
-import base64
 # ===============================
 # 🌿 CONFIGURACIÓN Y ESTILOS GLOBALES
 # ===============================
