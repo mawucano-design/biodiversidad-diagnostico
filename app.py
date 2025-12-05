@@ -351,7 +351,14 @@ def crear_mapa_base_con_poligono(gdf, titulo="Área de Estudio"):
         poligono_principal = gdf.geometry.iloc[0]
         
         # Calcular área para mostrar en tooltip
-        area_ha = gdf.geometry.area.sum() * 10000 * 111.32 * 111.32 * math.cos(math.radians(poligono_principal.centroid.y))
+        if hasattr(poligono_principal, 'centroid'):
+            lat_centro = poligono_principal.centroid.y
+        else:
+            lat_centro = centro[0]
+            
+        cos_lat = math.cos(math.radians(lat_centro))
+        area_km2 = gdf.geometry.area.sum() * 111.32 * 111.32 * cos_lat
+        area_ha = area_km2 * 100
         
         # Crear tooltip informativo
         tooltip_text = f"""
@@ -443,10 +450,12 @@ def crear_mapa_base_con_poligono(gdf, titulo="Área de Estudio"):
         ).add_to(m)
         
         # Ajustar los límites del mapa al polígono
-        m.fit_bounds([
-            [bounds[1], bounds[0]],
-            [bounds[3], bounds[2]]
-        ])
+        bounds = gdf.total_bounds
+        if len(bounds) == 4:
+            m.fit_bounds([
+                [bounds[1], bounds[0]],
+                [bounds[3], bounds[2]]
+            ])
         
         return m
         
@@ -529,7 +538,7 @@ def crear_mapa_indicador_interactivo(gdf, datos_indicador, config_indicador):
             area_id = area_data.get('area', 'Desconocido')
             area_ha = area_data.get('area_ha', 0)
             
-            if geometry:
+            if geometry and hasattr(geometry, 'centroid'):
                 # Calcular centroide
                 centroid = geometry.centroid
                 lat, lon = centroid.y, centroid.x
@@ -551,7 +560,6 @@ def crear_mapa_indicador_interactivo(gdf, datos_indicador, config_indicador):
                         <p style="margin: 5px 0;"><b>{config_indicador['titulo']}:</b> 
                         <span style="color: {color}; font-weight: bold; font-size: 1.1em;">{valor:.2f}</span></p>
                         <p style="margin: 5px 0;"><b>Área:</b> {area_ha:.2f} ha</p>
-                        <p style="margin: 5px 0;"><b>Estado:</b> {area_data.get('estado', 'N/A')}</p>
                     </div>
                     <div style="background: #f8f9fa; padding: 8px; border-radius: 5px; margin: 10px 0;">
                         <p style="margin: 3px 0; font-size: 0.9em;"><b>Coordenadas:</b></p>
@@ -567,7 +575,7 @@ def crear_mapa_indicador_interactivo(gdf, datos_indicador, config_indicador):
                     popup=folium.Popup(popup_content, max_width=300),
                     tooltip=f"{area_id}: {valor:.2f}",
                     icon=folium.Icon(
-                        color='green' if valor > np.median([d.get(config_indicador['columna'], 0) for d in datos_indicador]) else 'red',
+                        color='green' if valor > 0.5 else 'red',
                         icon='leaf' if 'vegetacion' in config_indicador['key'] else 'info-sign',
                         prefix='fa'
                     )
@@ -895,8 +903,9 @@ def crear_grafico_linea_tendencia(datos, columna, titulo, altura=350):
         df = pd.DataFrame(datos)
         
         # Ordenar por área
-        df['area_num'] = df['area'].str.extract('(\d+)').astype(int)
-        df = df.sort_values('area_num')
+        if 'area' in df.columns:
+            df['area_num'] = df['area'].str.extract('(\d+)').astype(int)
+            df = df.sort_values('area_num')
         
         # Calcular media móvil
         df['media_movil'] = df[columna].rolling(window=3, center=True).mean()
@@ -1207,19 +1216,20 @@ def crear_dashboard_resumen(datos_combinados, summary):
                 )
         
         # 2. Ranking de biodiversidad
-        df_biodiv = df.nlargest(8, 'indice_shannon')
-        fig.add_trace(
-            go.Bar(
-                x=df_biodiv['indice_shannon'],
-                y=df_biodiv['area'],
-                orientation='h',
-                name='Biodiversidad',
-                marker_color='#10b981',
-                text=df_biodiv['indice_shannon'].round(2),
-                textposition='outside'
-            ),
-            row=1, col=2
-        )
+        if 'indice_shannon' in df.columns:
+            df_biodiv = df.nlargest(8, 'indice_shannon')
+            fig.add_trace(
+                go.Bar(
+                    x=df_biodiv['indice_shannon'],
+                    y=df_biodiv['area'],
+                    orientation='h',
+                    name='Biodiversidad',
+                    marker_color='#10b981',
+                    text=df_biodiv['indice_shannon'].round(2),
+                    textposition='outside'
+                ),
+                row=1, col=2
+            )
         
         # 3. Violin plot para agua
         if 'disponibilidad_agua' in df.columns:
@@ -1333,7 +1343,7 @@ class AnalizadorBiodiversidad:
     def _calcular_area_hectareas(self, poligono):
         """Calcular área en hectáreas de forma precisa usando proyección UTM"""
         try:
-            if poligono.is_valid:
+            if poligono and hasattr(poligono, 'is_valid') and poligono.is_valid:
                 gdf_temp = gpd.GeoDataFrame([1], geometry=[poligono], crs="EPSG:4326")
                 centroid = poligono.centroid
                 utm_zone = self._determinar_zona_utm(centroid.y, centroid.x)
@@ -1356,12 +1366,26 @@ class AnalizadorBiodiversidad:
     def _calcular_area_aproximada(self, poligono):
         """Cálculo aproximado del área en hectáreas"""
         try:
-            area_grados = poligono.area
-            lat_centro = poligono.centroid.y
+            if not poligono or not hasattr(poligono, 'bounds'):
+                return 0
+            
+            bounds = poligono.bounds
+            if len(bounds) < 4:
+                return 0
+                
+            lat_centro = (bounds[1] + bounds[3]) / 2
             cos_lat = math.cos(math.radians(lat_centro))
-            area_km2 = area_grados * 111 * 111 * cos_lat
-            return round(area_km2 * 100, 2)
-        except:
+            
+            # Calcular área en grados cuadrados
+            area_grados = poligono.area
+            
+            # Convertir a hectáreas (aproximación)
+            area_km2 = area_grados * 111.32 * 111.32 * cos_lat
+            area_hectareas = area_km2 * 100
+            
+            return round(max(0, area_hectareas), 2)
+        except Exception as e:
+            st.warning(f"Error cálculo área aproximada: {str(e)}")
             return 0
     
     def _dividir_poligono_grilla(self, poligono, n_divisiones):
@@ -1542,7 +1566,10 @@ class AnalizadorBiodiversidad:
                 centro_pol = poligono_principal.centroid
                 distancia_al_centro = area['centroid'].distance(centro_pol)
                 max_dist = centro_pol.distance(Point(poligono_principal.bounds[0], poligono_principal.bounds[1]))
-                conectividad_base = 1.0 - (distancia_al_centro / max_dist)
+                if max_dist > 0:
+                    conectividad_base = 1.0 - (distancia_al_centro / max_dist)
+                else:
+                    conectividad_base = 0.5
                 conectividad = self._calcular_indicador_con_variacion(conectividad_base, 0.3)
                 
                 resultados_conectividad.append({
@@ -1632,34 +1659,43 @@ def generar_geojson_completo(resultados):
     """Generar un GeoJSON completo con todos los indicadores"""
     try:
         todos_datos = []
-        for i in range(len(resultados['resultados']['vegetacion'])):
+        vegetacion = resultados['resultados']['vegetacion']
+        
+        for i in range(len(vegetacion)):
             area_data = {
-                'area': resultados['resultados']['vegetacion'][i]['area'],
-                'geometry': resultados['resultados']['vegetacion'][i]['geometry'],
-                'ndvi': resultados['resultados']['vegetacion'][i]['ndvi'],
-                'salud_vegetacion': resultados['resultados']['vegetacion'][i]['salud_vegetacion'],
-                'area_ha': resultados['resultados']['vegetacion'][i]['area_ha']
+                'area': vegetacion[i]['area'],
+                'geometry': vegetacion[i]['geometry'],
+                'ndvi': vegetacion[i]['ndvi'],
+                'salud_vegetacion': vegetacion[i]['salud_vegetacion'],
+                'area_ha': vegetacion[i]['area_ha']
             }
             
-            if i < len(resultados['resultados']['carbono']):
-                area_data['co2_total_ton'] = resultados['resultados']['carbono'][i]['co2_total_ton']
-                area_data['carbono_ton_ha'] = resultados['resultados']['carbono'][i]['carbono_ton_ha']
+            carbono = resultados['resultados']['carbono']
+            biodiversidad = resultados['resultados']['biodiversidad']
+            agua = resultados['resultados']['agua']
+            suelo = resultados['resultados']['suelo']
+            conectividad = resultados['resultados']['conectividad']
+            presiones = resultados['resultados']['presiones']
             
-            if i < len(resultados['resultados']['biodiversidad']):
-                area_data['indice_shannon'] = resultados['resultados']['biodiversidad'][i]['indice_shannon']
-                area_data['estado_biodiversidad'] = resultados['resultados']['biodiversidad'][i]['estado_biodiversidad']
+            if i < len(carbono):
+                area_data['co2_total_ton'] = carbono[i]['co2_total_ton']
+                area_data['carbono_ton_ha'] = carbono[i]['carbono_ton_ha']
             
-            if i < len(resultados['resultados']['agua']):
-                area_data['disponibilidad_agua'] = resultados['resultados']['agua'][i]['disponibilidad_agua']
+            if i < len(biodiversidad):
+                area_data['indice_shannon'] = biodiversidad[i]['indice_shannon']
+                area_data['estado_biodiversidad'] = biodiversidad[i]['estado_biodiversidad']
             
-            if i < len(resultados['resultados']['suelo']):
-                area_data['salud_suelo'] = resultados['resultados']['suelo'][i]['salud_suelo']
+            if i < len(agua):
+                area_data['disponibilidad_agua'] = agua[i]['disponibilidad_agua']
             
-            if i < len(resultados['resultados']['conectividad']):
-                area_data['conectividad_total'] = resultados['resultados']['conectividad'][i]['conectividad_total']
+            if i < len(suelo):
+                area_data['salud_suelo'] = suelo[i]['salud_suelo']
             
-            if i < len(resultados['resultados']['presiones']):
-                area_data['presion_total'] = resultados['resultados']['presiones'][i]['presion_total']
+            if i < len(conectividad):
+                area_data['conectividad_total'] = conectividad[i]['conectividad_total']
+            
+            if i < len(presiones):
+                area_data['presion_total'] = presiones[i]['presion_total']
             
             todos_datos.append(area_data)
         
@@ -1952,15 +1988,30 @@ def main():
                     st.markdown(f'<div class="chart-title">{config["titulo"]}</div>', unsafe_allow_html=True)
                     st.markdown(f'<p style="color: #6b7280; margin-bottom: 1rem;">{config["descripcion"]}</p>', unsafe_allow_html=True)
                     
-                    # Crear mapa del indicador
-                    mapa_indicador = crear_mapa_indicador_interactivo(
-                        st.session_state.poligono_data,
-                        resultados['resultados'][config['key']],
-                        config
-                    )
+                    # Asegurarse de que los datos existan
+                    datos_mapa = resultados['resultados'].get(config['key'], [])
+                    if datos_mapa:
+                        # Crear mapa del indicador
+                        mapa_indicador = crear_mapa_indicador_interactivo(
+                            st.session_state.poligono_data,
+                            datos_mapa,
+                            config
+                        )
+                        
+                        # Mostrar mapa
+                        if mapa_indicador:
+                            st_folium(mapa_indicador, width=700, height=500, key=f"mapa_{config['key']}_{idx}")
+                        else:
+                            st.warning("No se pudo crear el mapa para este indicador")
+                            # Mostrar mapa base
+                            mapa_base = crear_mapa_base_con_poligono(st.session_state.poligono_data)
+                            st_folium(mapa_base, width=700, height=500, key=f"mapa_base_{config['key']}_{idx}")
+                    else:
+                        st.warning(f"No hay datos disponibles para {config['titulo']}")
+                        # Mostrar mapa base
+                        mapa_base = crear_mapa_base_con_poligono(st.session_state.poligono_data)
+                        st_folium(mapa_base, width=700, height=500, key=f"mapa_base_{config['key']}_{idx}")
                     
-                    # Mostrar mapa
-                    st_folium(mapa_indicador, width=700, height=500, key=f"mapa_{config['key']}")
                     st.markdown('</div>', unsafe_allow_html=True)
                 
                 with col2:
@@ -1979,35 +2030,57 @@ def main():
                         st.metric("Mínimo", f"{valor_min:.2f}")
                         
                         # Distribución
-                        st.markdown("### 📈 Distribución")
-                        fig_dist = px.histogram(
-                            df_indicador, 
-                            x=config['columna'],
-                            nbins=10,
-                            title=f"Distribución de {config['titulo']}",
-                            color_discrete_sequence=['#3b82f6']
-                        )
-                        fig_dist.update_layout(height=250, showlegend=False)
-                        st.plotly_chart(fig_dist, use_container_width=True, key=f"hist_{config['key']}")
+                        if len(df_indicador) > 1:
+                            st.markdown("### 📈 Distribución")
+                            fig_dist = px.histogram(
+                                df_indicador, 
+                                x=config['columna'],
+                                nbins=10,
+                                title=f"Distribución de {config['titulo']}",
+                                color_discrete_sequence=['#3b82f6']
+                            )
+                            fig_dist.update_layout(height=250, showlegend=False)
+                            st.plotly_chart(fig_dist, use_container_width=True, key=f"hist_{config['key']}")
         
         # ==================== SECCIÓN DE GRÁFICOS PRINCIPALES ====================
         st.markdown("## 📈 Visualizaciones Analíticas")
         
         # Combinar datos para análisis
         datos_combinados = []
-        for i in range(len(resultados['resultados']['vegetacion'])):
+        vegetacion = resultados['resultados']['vegetacion']
+        carbono = resultados['resultados']['carbono']
+        biodiversidad = resultados['resultados']['biodiversidad']
+        agua = resultados['resultados']['agua']
+        suelo = resultados['resultados']['suelo']
+        conectividad = resultados['resultados']['conectividad']
+        presiones = resultados['resultados']['presiones']
+        
+        for i in range(len(vegetacion)):
             combo = {
-                'area': resultados['resultados']['vegetacion'][i]['area'],
-                'ndvi': resultados['resultados']['vegetacion'][i]['ndvi'],
-                'salud_vegetacion': resultados['resultados']['vegetacion'][i]['salud_vegetacion'],
-                'co2_total_ton': resultados['resultados']['carbono'][i]['co2_total_ton'],
-                'carbono_ton_ha': resultados['resultados']['carbono'][i]['carbono_ton_ha'],
-                'indice_shannon': resultados['resultados']['biodiversidad'][i]['indice_shannon'],
-                'disponibilidad_agua': resultados['resultados']['agua'][i]['disponibilidad_agua'],
-                'salud_suelo': resultados['resultados']['suelo'][i]['salud_suelo'],
-                'conectividad_total': resultados['resultados']['conectividad'][i]['conectividad_total'],
-                'presion_total': resultados['resultados']['presiones'][i]['presion_total']
+                'area': vegetacion[i]['area'],
+                'ndvi': vegetacion[i]['ndvi'],
+                'salud_vegetacion': vegetacion[i]['salud_vegetacion'],
             }
+            
+            if i < len(carbono):
+                combo['co2_total_ton'] = carbono[i]['co2_total_ton']
+                combo['carbono_ton_ha'] = carbono[i]['carbono_ton_ha']
+            
+            if i < len(biodiversidad):
+                combo['indice_shannon'] = biodiversidad[i]['indice_shannon']
+            
+            if i < len(agua):
+                combo['disponibilidad_agua'] = agua[i]['disponibilidad_agua']
+            
+            if i < len(suelo):
+                combo['salud_suelo'] = suelo[i]['salud_suelo']
+            
+            if i < len(conectividad):
+                combo['conectividad_total'] = conectividad[i]['conectividad_total']
+            
+            if i < len(presiones):
+                combo['presion_total'] = presiones[i]['presion_total']
+            
             datos_combinados.append(combo)
         
         # Fila 1: Dashboard ejecutivo
@@ -2134,48 +2207,48 @@ def main():
         with col_dl3:
             st.markdown("**📋 Resumen Ejecutivo**")
             resumen_text = f"""
-            RESUMEN EJECUTIVO - ANÁLISIS DE BIODIVERSIDAD
-            ============================================
-            
-            Fecha de generación: {datetime.now().strftime('%d/%m/%Y %H:%M')}
-            
-            🔹 INFORMACIÓN GENERAL
-            -----------------------
-            • Área total analizada: {summary['area_total_ha']:,.2f} ha
-            • Tipo de vegetación: {resultados['tipo_vegetacion']}
-            • Áreas analizadas: {summary['areas_analizadas']}
-            
-            🔹 KPIs PRINCIPALES
-            -------------------
-            • Estado general del ecosistema: {summary['estado_general']}
-            • Carbono total almacenado: {summary['carbono_total_co2_ton']:,} ton CO₂
-            • Carbono promedio por hectárea: {summary['carbono_promedio_ha']} ton/ha
-            • Índice de biodiversidad promedio: {summary['indice_biodiversidad_promedio']}
-            • Disponibilidad de agua promedio: {summary['disponibilidad_agua_promedio']}
-            • Salud del suelo promedio: {summary['salud_suelo_promedio']}
-            • Conectividad ecológica promedio: {summary['conectividad_promedio']}
-            • Presión antrópica promedio: {summary['presion_antropica_promedio']}
-            
-            🔹 RECOMENDACIONES
-            ------------------
-            """
+RESUMEN EJECUTIVO - ANÁLISIS DE BIODIVERSIDAD
+============================================
+
+Fecha de generación: {datetime.now().strftime('%d/%m/%Y %H:%M')}
+
+🔹 INFORMACIÓN GENERAL
+-----------------------
+• Área total analizada: {summary['area_total_ha']:,.2f} ha
+• Tipo de vegetación: {resultados['tipo_vegetacion']}
+• Áreas analizadas: {summary['areas_analizadas']}
+
+🔹 KPIs PRINCIPALES
+-------------------
+• Estado general del ecosistema: {summary['estado_general']}
+• Carbono total almacenado: {summary['carbono_total_co2_ton']:,} ton CO₂
+• Carbono promedio por hectárea: {summary['carbono_promedio_ha']} ton/ha
+• Índice de biodiversidad promedio: {summary['indice_biodiversidad_promedio']}
+• Disponibilidad de agua promedio: {summary['disponibilidad_agua_promedio']}
+• Salud del suelo promedio: {summary['salud_suelo_promedio']}
+• Conectividad ecológica promedio: {summary['conectividad_promedio']}
+• Presión antrópica promedio: {summary['presion_antropica_promedio']}
+
+🔹 RECOMENDACIONES
+------------------
+"""
             
             if summary['estado_general'] in ['Crítico', 'Moderado']:
                 resumen_text += """
-            1. Implementar programas de restauración ecológica inmediata
-            2. Establecer zonas de amortiguamiento para reducir presión antrópica
-            3. Monitorear continuamente los indicadores clave
-            4. Desarrollar estrategias de conservación prioritaria
-            5. Considerar incentivos por servicios ambientales
-                """
+1. Implementar programas de restauración ecológica inmediata
+2. Establecer zonas de amortiguamiento para reducir presión antrópica
+3. Monitorear continuamente los indicadores clave
+4. Desarrollar estrategias de conservación prioritaria
+5. Considerar incentivos por servicios ambientales
+"""
             else:
                 resumen_text += """
-            1. Mantener las prácticas actuales de conservación
-            2. Continuar con el monitoreo periódico
-            3. Fortalecer la protección contra amenazas externas
-            4. Promover investigación científica en el área
-            5. Buscar certificaciones de sostenibilidad
-                """
+1. Mantener las prácticas actuales de conservación
+2. Continuar con el monitoreo periódico
+3. Fortalecer la protección contra amenazas externas
+4. Promover investigación científica en el área
+5. Buscar certificaciones de sostenibilidad
+"""
             
             crear_boton_descarga_analitico(
                 resumen_text,
