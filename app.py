@@ -33,7 +33,7 @@ warnings.filterwarnings('ignore')
 # Librerías geoespaciales
 import folium
 from streamlit_folium import st_folium
-from folium.plugins import Fullscreen, MousePosition, HeatMap, MarkerCluster
+from folium.plugins import Fullscreen, MousePosition, HeatMap, MarkerCluster, Draw
 import geopandas as gpd
 from shapely.geometry import Polygon, Point, shape
 import pyproj
@@ -211,6 +211,16 @@ def aplicar_estilos_globales():
         background: linear-gradient(90deg, transparent, #e5e7eb, transparent);
         margin: 1.5rem 0;
     }
+    .map-container {
+        border-radius: 10px;
+        overflow: hidden;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        margin-bottom: 1.5rem;
+        border: 1px solid #e5e7eb;
+    }
+    .folium-map {
+        border-radius: 10px !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -227,6 +237,435 @@ def crear_header_analitico():
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+# ===============================
+# 🗺️ FUNCIONES DE MAPAS MEJORADAS CON ZOOM AUTOMÁTICO Y ESTILOS
+# ===============================
+def calcular_zoom_y_centro(gdf):
+    """Calcular zoom y centro automático basado en el polígono"""
+    if gdf is None or gdf.empty:
+        return 10, [-14.0, -60.0]
+    
+    try:
+        # Obtener los límites del polígono
+        bounds = gdf.total_bounds
+        if len(bounds) == 4:
+            center_lat = (bounds[1] + bounds[3]) / 2
+            center_lon = (bounds[0] + bounds[2]) / 2
+            
+            # Calcular el área en km² para determinar el zoom
+            poligono = gdf.geometry.iloc[0]
+            area_km2 = gdf.area.sum() * 111.32 * 111.32 * math.cos(math.radians(poligono.centroid.y))
+            
+            # Determinar zoom basado en el área (más preciso)
+            if area_km2 < 1:  # Muy pequeño (menos de 1 km²)
+                zoom = 16
+            elif area_km2 < 10:  # Pequeño
+                zoom = 14
+            elif area_km2 < 50:  # Mediano-pequeño
+                zoom = 13
+            elif area_km2 < 100:  # Mediano
+                zoom = 12
+            elif area_km2 < 500:  # Grande
+                zoom = 11
+            elif area_km2 < 1000:  # Muy grande
+                zoom = 10
+            elif area_km2 < 5000:  # Enorme
+                zoom = 9
+            elif area_km2 < 10000:  # Masivo
+                zoom = 8
+            else:  # Gigantesco
+                zoom = 7
+                
+            return zoom, [center_lat, center_lon]
+        else:
+            return 10, [-14.0, -60.0]
+    except Exception as e:
+        st.warning(f"Error calculando zoom automático: {str(e)}")
+        return 10, [-14.0, -60.0]
+
+def crear_mapa_base_con_poligono(gdf, titulo="Área de Estudio"):
+    """Crear mapa base con el polígono centrado y con zoom automático"""
+    if gdf is None or gdf.empty:
+        # Mapa por defecto si no hay datos
+        m = folium.Map(location=[-14.0, -60.0], zoom_start=4, 
+                      tiles=None, control_scale=True)
+        folium.TileLayer(
+            tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            attr='Esri World Imagery',
+            name='Satélite',
+            overlay=False,
+            control=True
+        ).add_to(m)
+        folium.TileLayer(
+            'OpenStreetMap',
+            name='OpenStreetMap',
+            overlay=False,
+            control=True
+        ).add_to(m)
+        return m
+    
+    try:
+        # Calcular zoom y centro automático
+        zoom, centro = calcular_zoom_y_centro(gdf)
+        
+        # Crear mapa con configuración optimizada
+        m = folium.Map(
+            location=centro,
+            zoom_start=zoom,
+            tiles=None,
+            control_scale=True,
+            zoom_control=True,
+            scrollWheelZoom=True,
+            dragging=True,
+            max_bounds=True,
+            min_zoom=3,
+            max_zoom=19
+        )
+        
+        # Agregar múltiples capas base
+        folium.TileLayer(
+            tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            attr='Esri World Imagery',
+            name='🌍 Satélite ESRI',
+            overlay=False,
+            control=True
+        ).add_to(m)
+        
+        folium.TileLayer(
+            'OpenStreetMap',
+            name='🗺️ OpenStreetMap',
+            overlay=False,
+            control=True
+        ).add_to(m)
+        
+        folium.TileLayer(
+            tiles='https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+            attr='OpenTopoMap',
+            name='⛰️ Topográfico',
+            overlay=False,
+            control=True
+        ).add_to(m)
+        
+        # Agregar el polígono principal con estilo mejorado
+        poligono_principal = gdf.geometry.iloc[0]
+        
+        # Calcular área para mostrar en tooltip
+        area_ha = gdf.geometry.area.sum() * 10000 * 111.32 * 111.32 * math.cos(math.radians(poligono_principal.centroid.y))
+        
+        # Crear tooltip informativo
+        tooltip_text = f"""
+        <div style="font-family: Arial, sans-serif; padding: 5px;">
+            <h4 style="margin: 0 0 5px 0; color: #1e3a8a;">{titulo}</h4>
+            <hr style="margin: 5px 0;">
+            <p style="margin: 2px 0;"><b>Área aproximada:</b> {area_ha:,.2f} ha</p>
+            <p style="margin: 2px 0;"><b>Coordenadas centro:</b><br>
+            Lat: {centro[0]:.6f}<br>
+            Lon: {centro[1]:.6f}</p>
+            <p style="margin: 2px 0;"><b>Tipo:</b> {poligono_principal.geom_type}</p>
+        </div>
+        """
+        
+        # Estilo del polígono
+        estilo_poligono = {
+            'fillColor': '#3b82f6',
+            'color': '#1d4ed8',
+            'weight': 3,
+            'fillOpacity': 0.2,
+            'dashArray': '5, 5'
+        }
+        
+        folium.GeoJson(
+            poligono_principal,
+            style_function=lambda x: estilo_poligono,
+            name='Área de Estudio',
+            tooltip=folium.Tooltip(tooltip_text, sticky=True),
+            popup=folium.Popup(tooltip_text, max_width=300)
+        ).add_to(m)
+        
+        # Agregar marcador en el centroide
+        folium.Marker(
+            location=centro,
+            popup=f"Centro del área de estudio",
+            tooltip="Centro del área",
+            icon=folium.Icon(color='blue', icon='info-sign', prefix='fa')
+        ).add_to(m)
+        
+        # Agregar controles adicionales
+        Fullscreen(
+            position='topright',
+            title='Pantalla completa',
+            title_cancel='Salir pantalla completa',
+            force_separate_button=True
+        ).add_to(m)
+        
+        MousePosition(
+            position='bottomleft',
+            separator=' | ',
+            empty_string='Coordenadas no disponibles',
+            lng_first=True,
+            num_digits=6,
+            prefix='Coordenadas:',
+            lat_formatter=lambda x: f'{x:.6f}',
+            lng_formatter=lambda x: f'{x:.6f}',
+        ).add_to(m)
+        
+        # Agregar control de dibujo
+        Draw(
+            export=True,
+            position='topleft',
+            draw_options={
+                'polyline': False,
+                'rectangle': True,
+                'polygon': True,
+                'circle': False,
+                'marker': True,
+                'circlemarker': False,
+            },
+            edit_options={'edit': False}
+        ).add_to(m)
+        
+        # Agregar botón para resetear vista
+        folium.plugins.LocateControl(
+            auto_start=False,
+            position='topright',
+            strings={
+                "title": "Mostrar mi ubicación",
+                "popup": "Tu ubicación"
+            }
+        ).add_to(m)
+        
+        # Control de capas
+        folium.LayerControl(
+            position='topright',
+            collapsed=True,
+            autoZIndex=True
+        ).add_to(m)
+        
+        # Ajustar los límites del mapa al polígono
+        m.fit_bounds([
+            [bounds[1], bounds[0]],
+            [bounds[3], bounds[2]]
+        ])
+        
+        return m
+        
+    except Exception as e:
+        st.error(f"Error creando mapa base: {str(e)}")
+        # Mapa de respaldo
+        m = folium.Map(location=[-14.0, -60.0], zoom_start=4)
+        folium.TileLayer('OpenStreetMap').add_to(m)
+        return m
+
+def crear_mapa_indicador_interactivo(gdf, datos_indicador, config_indicador):
+    """Crear mapa interactivo para un indicador específico con mejor visualización"""
+    if gdf is None or datos_indicador is None or len(datos_indicador) == 0:
+        return crear_mapa_base_con_poligono(gdf)
+    
+    try:
+        # Calcular zoom y centro automático
+        zoom, centro = calcular_zoom_y_centro(gdf)
+        
+        # Crear mapa base
+        m = folium.Map(
+            location=centro,
+            zoom_start=zoom,
+            tiles=None,
+            control_scale=True,
+            zoom_control=True,
+            scrollWheelZoom=True
+        )
+        
+        # Capas base
+        folium.TileLayer(
+            tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            attr='Esri World Imagery',
+            name='🌍 Satélite ESRI',
+            overlay=False,
+            control=True
+        ).add_to(m)
+        
+        folium.TileLayer(
+            'OpenStreetMap',
+            name='🗺️ OpenStreetMap',
+            overlay=False,
+            control=True
+        ).add_to(m)
+        
+        # Polígono principal
+        poligono_principal = gdf.geometry.iloc[0]
+        folium.GeoJson(
+            poligono_principal,
+            style_function=lambda x: {
+                'fillColor': '#ffffff',
+                'color': '#0066cc',
+                'weight': 2,
+                'fillOpacity': 0.05,
+                'dashArray': '3, 3'
+            },
+            name='Área de estudio',
+            tooltip='Área de estudio principal'
+        ).add_to(m)
+        
+        # Crear cluster de marcadores
+        marker_cluster = MarkerCluster(
+            name=f"Áreas de análisis - {config_indicador['titulo']}",
+            options={
+                'maxClusterRadius': 50,
+                'disableClusteringAtZoom': 15,
+                'spiderfyOnMaxZoom': True,
+                'showCoverageOnHover': True,
+                'zoomToBoundsOnClick': True
+            }
+        ).add_to(m)
+        
+        # Preparar datos para heatmap
+        heatmap_data = []
+        
+        # Agregar cada área del indicador
+        for area_data in datos_indicador:
+            valor = area_data.get(config_indicador['columna'], 0)
+            geometry = area_data.get('geometry')
+            area_id = area_data.get('area', 'Desconocido')
+            area_ha = area_data.get('area_ha', 0)
+            
+            if geometry:
+                # Calcular centroide
+                centroid = geometry.centroid
+                lat, lon = centroid.y, centroid.x
+                
+                # Determinar color basado en el valor
+                color = '#808080'  # Gris por defecto
+                for rango, color_rango in config_indicador['colores'].items():
+                    if rango[0] <= valor <= rango[1]:
+                        color = color_rango
+                        break
+                
+                # Crear contenido del popup
+                popup_content = f"""
+                <div style="font-family: Arial, sans-serif; min-width: 250px;">
+                    <h4 style="color: #1e3a8a; margin: 0 0 10px 0; border-bottom: 2px solid #3b82f6; padding-bottom: 5px;">
+                        📍 {area_id}
+                    </h4>
+                    <div style="margin: 10px 0;">
+                        <p style="margin: 5px 0;"><b>{config_indicador['titulo']}:</b> 
+                        <span style="color: {color}; font-weight: bold; font-size: 1.1em;">{valor:.2f}</span></p>
+                        <p style="margin: 5px 0;"><b>Área:</b> {area_ha:.2f} ha</p>
+                        <p style="margin: 5px 0;"><b>Estado:</b> {area_data.get('estado', 'N/A')}</p>
+                    </div>
+                    <div style="background: #f8f9fa; padding: 8px; border-radius: 5px; margin: 10px 0;">
+                        <p style="margin: 3px 0; font-size: 0.9em;"><b>Coordenadas:</b></p>
+                        <p style="margin: 3px 0; font-size: 0.9em;">Lat: {lat:.6f}</p>
+                        <p style="margin: 3px 0; font-size: 0.9em;">Lon: {lon:.6f}</p>
+                    </div>
+                </div>
+                """
+                
+                # Agregar marcador al cluster
+                folium.Marker(
+                    location=[lat, lon],
+                    popup=folium.Popup(popup_content, max_width=300),
+                    tooltip=f"{area_id}: {valor:.2f}",
+                    icon=folium.Icon(
+                        color='green' if valor > np.median([d.get(config_indicador['columna'], 0) for d in datos_indicador]) else 'red',
+                        icon='leaf' if 'vegetacion' in config_indicador['key'] else 'info-sign',
+                        prefix='fa'
+                    )
+                ).add_to(marker_cluster)
+                
+                # Agregar polígono del área coloreada
+                folium.GeoJson(
+                    geometry,
+                    style_function=lambda x, color=color: {
+                        'fillColor': color,
+                        'color': color,
+                        'weight': 1,
+                        'fillOpacity': 0.4,
+                        'opacity': 0.7
+                    },
+                    name=f'{area_id}',
+                    tooltip=f"{area_id}: {valor:.2f}"
+                ).add_to(m)
+                
+                # Agregar datos para heatmap
+                heatmap_data.append([lat, lon, valor])
+        
+        # Agregar heatmap si hay suficientes puntos
+        if len(heatmap_data) > 3:
+            HeatMap(
+                heatmap_data,
+                name='🔥 Heatmap de Valores',
+                min_opacity=0.3,
+                max_zoom=15,
+                radius=25,
+                blur=15,
+                gradient={0.2: 'blue', 0.4: 'lime', 0.6: 'yellow', 0.8: 'orange', 1.0: 'red'}
+            ).add_to(m)
+        
+        # Crear y agregar leyenda
+        try:
+            # Extraer rangos y colores
+            rangos = list(config_indicador['leyenda'].keys())
+            colores_leyenda = [config_indicador['colores'][rango] for rango in config_indicador['colores']]
+            
+            # Crear HTML para la leyenda
+            legend_html = f'''
+            <div style="position: fixed; 
+                        bottom: 50px; 
+                        left: 50px; 
+                        width: 220px; 
+                        height: auto; 
+                        background-color: white; 
+                        border: 2px solid grey; 
+                        z-index: 9999; 
+                        padding: 10px;
+                        border-radius: 5px;
+                        box-shadow: 0 0 10px rgba(0,0,0,0.2);
+                        font-family: Arial, sans-serif;">
+                <h4 style="margin-top: 0; color: #1e3a8a; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
+                    {config_indicador['titulo']}
+                </h4>
+            '''
+            
+            for rango, label in config_indicador['leyenda'].items():
+                color = config_indicador['colores'].get(rango, '#808080')
+                legend_html += f'''
+                <div style="margin: 5px 0; display: flex; align-items: center;">
+                    <div style="width: 20px; height: 20px; background-color: {color}; margin-right: 10px; border: 1px solid #666;"></div>
+                    <span style="font-size: 0.9em;">{label}</span>
+                </div>
+                '''
+            
+            legend_html += '</div>'
+            
+            # Agregar leyenda al mapa
+            m.get_root().html.add_child(folium.Element(legend_html))
+            
+        except Exception as e:
+            st.warning(f"Leyenda no generada: {str(e)}")
+        
+        # Agregar controles
+        Fullscreen().add_to(m)
+        MousePosition().add_to(m)
+        folium.LayerControl(
+            position='topright',
+            collapsed=True,
+            autoZIndex=True
+        ).add_to(m)
+        
+        # Ajustar vista al polígono principal
+        bounds = gdf.total_bounds
+        if len(bounds) == 4:
+            m.fit_bounds([
+                [bounds[1], bounds[0]],
+                [bounds[3], bounds[2]]
+            ])
+        
+        return m
+        
+    except Exception as e:
+        st.error(f"Error creando mapa de indicador: {str(e)}")
+        return crear_mapa_base_con_poligono(gdf)
 
 # ===============================
 # FUNCIONES DE PROCESAMIENTO DE ARCHIVOS
@@ -1316,24 +1755,29 @@ def sidebar_config_analitico():
         
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
         
-        st.markdown('<div class="filter-header">📈 Opciones de Visualización</div>', unsafe_allow_html=True)
+        st.markdown('<div class="filter-header">🗺️ Opciones de Mapa</div>', unsafe_allow_html=True)
         
-        mostrar_mapa = st.checkbox("Mostrar mapa interactivo", value=True)
-        mostrar_detalle = st.checkbox("Mostrar análisis detallado por área", value=True)
+        capa_base = st.selectbox(
+            "Capa base del mapa",
+            ["Satélite ESRI", "OpenStreetMap", "Topográfico"],
+            index=0
+        )
+        
+        mostrar_controles = st.checkbox("Mostrar controles de mapa", value=True)
         
         st.markdown('</div>', unsafe_allow_html=True)
         
-        return uploaded_file, vegetation_type, divisiones, mostrar_mapa, mostrar_detalle
+        return uploaded_file, vegetation_type, divisiones, capa_base, mostrar_controles
 
 # ===============================
-# 🎯 APLICACIÓN PRINCIPAL - ESTILO ANALÍTICO
+# 🎯 APLICACIÓN PRINCIPAL - ESTILO ANALÍTICO CON MAPAS MEJORADOS
 # ===============================
 def main():
     aplicar_estilos_globales()
     crear_header_analitico()
     initialize_session_state()
     
-    uploaded_file, vegetation_type, divisiones, mostrar_mapa, mostrar_detalle = sidebar_config_analitico()
+    uploaded_file, vegetation_type, divisiones, capa_base, mostrar_controles = sidebar_config_analitico()
     
     # Sección de carga de datos
     if tiene_poligono_data():
@@ -1341,9 +1785,18 @@ def main():
         poligono = gdf.geometry.iloc[0]
         area_ha = st.session_state.analyzer._calcular_area_hectareas(poligono)
         
-        # Mostrar información del área
-        col1, col2, col3 = st.columns(3)
+        # Mostrar información del área con mapa
+        col1, col2 = st.columns([2, 1])
+        
         with col1:
+            st.markdown('<div class="map-container">', unsafe_allow_html=True)
+            st.markdown('<div class="chart-title">🗺️ Visualización del Área de Estudio</div>', unsafe_allow_html=True)
+            # Crear y mostrar mapa con zoom automático
+            mapa_base = crear_mapa_base_con_poligono(gdf, "Área de Estudio Cargada")
+            st_folium(mapa_base, width=700, height=400, key="mapa_area_estudio")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        with col2:
             st.markdown(crear_kpi_card(
                 "Área Total", 
                 f"{area_ha:,.0f}", 
@@ -1351,14 +1804,14 @@ def main():
                 "#3b82f6",
                 unidad="hectáreas"
             ), unsafe_allow_html=True)
-        with col2:
+            
             st.markdown(crear_kpi_card(
                 "Tipo de Vegetación", 
                 vegetation_type.split()[0], 
                 "🌿", 
                 "#10b981"
             ), unsafe_allow_html=True)
-        with col3:
+            
             st.markdown(crear_kpi_card(
                 "Áreas de Análisis", 
                 f"{divisiones}x{divisiones}", 
@@ -1425,8 +1878,120 @@ def main():
                 unidad="unidades"
             ), unsafe_allow_html=True)
         
+        # ==================== SECCIÓN DE MAPAS POR INDICADOR ====================
+        st.markdown("## 🗺️ Visualización Geoespacial por Indicador")
+        
+        # Configuración de indicadores para mapas
+        indicadores_config = [
+            {
+                'key': 'carbono',
+                'titulo': '🌳 Almacenamiento de Carbono',
+                'columna': 'co2_total_ton',
+                'descripcion': 'Potencial de captura y almacenamiento de CO₂ en toneladas',
+                'colores': {
+                    (0, 1000): '#ffffcc',
+                    (1000, 5000): '#c2e699', 
+                    (5000, 10000): '#78c679',
+                    (10000, 50000): '#238443',
+                    (50000, 1000000): '#00441b'
+                },
+                'leyenda': {
+                    (0, 1000): 'Muy Bajo (<1K ton)',
+                    (1000, 5000): 'Bajo (1K-5K ton)',
+                    (5000, 10000): 'Moderado (5K-10K ton)',
+                    (10000, 50000): 'Alto (10K-50K ton)',
+                    (50000, 1000000): 'Muy Alto (>50K ton)'
+                }
+            },
+            {
+                'key': 'vegetacion',
+                'titulo': '🌿 Salud de la Vegetación',
+                'columna': 'ndvi',
+                'descripcion': 'Índice de Vegetación de Diferencia Normalizada (NDVI)',
+                'colores': {
+                    (0, 0.3): '#FF4500',
+                    (0.3, 0.5): '#FFD700',
+                    (0.5, 0.7): '#32CD32', 
+                    (0.7, 1.0): '#006400'
+                },
+                'leyenda': {
+                    (0, 0.3): 'Degradada (0-0.3)',
+                    (0.3, 0.5): 'Moderada (0.3-0.5)',
+                    (0.5, 0.7): 'Buena (0.5-0.7)',
+                    (0.7, 1.0): 'Excelente (0.7-1.0)'
+                }
+            },
+            {
+                'key': 'biodiversidad', 
+                'titulo': '🦋 Índice de Biodiversidad',
+                'columna': 'indice_shannon',
+                'descripcion': 'Índice de Shannon-Wiener de diversidad de especies',
+                'colores': {
+                    (0, 1.0): '#FF4500',
+                    (1.0, 1.5): '#FFD700',
+                    (1.5, 2.0): '#32CD32',
+                    (2.0, 3.0): '#006400'
+                },
+                'leyenda': {
+                    (0, 1.0): 'Muy Bajo (0-1.0)',
+                    (1.0, 1.5): 'Bajo (1.0-1.5)', 
+                    (1.5, 2.0): 'Moderado (1.5-2.0)',
+                    (2.0, 3.0): 'Alto (2.0-3.0)'
+                }
+            }
+        ]
+        
+        # Mostrar mapas en tabs
+        tabs = st.tabs([config['titulo'] for config in indicadores_config])
+        
+        for idx, (tab, config) in enumerate(zip(tabs, indicadores_config)):
+            with tab:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.markdown('<div class="map-container">', unsafe_allow_html=True)
+                    st.markdown(f'<div class="chart-title">{config["titulo"]}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<p style="color: #6b7280; margin-bottom: 1rem;">{config["descripcion"]}</p>', unsafe_allow_html=True)
+                    
+                    # Crear mapa del indicador
+                    mapa_indicador = crear_mapa_indicador_interactivo(
+                        st.session_state.poligono_data,
+                        resultados['resultados'][config['key']],
+                        config
+                    )
+                    
+                    # Mostrar mapa
+                    st_folium(mapa_indicador, width=700, height=500, key=f"mapa_{config['key']}")
+                    st.markdown('</div>', unsafe_allow_html=True)
+                
+                with col2:
+                    # Estadísticas del indicador
+                    datos_indicador = resultados['resultados'][config['key']]
+                    df_indicador = pd.DataFrame(datos_indicador)
+                    
+                    if not df_indicador.empty and config['columna'] in df_indicador.columns:
+                        valor_promedio = df_indicador[config['columna']].mean()
+                        valor_max = df_indicador[config['columna']].max()
+                        valor_min = df_indicador[config['columna']].min()
+                        
+                        st.markdown("### 📊 Estadísticas")
+                        st.metric("Promedio", f"{valor_promedio:.2f}")
+                        st.metric("Máximo", f"{valor_max:.2f}")
+                        st.metric("Mínimo", f"{valor_min:.2f}")
+                        
+                        # Distribución
+                        st.markdown("### 📈 Distribución")
+                        fig_dist = px.histogram(
+                            df_indicador, 
+                            x=config['columna'],
+                            nbins=10,
+                            title=f"Distribución de {config['titulo']}",
+                            color_discrete_sequence=['#3b82f6']
+                        )
+                        fig_dist.update_layout(height=250, showlegend=False)
+                        st.plotly_chart(fig_dist, use_container_width=True, key=f"hist_{config['key']}")
+        
         # ==================== SECCIÓN DE GRÁFICOS PRINCIPALES ====================
-        st.markdown("## 📈 Visualizaciones Principales")
+        st.markdown("## 📈 Visualizaciones Analíticas")
         
         # Combinar datos para análisis
         datos_combinados = []
@@ -1481,167 +2046,63 @@ def main():
             )
             st.markdown('</div>', unsafe_allow_html=True)
         
-        # Fila 3: Distribuciones y rankings
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-            st.markdown('<div class="chart-title">🏆 Ranking de Biodiversidad</div>', unsafe_allow_html=True)
-            st.plotly_chart(
-                crear_grafico_barras_horizontales(datos_combinados, 'indice_shannon', 'Top 10 Áreas por Biodiversidad'),
-                use_container_width=True,
-                key="ranking_biodiversidad"
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-            st.markdown('<div class="chart-title">💧 Distribución de Recursos Hídricos</div>', unsafe_allow_html=True)
-            st.plotly_chart(
-                crear_grafico_donut(datos_combinados, 'disponibilidad_agua', 'Disponibilidad de Agua por Categoría'),
-                use_container_width=True,
-                key="donut_agua"
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
-        
         # ==================== SECCIÓN DE ANÁLISIS DETALLADO ====================
-        if mostrar_detalle:
-            st.markdown("## 🔍 Análisis Detallado por Indicador")
-            
-            tabs = st.tabs(["🌿 Vegetación", "🌳 Carbono", "🦋 Biodiversidad", "💧 Agua", "🔄 Correlaciones"])
-            
-            with tabs[0]:  # Vegetación
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.plotly_chart(
-                        crear_grafico_linea_tendencia(resultados['resultados']['vegetacion'], 'ndvi', 'Tendencia de NDVI'),
-                        use_container_width=True,
-                        key="vegetacion_tendencia"
-                    )
-                with col2:
-                    st.plotly_chart(
-                        crear_grafico_donut(resultados['resultados']['vegetacion'], 'ndvi', 'Distribución de Salud Vegetal'),
-                        use_container_width=True,
-                        key="vegetacion_donut"
-                    )
-            
-            with tabs[1]:  # Carbono
-                # Datos extendidos de carbono
-                df_carbono = pd.DataFrame(resultados['resultados']['carbono'])
-                if not df_carbono.empty:
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        fig = go.Figure(data=[
-                            go.Bar(name='Aéreo', x=df_carbono['area'].head(8), y=df_carbono['carbono_aereo'].head(8), marker_color='#10b981'),
-                            go.Bar(name='Raíces', x=df_carbono['area'].head(8), y=df_carbono['carbono_raices'].head(8), marker_color='#34d399'),
-                            go.Bar(name='Suelo', x=df_carbono['area'].head(8), y=df_carbono['carbono_suelo'].head(8), marker_color='#6ee7b7')
-                        ])
-                        fig.update_layout(barmode='stack', title='Composición del Carbono por Área', height=350)
-                        st.plotly_chart(fig, use_container_width=True, key="carbono_composicion")
-                    
-                    with col2:
-                        st.plotly_chart(
-                            crear_grafico_barras_horizontales(resultados['resultados']['carbono'], 'co2_total_ton', 'Ranking de Captura de Carbono'),
-                            use_container_width=True,
-                            key="carbono_ranking"
-                        )
-            
-            with tabs[2]:  # Biodiversidad
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.plotly_chart(
-                        crear_grafico_linea_tendencia(resultados['resultados']['biodiversidad'], 'indice_shannon', 'Tendencia de Biodiversidad'),
-                        use_container_width=True,
-                        key="biodiversidad_tendencia"
-                    )
-                with col2:
-                    st.plotly_chart(
-                        crear_grafico_donut(resultados['resultados']['biodiversidad'], 'indice_shannon', 'Distribución de Niveles de Biodiversidad'),
-                        use_container_width=True,
-                        key="biodiversidad_donut"
-                    )
-            
-            with tabs[3]:  # Agua
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.plotly_chart(
-                        crear_grafico_barras_apiladas(
-                            resultados['resultados']['agua'],
-                            ['disponibilidad_agua'],
-                            'Disponibilidad de Agua por Área',
-                            350
-                        ),
-                        use_container_width=True,
-                        key="agua_barras"
-                    )
-                with col2:
-                    st.plotly_chart(
-                        crear_grafico_linea_tendencia(resultados['resultados']['agua'], 'disponibilidad_agua', 'Tendencia de Disponibilidad Hídrica'),
-                        use_container_width=True,
-                        key="agua_tendencia"
-                    )
-            
-            with tabs[4]:  # Correlaciones
+        st.markdown("## 🔍 Análisis Detallado por Indicador")
+        
+        tabs_detalle = st.tabs(["🌿 Vegetación", "🌳 Carbono", "🦋 Biodiversidad", "💧 Agua", "🔄 Correlaciones"])
+        
+        with tabs_detalle[0]:  # Vegetación
+            col1, col2 = st.columns(2)
+            with col1:
                 st.plotly_chart(
-                    crear_grafico_heatmap_correlacion_mejorado(
-                        datos_combinados,
-                        {
-                            'ndvi': 'Salud Vegetación',
-                            'co2_total_ton': 'Carbono Total',
-                            'indice_shannon': 'Biodiversidad',
-                            'disponibilidad_agua': 'Disponibilidad Agua',
-                            'salud_suelo': 'Salud del Suelo',
-                            'conectividad_total': 'Conectividad',
-                            'presion_total': 'Presión Antrópica'
-                        }
-                    ),
+                    crear_grafico_linea_tendencia(resultados['resultados']['vegetacion'], 'ndvi', 'Tendencia de NDVI'),
                     use_container_width=True,
-                    key="correlaciones_completas"
+                    key="vegetacion_tendencia"
+                )
+            with col2:
+                st.plotly_chart(
+                    crear_grafico_donut(resultados['resultados']['vegetacion'], 'ndvi', 'Distribución de Salud Vegetal'),
+                    use_container_width=True,
+                    key="vegetacion_donut"
                 )
         
-        # ==================== SECCIÓN DE MAPA INTERACTIVO ====================
-        if mostrar_mapa:
-            st.markdown("## 🗺️ Visualización Geoespacial")
-            
-            # Seleccionar capa para visualizar
-            col1, col2 = st.columns([3, 1])
-            with col2:
-                capa_seleccionada = st.selectbox(
-                    "Capa a visualizar",
-                    ["NDVI", "Carbono", "Biodiversidad", "Agua", "Suelo"],
-                    key="selector_capa"
-                )
-            
-            # Crear mapa simple
-            try:
-                gdf = st.session_state.poligono_data
-                bounds = gdf.total_bounds
-                center_lat = (bounds[1] + bounds[3]) / 2
-                center_lon = (bounds[0] + bounds[2]) / 2
-                
-                m = folium.Map(location=[center_lat, center_lon], zoom_start=12)
-                folium.TileLayer('OpenStreetMap').add_to(m)
-                
-                # Añadir polígono
-                folium.GeoJson(
-                    gdf.geometry.iloc[0],
-                    style_function=lambda x: {
-                        'fillColor': '#3b82f6',
-                        'color': '#1d4ed8',
-                        'weight': 2,
-                        'fillOpacity': 0.2
-                    },
-                    name='Área de Estudio'
-                ).add_to(m)
-                
-                # Añadir controles
-                folium.LayerControl().add_to(m)
-                
+        with tabs_detalle[1]:  # Carbono
+            df_carbono = pd.DataFrame(resultados['resultados']['carbono'])
+            if not df_carbono.empty:
+                col1, col2 = st.columns(2)
                 with col1:
-                    st_folium(m, width=900, height=500, key="mapa_principal")
-            
-            except Exception as e:
-                st.error(f"Error mostrando mapa: {str(e)}")
+                    fig = go.Figure(data=[
+                        go.Bar(name='Aéreo', x=df_carbono['area'].head(8), y=df_carbono['carbono_aereo'].head(8), marker_color='#10b981'),
+                        go.Bar(name='Raíces', x=df_carbono['area'].head(8), y=df_carbono['carbono_raices'].head(8), marker_color='#34d399'),
+                        go.Bar(name='Suelo', x=df_carbono['area'].head(8), y=df_carbono['carbono_suelo'].head(8), marker_color='#6ee7b7')
+                    ])
+                    fig.update_layout(barmode='stack', title='Composición del Carbono por Área', height=350)
+                    st.plotly_chart(fig, use_container_width=True, key="carbono_composicion")
+                
+                with col2:
+                    st.plotly_chart(
+                        crear_grafico_barras_horizontales(resultados['resultados']['carbono'], 'co2_total_ton', 'Ranking de Captura de Carbono'),
+                        use_container_width=True,
+                        key="carbono_ranking"
+                    )
+        
+        with tabs_detalle[4]:  # Correlaciones
+            st.plotly_chart(
+                crear_grafico_heatmap_correlacion_mejorado(
+                    datos_combinados,
+                    {
+                        'ndvi': 'Salud Vegetación',
+                        'co2_total_ton': 'Carbono Total',
+                        'indice_shannon': 'Biodiversidad',
+                        'disponibilidad_agua': 'Disponibilidad Agua',
+                        'salud_suelo': 'Salud del Suelo',
+                        'conectividad_total': 'Conectividad',
+                        'presion_total': 'Presión Antrópica'
+                    }
+                ),
+                use_container_width=True,
+                key="correlaciones_completas"
+            )
         
         # ==================== SECCIÓN DE DESCARGA ====================
         st.markdown("## 📥 Exportación de Resultados")
@@ -1750,7 +2211,7 @@ def main():
             
             **🗺️ VISUALIZACIÓN GEOESPACIAL**
             • Cargar polígonos de áreas de estudio
-            • Analizar distribución espacial de indicadores
+            • Análisis distribución espacial de indicadores
             • Identificar áreas prioritarias para intervención
             
             **📊 REPORTES EJECUTIVOS**
