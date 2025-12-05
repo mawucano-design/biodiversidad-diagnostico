@@ -3,8 +3,8 @@ import streamlit as st
 
 # ✅ LUEGO: Configurar la página
 st.set_page_config(
-    page_title="Sistema de Conservación de Especies UICN",
-    page_icon="🦋",
+    page_title="Sistema Integral de Análisis Ambiental",
+    page_icon="🌿",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -35,13 +35,13 @@ import folium
 from streamlit_folium import st_folium, folium_static
 from folium.plugins import Fullscreen, MousePosition, HeatMap, MarkerCluster, Draw
 import geopandas as gpd
-from shapely.geometry import Polygon, Point, shape
+from shapely.geometry import Polygon, Point, shape, MultiPolygon
 import pyproj
 from branca.colormap import LinearColormap
 import matplotlib.cm as cm
 
 # ===============================
-# 🌿 BASE DE DATOS DE ESPECIES UICN CON NICHO ECOLÓGICO
+# 🌿 BASE DE DATOS DE ESPECIES UICN MEJORADA
 # ===============================
 
 class BaseDatosEspeciesUICN:
@@ -324,20 +324,6 @@ class BaseDatosEspeciesUICN:
                 'prioridad_conservacion': 0.3
             }
         }
-        
-        # Variables ambientales disponibles para el análisis
-        self.variables_ambientales = [
-            'temperatura_promedio',
-            'precipitacion_anual',
-            'elevacion',
-            'cobertura_bosque',
-            'humedad_suelo',
-            'ndvi',
-            'conectividad',
-            'presion_antropica',
-            'disponibilidad_agua',
-            'densidad_vegetacion'
-        ]
     
     def obtener_todas_especies(self):
         """Retorna todas las especies combinadas"""
@@ -352,7 +338,6 @@ class BaseDatosEspeciesUICN:
         especie = especies[especie_nombre]
         nicho = especie['nicho']
         
-        # Factores de idoneidad (0-1)
         factores = []
         
         # 1. Temperatura
@@ -361,10 +346,9 @@ class BaseDatosEspeciesUICN:
             if nicho['temperatura_min'] <= temp <= nicho['temperatura_max']:
                 factores.append(1.0)
             else:
-                # Penalización por fuera del rango
                 distancia = min(abs(temp - nicho['temperatura_min']), 
                               abs(temp - nicho['temperatura_max']))
-                penalizacion = max(0, 1 - distancia / 10)  # 10°C de tolerancia
+                penalizacion = max(0, 1 - distancia / 10)
                 factores.append(penalizacion)
         
         # 2. Precipitación
@@ -375,10 +359,10 @@ class BaseDatosEspeciesUICN:
             else:
                 distancia = min(abs(precip - nicho['precipitacion_min']),
                               abs(precip - nicho['precipitacion_max']))
-                penalizacion = max(0, 1 - distancia / 1000)  # 1000 mm de tolerancia
+                penalizacion = max(0, 1 - distancia / 1000)
                 factores.append(penalizacion)
         
-        # 3. Cobertura de bosque (simulado por NDVI)
+        # 3. NDVI como proxy de cobertura bosque
         if 'ndvi' in caracteristicas_area:
             ndvi = caracteristicas_area['ndvi']
             cobertura_min = nicho.get('cobertura_bosque_min', 0)
@@ -405,90 +389,131 @@ class BaseDatosEspeciesUICN:
             else:
                 factores.append(humedad / humedad_min if humedad_min > 0 else 0)
         
-        # 6. Disponibilidad de agua
-        if 'disponibilidad_agua' in caracteristicas_area:
-            agua = caracteristicas_area['disponibilidad_agua']
-            if nicho.get('cuerpos_agua', False):
-                # Especies que requieren agua cercana
-                factores.append(agua)
-            else:
-                # No es crítico
-                factores.append(0.8)  # Valor base
-        
-        # 7. Densidad de vegetación
-        if 'densidad_vegetacion' in caracteristicas_area:
-            densidad = caracteristicas_area['densidad_vegetacion']
-            if nicho.get('vegetacion_densa', False):
-                # Prefiere vegetación densa
-                factores.append(densidad)
-            else:
-                # Tolera vegetación menos densa
-                factores.append(0.7)
-        
-        # Calcular idoneidad total (promedio ponderado)
         if factores:
-            # Peso mayor para variables críticas
-            pesos = [2.0 if i < 4 else 1.0 for i in range(len(factores))]
-            idoneidad = np.average(factores, weights=pesos)
-            
-            # Ajustar por prioridad de conservación
+            idoneidad = np.mean(factores)
             idoneidad *= especie['prioridad_conservacion']
-            
             return round(idoneidad, 3)
         
         return 0
+
+# ===============================
+# 🗺️ SISTEMA DE MAPAS MEJORADO CON ZOOM AUTOMÁTICO
+# ===============================
+
+class SistemaMapas:
+    """Sistema avanzado de mapas con zoom automático y múltiples capas"""
     
-    def generar_recomendaciones_conservacion(self, resultados_idoneidad):
-        """Genera recomendaciones basadas en los resultados de idoneidad"""
-        recomendaciones = []
+    def __init__(self):
+        self.capas_base = {
+            'Satélite': {
+                'tiles': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                'attr': 'Esri World Imagery',
+                'nombre': '🌍 Satélite ESRI'
+            },
+            'Topográfico': {
+                'tiles': 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+                'attr': 'OpenTopoMap',
+                'nombre': '⛰️ Topográfico'
+            },
+            'OSM': {
+                'tiles': 'OpenStreetMap',
+                'attr': 'OpenStreetMap',
+                'nombre': '🗺️ OpenStreetMap'
+            }
+        }
+    
+    def calcular_centro_y_zoom(self, gdf):
+        """Calcular centro y zoom automático basado en el polígono"""
+        if gdf is None or gdf.empty:
+            return [-14.0, -60.0], 4
         
-        # Análisis por especie
-        for especie, datos in resultados_idoneidad.items():
-            idoneidad_promedio = datos['idoneidad_promedio']
-            areas_optimas = datos['areas_optimas']
+        try:
+            bounds = gdf.total_bounds
+            centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
             
-            if idoneidad_promedio > 0.7:
-                recomendaciones.append(f"✅ **{especie}**: Hábitat óptimo detectado. Recomendado para conservación in-situ.")
-            elif idoneidad_promedio > 0.4:
-                recomendaciones.append(f"⚠️ **{especie}**: Hábitat moderadamente adecuado. Considerar restauración ecológica.")
+            # Calcular área aproximada para determinar zoom
+            poligono = gdf.geometry.iloc[0]
+            if hasattr(poligono, 'area'):
+                area_grados = poligono.area
+                lat_centro = centro[0]
+                cos_lat = math.cos(math.radians(lat_centro))
+                area_km2 = area_grados * 111 * 111 * cos_lat
+                
+                # Determinar zoom basado en área
+                if area_km2 < 1:
+                    zoom = 16
+                elif area_km2 < 10:
+                    zoom = 14
+                elif area_km2 < 50:
+                    zoom = 13
+                elif area_km2 < 100:
+                    zoom = 12
+                elif area_km2 < 500:
+                    zoom = 11
+                elif area_km2 < 1000:
+                    zoom = 10
+                elif area_km2 < 5000:
+                    zoom = 9
+                elif area_km2 < 10000:
+                    zoom = 8
+                else:
+                    zoom = 7
             else:
-                recomendaciones.append(f"❌ **{especie}**: Hábitat poco adecuado. Evaluar translocación o cría en cautiverio.")
+                zoom = 10
+            
+            return centro, zoom
         
-        # Recomendaciones generales
-        if any(r['idoneidad_promedio'] > 0.7 for r in resultados_idoneidad.values()):
-            recomendaciones.append("🎯 **Prioridad Alta**: Establecer corredores biológicos entre áreas óptimas.")
-            recomendaciones.append("🛡️ **Protección**: Implementar medidas contra caza furtiva y tala ilegal.")
+        except Exception as e:
+            return [-14.0, -60.0], 4
+    
+    def crear_mapa_base(self, gdf, titulo="Área de Estudio", capa_seleccionada='Satélite'):
+        """Crear mapa base con zoom automático y múltiples capas"""
+        centro, zoom = self.calcular_centro_y_zoom(gdf)
         
-        if len([r for r in resultados_idoneidad.values() if r['idoneidad_promedio'] > 0.5]) >= 3:
-            recomendaciones.append("🌿 **Biodiversidad**: El área puede albergar múltiples especies. Crear reserva natural.")
+        m = folium.Map(
+            location=centro,
+            zoom_start=zoom,
+            tiles=None,
+            control_scale=True,
+            zoom_control=True
+        )
         
-        return recomendaciones
-
-# ===============================
-# 🗺️ FUNCIONES DE MAPAS MEJORADAS
-# ===============================
-
-def crear_mapa_base_simple(gdf, titulo="Área de Estudio"):
-    """Crear mapa base simple y funcional"""
-    try:
-        # Centro por defecto en Sudamérica
-        m = folium.Map(location=[-14.0, -60.0], zoom_start=4, control_scale=True)
-        
-        # Capas base
-        folium.TileLayer(
-            tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-            attr='Esri World Imagery',
-            name='Satélite',
-            overlay=False,
-            control=True
-        ).add_to(m)
-        
-        folium.TileLayer('OpenStreetMap', name='OpenStreetMap').add_to(m)
+        # Agregar todas las capas base
+        for nombre, config in self.capas_base.items():
+            if nombre == 'OSM':
+                folium.TileLayer(
+                    config['tiles'],
+                    attr=config['attr'],
+                    name=config['nombre'],
+                    overlay=False,
+                    control=True
+                ).add_to(m)
+            else:
+                folium.TileLayer(
+                    tiles=config['tiles'],
+                    attr=config['attr'],
+                    name=config['nombre'],
+                    overlay=False,
+                    control=True
+                ).add_to(m)
         
         # Agregar polígono si existe
         if gdf is not None and not gdf.empty:
             try:
                 poligono = gdf.geometry.iloc[0]
+                
+                # Calcular área para tooltip
+                bounds = gdf.total_bounds
+                area_km2 = gdf.geometry.area.iloc[0] * 111 * 111 * math.cos(math.radians(centro[0]))
+                
+                tooltip_text = f"""
+                <div style='font-family: Arial; font-size: 12px;'>
+                <b>{titulo}</b><br>
+                Área: {area_km2:.2f} km²<br>
+                Centro: {centro[0]:.4f}°, {centro[1]:.4f}°
+                </div>
+                """
+                
                 folium.GeoJson(
                     poligono,
                     style_function=lambda x: {
@@ -499,150 +524,234 @@ def crear_mapa_base_simple(gdf, titulo="Área de Estudio"):
                         'dashArray': '5, 5'
                     },
                     name='Área de Estudio',
-                    tooltip=titulo
+                    tooltip=folium.Tooltip(tooltip_text, sticky=True)
                 ).add_to(m)
                 
-                # Centrar mapa
-                bounds = gdf.total_bounds
-                if len(bounds) == 4:
-                    m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
-                    
-            except Exception as e:
-                st.warning(f"Error al agregar polígono: {str(e)}")
-        
-        folium.LayerControl().add_to(m)
-        Fullscreen().add_to(m)
-        
-        return m
-        
-    except Exception as e:
-        st.error(f"Error creando mapa: {str(e)}")
-        return folium.Map(location=[-14.0, -60.0], zoom_start=4)
-
-def crear_mapa_idoneidad_especies(gdf, resultados_idoneidad, especie_seleccionada):
-    """Crear mapa de idoneidad para especies"""
-    try:
-        m = crear_mapa_base_simple(gdf, f"Idoneidad: {especie_seleccionada}")
-        
-        if especie_seleccionada not in resultados_idoneidad:
-            return m
-        
-        datos_especie = resultados_idoneidad[especie_seleccionada]
-        
-        # Agregar marcadores para áreas analizadas
-        for area_data in datos_especie.get('datos_detallados', []):
-            try:
-                idoneidad = area_data.get('idoneidad', 0)
-                geometry = area_data.get('geometry')
-                area_id = area_data.get('area', 'Desconocida')
+                # Ajustar vista al polígono
+                m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
                 
-                if geometry and hasattr(geometry, 'centroid'):
-                    centroid = geometry.centroid
-                    lat, lon = centroid.y, centroid.x
-                    
-                    # Color basado en idoneidad
-                    if idoneidad > 0.7:
-                        color = '#00FF00'  # Verde - óptimo
-                    elif idoneidad > 0.4:
-                        color = '#FFFF00'  # Amarillo - moderado
-                    else:
-                        color = '#FF0000'  # Rojo - pobre
-                    
-                    # Popup informativo
-                    popup_text = f"""
-                    <div style='font-family: Arial;'>
-                    <b>{especie_seleccionada}</b><br>
-                    <b>Área:</b> {area_id}<br>
-                    <b>Idoneidad:</b> {idoneidad:.2%}<br>
-                    <b>Lat:</b> {lat:.4f}<br>
-                    <b>Lon:</b> {lon:.4f}<br>
-                    <br>
-                    <small>💚 >70%: Óptimo<br>
-                    💛 40-70%: Moderado<br>
-                    ❤️ <40%: Pobre</small>
-                    </div>
-                    """
-                    
-                    # Agregar marcador
-                    folium.CircleMarker(
-                        location=[lat, lon],
-                        radius=10,
-                        popup=popup_text,
-                        color=color,
-                        fill=True,
-                        fillColor=color,
-                        fillOpacity=0.7,
-                        tooltip=f"{area_id}: {idoneidad:.2%}"
-                    ).add_to(m)
-                    
             except Exception as e:
-                continue
+                pass
+        
+        # Agregar controles
+        Fullscreen().add_to(m)
+        MousePosition().add_to(m)
+        folium.LayerControl().add_to(m)
         
         return m
+    
+    def crear_mapa_indicador(self, gdf, datos_indicador, config_indicador):
+        """Crear mapa para un indicador específico"""
+        centro, zoom = self.calcular_centro_y_zoom(gdf)
         
-    except Exception as e:
-        st.error(f"Error mapa idoneidad: {str(e)}")
-        return crear_mapa_base_simple(gdf)
+        m = folium.Map(
+            location=centro,
+            zoom_start=zoom,
+            tiles=self.capas_base['Satélite']['tiles'],
+            attr=self.capas_base['Satélite']['attr'],
+            control_scale=True
+        )
+        
+        # Agregar polígono base
+        if gdf is not None and not gdf.empty:
+            poligono = gdf.geometry.iloc[0]
+            folium.GeoJson(
+                poligono,
+                style_function=lambda x: {
+                    'fillColor': '#ffffff',
+                    'color': '#0066cc',
+                    'weight': 1,
+                    'fillOpacity': 0.05
+                }
+            ).add_to(m)
+        
+        # Agregar datos del indicador
+        if datos_indicador and len(datos_indicador) > 0:
+            for area_data in datos_indicador:
+                try:
+                    valor = area_data.get(config_indicador['columna'], 0)
+                    geometry = area_data.get('geometry')
+                    area_id = area_data.get('area', 'Desconocida')
+                    
+                    if geometry and hasattr(geometry, 'centroid'):
+                        centroid = geometry.centroid
+                        lat, lon = centroid.y, centroid.x
+                        
+                        # Determinar color basado en valor
+                        color = '#808080'
+                        for rango, color_rango in config_indicador['colores'].items():
+                            if rango[0] <= valor <= rango[1]:
+                                color = color_rango
+                                break
+                        
+                        # Crear marcador
+                        folium.CircleMarker(
+                            location=[lat, lon],
+                            radius=8,
+                            popup=f"<b>{area_id}</b><br>{config_indicador['titulo']}: {valor:.3f}",
+                            color=color,
+                            fill=True,
+                            fillColor=color,
+                            fillOpacity=0.7,
+                            tooltip=f"{area_id}: {valor:.3f}"
+                        ).add_to(m)
+                        
+                except Exception as e:
+                    continue
+        
+        return m
 
 # ===============================
-# 📊 FUNCIONES DE ANÁLISIS Y VISUALIZACIÓN
+# 📊 SISTEMA DE ANÁLISIS AMBIENTAL COMPLETO
 # ===============================
 
-class AnalizadorConservacion:
-    """Analizador de hábitat para especies UICN"""
+class AnalizadorAmbientalCompleto:
+    """Analizador ambiental completo con todos los indicadores"""
     
     def __init__(self):
-        self.base_datos = BaseDatosEspeciesUICN()
-        self.parametros_ambientales = {
+        self.base_especies = BaseDatosEspeciesUICN()
+        self.sistema_mapas = SistemaMapas()
+        
+        # Parámetros base por tipo de ecosistema
+        self.parametros_ecosistemas = {
             'Bosque Tropical Húmedo': {
-                'temperatura_promedio': 26,
-                'precipitacion_anual': 2500,
-                'elevacion': 200,
-                'humedad_suelo': 0.8,
-                'densidad_vegetacion': 0.9
+                'ndvi_base': 0.85,
+                'savi_base': 0.70,
+                'mndvi_base': 0.80,
+                'evi_base': 0.65,
+                'ndwi_base': 0.45,
+                'carbono_ton_ha': 250,
+                'shannon_base': 2.8,
+                'temperatura': 26,
+                'precipitacion': 2500,
+                'humedad_suelo': 0.8
             },
-            'Bosque Seco': {
-                'temperatura_promedio': 28,
-                'precipitacion_anual': 800,
-                'elevacion': 500,
-                'humedad_suelo': 0.4,
-                'densidad_vegetacion': 0.6
+            'Bosque Seco Tropical': {
+                'ndvi_base': 0.65,
+                'savi_base': 0.50,
+                'mndvi_base': 0.60,
+                'evi_base': 0.45,
+                'ndwi_base': 0.25,
+                'carbono_ton_ha': 120,
+                'shannon_base': 2.0,
+                'temperatura': 28,
+                'precipitacion': 800,
+                'humedad_suelo': 0.4
             },
             'Bosque Montano': {
-                'temperatura_promedio': 18,
-                'precipitacion_anual': 1500,
-                'elevacion': 2000,
-                'humedad_suelo': 0.7,
-                'densidad_vegetacion': 0.8
+                'ndvi_base': 0.75,
+                'savi_base': 0.60,
+                'mndvi_base': 0.70,
+                'evi_base': 0.55,
+                'ndwi_base': 0.35,
+                'carbono_ton_ha': 180,
+                'shannon_base': 2.5,
+                'temperatura': 18,
+                'precipitacion': 1500,
+                'humedad_suelo': 0.7
             },
-            'Sabana': {
-                'temperatura_promedio': 25,
-                'precipitacion_anual': 1200,
-                'elevacion': 300,
-                'humedad_suelo': 0.5,
-                'densidad_vegetacion': 0.4
+            'Sabana Arborizada': {
+                'ndvi_base': 0.55,
+                'savi_base': 0.40,
+                'mndvi_base': 0.50,
+                'evi_base': 0.35,
+                'ndwi_base': 0.20,
+                'carbono_ton_ha': 80,
+                'shannon_base': 1.8,
+                'temperatura': 25,
+                'precipitacion': 1200,
+                'humedad_suelo': 0.5
             },
             'Humeral': {
-                'temperatura_promedio': 22,
-                'precipitacion_anual': 3000,
-                'elevacion': 100,
-                'humedad_suelo': 0.9,
-                'densidad_vegetacion': 0.7
+                'ndvi_base': 0.70,
+                'savi_base': 0.55,
+                'mndvi_base': 0.65,
+                'evi_base': 0.50,
+                'ndwi_base': 0.60,
+                'carbono_ton_ha': 150,
+                'shannon_base': 2.2,
+                'temperatura': 22,
+                'precipitacion': 3000,
+                'humedad_suelo': 0.9
             }
         }
     
-    def generar_caracteristicas_areas(self, gdf, tipo_ecosistema, n_divisiones=5):
-        """Generar características ambientales para cada área"""
+    def calcular_indices_vegetacion(self, params_base, area_ha):
+        """Calcular todos los índices de vegetación"""
+        # Simular variación basada en área y parámetros aleatorios
+        variacion = np.random.uniform(-0.15, 0.15)
+        
+        resultados = {
+            'ndvi': max(0.1, min(1.0, params_base['ndvi_base'] + variacion)),
+            'savi': max(0.1, min(1.0, params_base['savi_base'] + np.random.uniform(-0.1, 0.1))),
+            'mndvi': max(0.1, min(1.0, params_base['mndvi_base'] + np.random.uniform(-0.1, 0.1))),
+            'evi': max(0.1, min(1.0, params_base['evi_base'] + np.random.uniform(-0.1, 0.1))),
+            'ndwi': max(0.1, min(1.0, params_base['ndwi_base'] + np.random.uniform(-0.1, 0.1))),
+        }
+        
+        # Ajustar por área (áreas más grandes tienden a tener mejor vegetación)
+        factor_area = min(1.5, 1 + (area_ha / 1000))
+        for key in resultados:
+            resultados[key] = min(1.0, resultados[key] * factor_area)
+        
+        return resultados
+    
+    def calcular_indice_shannon(self, params_base, indices_vegetacion, area_ha):
+        """Calcular índice de Shannon de biodiversidad"""
+        # Base del índice
+        shannon = params_base['shannon_base']
+        
+        # Ajustar por NDVI (mejor vegetación = más biodiversidad)
+        shannon *= (0.5 + 0.5 * indices_vegetacion['ndvi'])
+        
+        # Ajustar por área (efecto de área-especie)
+        factor_area = min(2.0, 1 + math.log10(area_ha + 1) / 2)
+        shannon *= factor_area
+        
+        # Añadir variación aleatoria
+        shannon += np.random.uniform(-0.3, 0.3)
+        
+        return max(0.1, min(4.0, shannon))
+    
+    def calcular_carbono(self, params_base, area_ha, indices_vegetacion):
+        """Calcular captura de carbono"""
+        # Carbono base por hectárea
+        carbono_ton_ha = params_base['carbono_ton_ha']
+        
+        # Ajustar por NDVI (mejor vegetación = más carbono)
+        carbono_ton_ha *= (0.7 + 0.3 * indices_vegetacion['ndvi'])
+        
+        # Añadir variación
+        carbono_ton_ha += np.random.uniform(-20, 20)
+        
+        # Calcular totales
+        carbono_total = carbono_ton_ha * area_ha
+        co2_total = carbono_total * 3.67  # Conversión a CO2
+        
+        return {
+            'carbono_ton_ha': max(0, round(carbono_ton_ha, 2)),
+            'carbono_total': max(0, round(carbono_total, 2)),
+            'co2_total': max(0, round(co2_total, 2))
+        }
+    
+    def analizar_area(self, gdf, tipo_ecosistema, n_divisiones=6):
+        """Analizar toda el área dividida en celdas"""
         try:
             poligono_principal = gdf.geometry.iloc[0]
             bounds = poligono_principal.bounds
             
-            areas = []
-            id_area = 1
+            params_base = self.parametros_ecosistemas.get(
+                tipo_ecosistema, 
+                self.parametros_ecosistemas['Bosque Tropical Húmedo']
+            )
             
-            # Parámetros base según ecosistema
-            params_base = self.parametros_ambientales.get(tipo_ecosistema, 
-                                                        self.parametros_ambientales['Bosque Tropical Húmedo'])
+            resultados = {
+                'areas': [],
+                'resumen': {},
+                'tipo_ecosistema': tipo_ecosistema
+            }
+            
+            id_area = 1
             
             # Dividir en grilla
             for i in range(n_divisiones):
@@ -659,363 +768,95 @@ class AnalizadorConservacion:
                     
                     interseccion = poligono_principal.intersection(celda)
                     if not interseccion.is_empty:
-                        # Calcular características con variación
-                        caracteristicas = {
-                            'area': f"Área-{id_area}",
-                            'geometry': interseccion,
-                            'temperatura_promedio': params_base['temperatura_promedio'] + np.random.uniform(-3, 3),
-                            'precipitacion_anual': params_base['precipitacion_anual'] + np.random.uniform(-200, 200),
-                            'elevacion': params_base['elevacion'] + np.random.uniform(-100, 100),
-                            'humedad_suelo': max(0.1, min(1.0, params_base['humedad_suelo'] + np.random.uniform(-0.2, 0.2))),
-                            'densidad_vegetacion': max(0.1, min(1.0, params_base['densidad_vegetacion'] + np.random.uniform(-0.2, 0.2))),
-                            'ndvi': params_base['densidad_vegetacion'] + np.random.uniform(-0.1, 0.1),
-                            'conectividad': np.random.uniform(0.3, 0.9),
-                            'presion_antropica': np.random.uniform(0.1, 0.7),
-                            'disponibilidad_agua': np.random.uniform(0.3, 0.9)
-                        }
+                        # Calcular área en hectáreas
+                        area_m2 = interseccion.area * 111000 * 111000 * math.cos(math.radians((ymin+ymax)/2))
+                        area_ha = area_m2 / 10000
                         
-                        areas.append(caracteristicas)
-                        id_area += 1
+                        if area_ha > 0.01:  # Ignorar áreas muy pequeñas
+                            # Calcular todos los indicadores
+                            indices_vegetacion = self.calcular_indices_vegetacion(params_base, area_ha)
+                            indice_shannon = self.calcular_indice_shannon(params_base, indices_vegetacion, area_ha)
+                            carbono = self.calcular_carbono(params_base, area_ha, indices_vegetacion)
+                            
+                            area_data = {
+                                'id': id_area,
+                                'area': f"Celda-{id_area:03d}",
+                                'geometry': interseccion,
+                                'area_ha': round(area_ha, 2),
+                                'indices_vegetacion': indices_vegetacion,
+                                'indice_shannon': round(indice_shannon, 3),
+                                'carbono': carbono,
+                                'temperatura': params_base['temperatura'] + np.random.uniform(-2, 2),
+                                'precipitacion': params_base['precipitacion'] + np.random.uniform(-100, 100),
+                                'humedad_suelo': params_base['humedad_suelo'] + np.random.uniform(-0.1, 0.1),
+                                'presion_antropica': np.random.uniform(0.1, 0.6),
+                                'conectividad': np.random.uniform(0.4, 0.9)
+                            }
+                            
+                            resultados['areas'].append(area_data)
+                            id_area += 1
             
-            return areas
+            # Calcular resumen general
+            if resultados['areas']:
+                self._calcular_resumen(resultados)
+            
+            return resultados
             
         except Exception as e:
-            st.error(f"Error generando características: {str(e)}")
-            return []
+            st.error(f"Error en análisis ambiental: {str(e)}")
+            return None
     
-    def analizar_idoneidad_especies(self, areas_caracteristicas, especies_seleccionadas):
-        """Analizar idoneidad para especies seleccionadas"""
-        resultados = {}
+    def _calcular_resumen(self, resultados):
+        """Calcular estadísticas resumen"""
+        areas = resultados['areas']
         
-        for especie_nombre in especies_seleccionadas:
-            idoneidades = []
-            datos_detallados = []
-            
-            for area in areas_caracteristicas:
-                idoneidad = self.base_datos.calcular_idoneidad_habitat(area, especie_nombre)
-                idoneidades.append(idoneidad)
-                
-                # Guardar datos detallados
-                datos_detallados.append({
-                    'area': area['area'],
-                    'idoneidad': idoneidad,
-                    'geometry': area['geometry'],
-                    'temperatura': area['temperatura_promedio'],
-                    'precipitacion': area['precipitacion_anual'],
-                    'elevacion': area['elevacion']
-                })
-            
-            # Estadísticas
-            if idoneidades:
-                resultados[especie_nombre] = {
-                    'idoneidad_promedio': np.mean(idoneidades),
-                    'idoneidad_max': np.max(idoneidades),
-                    'idoneidad_min': np.min(idoneidades),
-                    'areas_optimas': len([i for i in idoneidades if i > 0.7]),
-                    'areas_moderadas': len([i for i in idoneidades if 0.4 <= i <= 0.7]),
-                    'areas_pobres': len([i for i in idoneidades if i < 0.4]),
-                    'datos_detallados': datos_detallados,
-                    'especie_info': self.base_datos.obtener_todas_especies()[especie_nombre]
-                }
+        resumen = {
+            'total_areas': len(areas),
+            'area_total_ha': sum(a['area_ha'] for a in areas),
+            'ndvi_promedio': np.mean([a['indices_vegetacion']['ndvi'] for a in areas]),
+            'savi_promedio': np.mean([a['indices_vegetacion']['savi'] for a in areas]),
+            'evi_promedio': np.mean([a['indices_vegetacion']['evi'] for a in areas]),
+            'shannon_promedio': np.mean([a['indice_shannon'] for a in areas]),
+            'carbono_total_co2': sum(a['carbono']['co2_total'] for a in areas),
+            'carbono_promedio_ha': np.mean([a['carbono']['carbono_ton_ha'] for a in areas]),
+            'temperatura_promedio': np.mean([a['temperatura'] for a in areas]),
+            'precipitacion_promedio': np.mean([a['precipitacion'] for a in areas])
+        }
         
-        return resultados
-    
-    def identificar_areas_prioritarias(self, resultados_idoneidad):
-        """Identificar áreas prioritarias para conservación"""
-        areas_prioritarias = {}
+        # Clasificar estado general
+        ndvi_avg = resumen['ndvi_promedio']
+        shannon_avg = resumen['shannon_promedio']
         
-        # Para cada área, calcular prioridad basada en múltiples especies
-        especies = list(resultados_idoneidad.keys())
-        
-        if not especies:
-            return areas_prioritarias
-        
-        # Obtener todas las áreas únicas
-        todas_areas = []
-        for especie, datos in resultados_idoneidad.items():
-            for area_data in datos['datos_detallados']:
-                if area_data['area'] not in todas_areas:
-                    todas_areas.append(area_data['area'])
-        
-        # Calcular prioridad por área
-        for area_nombre in todas_areas:
-            prioridad_total = 0
-            especies_presentes = 0
-            
-            for especie, datos in resultados_idoneidad.items():
-                for area_data in datos['datos_detallados']:
-                    if area_data['area'] == area_nombre:
-                        idoneidad = area_data['idoneidad']
-                        prioridad_especie = datos['especie_info']['prioridad_conservacion']
-                        
-                        # Ponderar por prioridad de la especie
-                        prioridad_total += idoneidad * prioridad_especie
-                        especies_presentes += 1
-            
-            if especies_presentes > 0:
-                prioridad_promedio = prioridad_total / especies_presentes
-                areas_prioritarias[area_nombre] = {
-                    'prioridad': prioridad_promedio,
-                    'especies_presentes': especies_presentes,
-                    'categoria': self._clasificar_prioridad(prioridad_promedio)
-                }
-        
-        return areas_prioritarias
-    
-    def _clasificar_prioridad(self, prioridad):
-        """Clasificar nivel de prioridad"""
-        if prioridad > 0.7:
-            return "Alta Prioridad"
-        elif prioridad > 0.4:
-            return "Prioridad Media"
+        if ndvi_avg > 0.7 and shannon_avg > 2.5:
+            resumen['estado_general'] = 'Excelente'
+            resumen['color_estado'] = '#10b981'
+        elif ndvi_avg > 0.5 and shannon_avg > 1.8:
+            resumen['estado_general'] = 'Bueno'
+            resumen['color_estado'] = '#3b82f6'
+        elif ndvi_avg > 0.3:
+            resumen['estado_general'] = 'Moderado'
+            resumen['color_estado'] = '#f59e0b'
         else:
-            return "Baja Prioridad"
+            resumen['estado_general'] = 'Degradado'
+            resumen['color_estado'] = '#ef4444'
+        
+        resultados['resumen'] = resumen
 
 # ===============================
-# 🎨 INTERFAZ DE USUARIO
-# ===============================
-
-def mostrar_panel_especies_uicn():
-    """Mostrar panel de información de especies UICN"""
-    st.markdown("## 📋 Base de Datos de Especies UICN")
-    
-    base_datos = BaseDatosEspeciesUICN()
-    todas_especies = base_datos.obtener_todas_especies()
-    
-    # Filtros
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        filtrar_lista = st.selectbox("Filtrar por lista", ["Todas", "Lista Roja", "Lista Amarilla"])
-    with col2:
-        filtrar_tipo = st.selectbox("Filtrar por tipo", ["Todos", "Mamífero", "Ave", "Reptil"])
-    with col3:
-        filtrar_categoria = st.selectbox("Filtrar por categoría", ["Todas", "En Peligro", "Vulnerable", "Casi Amenazada", "Preocupación Menor"])
-    
-    # Filtrar especies
-    especies_filtradas = {}
-    for nombre, datos in todas_especies.items():
-        cumple_lista = True
-        cumple_tipo = True
-        cumple_categoria = True
-        
-        if filtrar_lista != "Todas":
-            if filtrar_lista == "Lista Roja":
-                cumple_lista = nombre in base_datos.especies_lista_roja
-            else:
-                cumple_lista = nombre in base_datos.especies_lista_amarilla
-        
-        if filtrar_tipo != "Todos":
-            cumple_tipo = datos['tipo'] == filtrar_tipo
-        
-        if filtrar_categoria != "Todas":
-            cumple_categoria = datos['categoria_uicn'] == filtrar_categoria
-        
-        if cumple_lista and cumple_tipo and cumple_categoria:
-            especies_filtradas[nombre] = datos
-    
-    # Mostrar tarjetas de especies
-    for nombre, datos in especies_filtradas.items():
-        with st.expander(f"🦋 {nombre} ({datos['nombre_cientifico']}) - {datos['categoria_uicn']}"):
-            col_info, col_nicho = st.columns(2)
-            
-            with col_info:
-                st.markdown(f"**Tipo:** {datos['tipo']}")
-                st.markdown(f"**Prioridad:** {datos['prioridad_conservacion']:.2%}")
-                st.markdown(f"**Área home range:** {datos['area_home_range']} km²")
-                st.markdown(f"**Densidad:** {datos['densidad_poblacional']} ind/100km²")
-                
-                st.markdown("**Requerimientos de hábitat:**")
-                for req in datos['requerimientos_habitat']:
-                    st.markdown(f"• {req}")
-            
-            with col_nicho:
-                st.markdown("**Parámetros de nicho:**")
-                nicho = datos['nicho']
-                
-                if 'temperatura_min' in nicho:
-                    st.markdown(f"• Temperatura: {nicho['temperatura_min']}-{nicho['temperatura_max']}°C")
-                if 'precipitacion_min' in nicho:
-                    st.markdown(f"• Precipitación: {nicho['precipitacion_min']}-{nicho['precipitacion_max']} mm/año")
-                if 'elevacion_min' in nicho:
-                    st.markdown(f"• Elevación: {nicho['elevacion_min']}-{nicho['elevacion_max']} msnm")
-                if 'cobertura_bosque_min' in nicho:
-                    st.markdown(f"• Cobertura bosque: >{nicho['cobertura_bosque_min']*100:.0f}%")
-                if 'presion_antropica_max' in nicho:
-                    st.markdown(f"• Presión antrópica: <{nicho['presion_antropica_max']*100:.0f}%")
-
-def mostrar_analisis_idoneidad(gdf, resultados_idoneidad, areas_prioritarias):
-    """Mostrar análisis de idoneidad"""
-    st.markdown("## 📊 Resultados de Idoneidad de Hábitat")
-    
-    if not resultados_idoneidad:
-        st.warning("No hay resultados de idoneidad para mostrar.")
-        return
-    
-    # Seleccionar especie para visualización detallada
-    especies_disponibles = list(resultados_idoneidad.keys())
-    especie_seleccionada = st.selectbox("Seleccionar especie para análisis detallado", especies_disponibles)
-    
-    if especie_seleccionada:
-        datos_especie = resultados_idoneidad[especie_seleccionada]
-        
-        # KPIs para la especie
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Idoneidad Promedio", f"{datos_especie['idoneidad_promedio']:.2%}")
-        with col2:
-            st.metric("Áreas Óptimas", datos_especie['areas_optimas'])
-        with col3:
-            st.metric("Áreas Moderadas", datos_especie['areas_moderadas'])
-        with col4:
-            st.metric("Áreas Pobres", datos_especie['areas_pobres'])
-        
-        # Mapa de idoneidad
-        st.markdown("### 🗺️ Mapa de Idoneidad")
-        mapa_idoneidad = crear_mapa_idoneidad_especies(gdf, resultados_idoneidad, especie_seleccionada)
-        folium_static(mapa_idoneidad, width=800, height=500)
-        
-        # Gráfico de distribución de idoneidad
-        st.markdown("### 📈 Distribución de Idoneidad")
-        
-        # Preparar datos para el gráfico
-        idoneidades = [d['idoneidad'] for d in datos_especie['datos_detallados']]
-        
-        fig = go.Figure()
-        fig.add_trace(go.Histogram(
-            x=idoneidades,
-            nbinsx=20,
-            name='Frecuencia',
-            marker_color='#3b82f6'
-        ))
-        
-        fig.update_layout(
-            title=f'Distribución de Idoneidad para {especie_seleccionada}',
-            xaxis_title='Idoneidad',
-            yaxis_title='Número de Áreas',
-            bargap=0.1,
-            height=400
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Tabla de áreas por idoneidad
-        st.markdown("### 📋 Ranking de Áreas por Idoneidad")
-        
-        df_areas = pd.DataFrame(datos_especie['datos_detallados'])
-        df_areas = df_areas.sort_values('idoneidad', ascending=False)
-        df_areas['idoneidad_%'] = df_areas['idoneidad'].apply(lambda x: f"{x:.2%}")
-        df_areas['categoria'] = df_areas['idoneidad'].apply(
-            lambda x: 'Óptima' if x > 0.7 else 'Moderada' if x > 0.4 else 'Pobre'
-        )
-        
-        st.dataframe(
-            df_areas[['area', 'idoneidad_%', 'categoria', 'temperatura', 'precipitacion', 'elevacion']].head(10),
-            use_container_width=True
-        )
-    
-    # Áreas prioritarias
-    st.markdown("## 🎯 Áreas Prioritarias para Conservación")
-    
-    if areas_prioritarias:
-        # Convertir a DataFrame
-        df_prioritarias = pd.DataFrame.from_dict(areas_prioritarias, orient='index')
-        df_prioritarias = df_prioritarias.sort_values('prioridad', ascending=False)
-        df_prioritarias['prioridad_%'] = df_prioritarias['prioridad'].apply(lambda x: f"{x:.2%}")
-        
-        # Mostrar tabla
-        st.dataframe(
-            df_prioritarias[['prioridad_%', 'categoria', 'especies_presentes']],
-            use_container_width=True
-        )
-        
-        # Gráfico de prioridades
-        fig = go.Figure(data=[
-            go.Bar(
-                x=df_prioritarias.index[:10],
-                y=df_prioritarias['prioridad'][:10],
-                marker_color=['#FF0000' if p > 0.7 else '#FFA500' if p > 0.4 else '#00FF00' 
-                            for p in df_prioritarias['prioridad'][:10]]
-            )
-        ])
-        
-        fig.update_layout(
-            title='Top 10 Áreas Prioritarias',
-            xaxis_title='Área',
-            yaxis_title='Prioridad',
-            height=400
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-
-def mostrar_recomendaciones_conservacion(resultados_idoneidad):
-    """Mostrar recomendaciones de conservación"""
-    st.markdown("## 💡 Recomendaciones para Conservación")
-    
-    base_datos = BaseDatosEspeciesUICN()
-    recomendaciones = base_datos.generar_recomendaciones_conservacion(resultados_idoneidad)
-    
-    for rec in recomendaciones:
-        st.markdown(f"• {rec}")
-    
-    # Plan de acción sugerido
-    st.markdown("### 📝 Plan de Acción Sugerido")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("**Acciones Inmediatas (0-6 meses):**")
-        st.markdown("""
-        1. 📋 Realizar inventario biológico detallado
-        2. 🛡️ Establecer vigilancia contra actividades ilegales
-        3. 📊 Monitorear poblaciones de especies clave
-        4. 🌿 Identificar corredores biológicos naturales
-        5. 🤝 Establecer alianzas con comunidades locales
-        """)
-    
-    with col2:
-        st.markdown("**Acciones a Mediano Plazo (6-24 meses):**")
-        st.markdown("""
-        1. 🌳 Implementar programas de restauración
-        2. 🏞️ Diseñar áreas protegidas formales
-        3. 📚 Desarrollar programas de educación ambiental
-        4. 💰 Buscar financiamiento para conservación
-        5. 🔬 Establecer estaciones de investigación
-        """)
-    
-    # Especies para programas específicos
-    st.markdown("### 🦋 Programas Específicos por Especie")
-    
-    especies_prioritarias = sorted(
-        [(nombre, datos['idoneidad_promedio']) for nombre, datos in resultados_idoneidad.items()],
-        key=lambda x: x[1],
-        reverse=True
-    )[:3]
-    
-    for especie, idoneidad in especies_prioritarias:
-        if idoneidad > 0.7:
-            st.success(f"**{especie}**: Ideal para programa de conservación in-situ")
-        elif idoneidad > 0.4:
-            st.warning(f"**{especie}**: Requiere restauración de hábitat antes de programas de conservación")
-        else:
-            st.error(f"**{especie}**: Considerar programas ex-situ o translocación")
-
-# ===============================
-# 🚀 APLICACIÓN PRINCIPAL
+# 🎨 INTERFAZ DE USUARIO COMPLETA
 # ===============================
 
 def main():
-    st.title("🌿 Sistema de Conservación de Especies UICN")
-    st.markdown("### Análisis de Nichos Ecológicos y Hábitats Prioritarios")
+    st.title("🌿 Sistema Integral de Análisis Ambiental")
+    st.markdown("### Análisis de Biodiversidad, Vegetación, Carbono y Conservación de Especies")
     
-    # Inicializar estado de sesión
+    # Inicializar sistemas
+    if 'analizador' not in st.session_state:
+        st.session_state.analizador = AnalizadorAmbientalCompleto()
+    if 'resultados_ambientales' not in st.session_state:
+        st.session_state.resultados_ambientales = None
     if 'poligono_data' not in st.session_state:
         st.session_state.poligono_data = None
-    if 'resultados_idoneidad' not in st.session_state:
-        st.session_state.resultados_idoneidad = None
-    if 'areas_prioritarias' not in st.session_state:
-        st.session_state.areas_prioritarias = None
-    if 'analizador' not in st.session_state:
-        st.session_state.analizador = AnalizadorConservacion()
     
     # Sidebar
     with st.sidebar:
@@ -1038,7 +879,6 @@ def main():
                     with tempfile.TemporaryDirectory() as tmpdir:
                         with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
                             zip_ref.extractall(tmpdir)
-                        # Buscar shapefile
                         for file in os.listdir(tmpdir):
                             if file.endswith('.shp'):
                                 gdf = gpd.read_file(os.path.join(tmpdir, file))
@@ -1057,106 +897,635 @@ def main():
             
             tipo_ecosistema = st.selectbox(
                 "Tipo de ecosistema predominante",
-                ['Bosque Tropical Húmedo', 'Bosque Seco', 'Bosque Montano', 'Sabana', 'Humeral']
+                ['Bosque Tropical Húmedo', 'Bosque Seco Tropical', 'Bosque Montano', 
+                 'Sabana Arborizada', 'Humeral']
             )
             
-            nivel_detalle = st.slider("Nivel de detalle del análisis", 3, 10, 5)
+            nivel_detalle = st.slider("Nivel de detalle (divisiones)", 3, 10, 6)
             
-            # Selección de especies
-            base_datos = BaseDatosEspeciesUICN()
-            todas_especies = list(base_datos.obtener_todas_especies().keys())
-            
-            especies_seleccionadas = st.multiselect(
-                "Seleccionar especies para análisis",
-                todas_especies,
-                default=todas_especies[:3]  # Por defecto, primeras 3 especies
-            )
-            
-            if st.button("🚀 Ejecutar Análisis de Conservación", type="primary"):
-                with st.spinner("Analizando idoneidad de hábitat..."):
-                    # Generar características ambientales
-                    areas_caracteristicas = st.session_state.analizador.generar_caracteristicas_areas(
+            if st.button("🚀 Ejecutar Análisis Ambiental Completo", type="primary"):
+                with st.spinner("Realizando análisis integral..."):
+                    resultados = st.session_state.analizador.analizar_area(
                         st.session_state.poligono_data,
                         tipo_ecosistema,
                         nivel_detalle
                     )
                     
-                    # Analizar idoneidad
-                    resultados = st.session_state.analizador.analizar_idoneidad_especies(
-                        areas_caracteristicas,
-                        especies_seleccionadas
-                    )
-                    
-                    # Identificar áreas prioritarias
-                    areas_prioritarias = st.session_state.analizador.identificar_areas_prioritarias(resultados)
-                    
-                    st.session_state.resultados_idoneidad = resultados
-                    st.session_state.areas_prioritarias = areas_prioritarias
-                    
-                    st.success("✅ Análisis completado exitosamente!")
+                    if resultados:
+                        st.session_state.resultados_ambientales = resultados
+                        st.success("✅ Análisis completado exitosamente!")
     
     # Pestañas principales
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "🗺️ Mapa del Área",
-        "📋 Base de Especies UICN", 
-        "📊 Análisis de Idoneidad",
-        "💡 Recomendaciones"
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "🗺️ Mapa del Área", 
+        "📊 Indicadores Ambientales",
+        "🌿 Análisis de Vegetación",
+        "🦋 Biodiversidad y Carbono",
+        "🎯 Conservación de Especies"
     ])
     
     with tab1:
-        if st.session_state.poligono_data is not None:
-            st.markdown("## 🗺️ Área de Estudio")
-            mapa = crear_mapa_base_simple(st.session_state.poligono_data, "Área de Análisis de Conservación")
-            folium_static(mapa, width=800, height=600)
-            
-            # Información del área
-            gdf = st.session_state.poligono_data
-            area_km2 = gdf.geometry.area.iloc[0] * 111 * 111 * math.cos(math.radians(gdf.geometry.centroid.y.iloc[0]))
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Área aproximada", f"{area_km2:.2f} km²")
-            with col2:
-                st.metric("Tipo de geometría", gdf.geometry.iloc[0].geom_type)
-            with col3:
-                bounds = gdf.total_bounds
-                st.metric("Centroide", f"{bounds[1]:.4f}°, {bounds[0]:.4f}°")
-        else:
-            st.info("👈 Carga un polígono en el panel lateral para comenzar")
+        mostrar_mapa_area()
     
     with tab2:
-        mostrar_panel_especies_uicn()
+        mostrar_indicadores_ambientales()
     
     with tab3:
-        if st.session_state.resultados_idoneidad:
-            mostrar_analisis_idoneidad(
-                st.session_state.poligono_data,
-                st.session_state.resultados_idoneidad,
-                st.session_state.areas_prioritarias
-            )
-        else:
-            st.warning("Ejecuta el análisis de conservación primero")
+        mostrar_analisis_vegetacion()
     
     with tab4:
-        if st.session_state.resultados_idoneidad:
-            mostrar_recomendaciones_conservacion(st.session_state.resultados_idoneidad)
-        else:
-            st.warning("Ejecuta el análisis de conservación primero")
+        mostrar_biodiversidad_carbono()
     
-    # Información adicional
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("""
-    ### 📚 Acerca de este sistema
+    with tab5:
+        mostrar_conservacion_especies()
+
+def mostrar_mapa_area():
+    """Mostrar mapa del área con zoom automático"""
+    st.markdown("## 🗺️ Visualización del Área de Estudio")
     
-    Este sistema utiliza:
+    if st.session_state.poligono_data is not None:
+        # Selector de capa base
+        col1, col2 = st.columns([3, 1])
+        
+        with col2:
+            capa_base = st.selectbox(
+                "Capa base del mapa",
+                ["Satélite", "Topográfico", "OSM"],
+                index=0
+            )
+        
+        with col1:
+            # Crear y mostrar mapa
+            mapa = st.session_state.analizador.sistema_mapas.crear_mapa_base(
+                st.session_state.poligono_data,
+                "Área de Análisis Ambiental",
+                capa_base
+            )
+            folium_static(mapa, width=800, height=600)
+        
+        # Información del área
+        if st.session_state.resultados_ambientales:
+            resumen = st.session_state.resultados_ambientales['resumen']
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Área total", f"{resumen['area_total_ha']:,.1f} ha")
+            with col2:
+                st.metric("Celdas analizadas", resumen['total_areas'])
+            with col3:
+                st.metric("Estado general", resumen['estado_general'])
+            with col4:
+                st.metric("Tipo de ecosistema", 
+                         st.session_state.resultados_ambientales['tipo_ecosistema'])
+    else:
+        st.info("👈 Carga un polígono en el panel lateral para comenzar")
+
+def mostrar_indicadores_ambientales():
+    """Mostrar todos los indicadores ambientales"""
+    st.markdown("## 📊 Indicadores Ambientales por Celda")
     
-    • **Listas UICN**: Categorías de amenaza
-    • **Nichos ecológicos**: Requerimientos específicos por especie
-    • **Análisis espacial**: Evaluación de idoneidad de hábitat
-    • **Priorización**: Identificación de áreas críticas
+    if st.session_state.resultados_ambientales is None:
+        st.warning("Ejecuta el análisis ambiental primero")
+        return
     
-    Desarrollado para la conservación de biodiversidad en América del Sur.
-    """)
+    resultados = st.session_state.resultados_ambientales
+    
+    # KPIs principales
+    resumen = resultados['resumen']
+    
+    st.markdown("### 📈 Resumen General")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("NDVI Promedio", f"{resumen['ndvi_promedio']:.3f}")
+    with col2:
+        st.metric("Índice Shannon", f"{resumen['shannon_promedio']:.3f}")
+    with col3:
+        st.metric("Carbono Total CO₂", f"{resumen['carbono_total_co2']:,.0f} ton")
+    with col4:
+        st.metric("Estado General", resumen['estado_general'])
+    
+    # Tabla de datos
+    st.markdown("### 📋 Datos por Celda")
+    
+    # Preparar datos para tabla
+    datos_tabla = []
+    for area in resultados['areas']:
+        datos_tabla.append({
+            'Celda': area['area'],
+            'Área (ha)': area['area_ha'],
+            'NDVI': area['indices_vegetacion']['ndvi'],
+            'SAVI': area['indices_vegetacion']['savi'],
+            'EVI': area['indices_vegetacion']['evi'],
+            'Shannon': area['indice_shannon'],
+            'Carbono (ton/ha)': area['carbono']['carbono_ton_ha'],
+            'CO₂ Total': area['carbono']['co2_total'],
+            'Temp. (°C)': area['temperatura'],
+            'Precip. (mm)': area['precipitacion']
+        })
+    
+    df = pd.DataFrame(datos_tabla)
+    st.dataframe(df, use_container_width=True)
+    
+    # Descarga de datos
+    st.markdown("### 📥 Exportar Datos")
+    
+    if st.button("⬇️ Descargar Datos Completos como CSV"):
+        csv = df.to_csv(index=False)
+        b64 = base64.b64encode(csv.encode()).decode()
+        href = f'<a href="data:file/csv;base64,{b64}" download="datos_ambientales.csv">Descargar CSV</a>'
+        st.markdown(href, unsafe_allow_html=True)
+
+def mostrar_analisis_vegetacion():
+    """Mostrar análisis detallado de vegetación"""
+    st.markdown("## 🌿 Análisis Detallado de Vegetación")
+    
+    if st.session_state.resultados_ambientales is None:
+        st.warning("Ejecuta el análisis ambiental primero")
+        return
+    
+    resultados = st.session_state.resultados_ambientales
+    
+    # Selector de índice de vegetación
+    indices_opciones = {
+        'NDVI': 'ndvi',
+        'SAVI': 'savi', 
+        'MNDVI': 'mndvi',
+        'EVI': 'evi',
+        'NDWI': 'ndwi'
+    }
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col2:
+        indice_seleccionado = st.selectbox(
+            "Seleccionar índice para visualizar",
+            list(indices_opciones.keys())
+        )
+        
+        # Configuración para el mapa
+        config_mapa = {
+            'titulo': f'Índice {indice_seleccionado}',
+            'columna': indices_opciones[indice_seleccionado],
+            'colores': {
+                (0, 0.2): '#8B0000',
+                (0.2, 0.4): '#FF4500',
+                (0.4, 0.6): '#FFD700',
+                (0.6, 0.8): '#32CD32',
+                (0.8, 1.0): '#006400'
+            }
+        }
+    
+    with col1:
+        # Preparar datos para el mapa
+        datos_mapa = []
+        for area in resultados['areas']:
+            datos_mapa.append({
+                'area': area['area'],
+                'geometry': area['geometry'],
+                indices_opciones[indice_seleccionado]: area['indices_vegetacion'][indices_opciones[indice_seleccionado]]
+            })
+        
+        # Crear y mostrar mapa
+        mapa = st.session_state.analizador.sistema_mapas.crear_mapa_indicador(
+            st.session_state.poligono_data,
+            datos_mapa,
+            config_mapa
+        )
+        folium_static(mapa, width=800, height=500)
+    
+    # Gráficos de distribución
+    st.markdown("### 📈 Distribución de Índices de Vegetación")
+    
+    # Preparar datos para gráficos
+    indices_data = []
+    for area in resultados['areas']:
+        for idx_nombre, idx_valor in area['indices_vegetacion'].items():
+            indices_data.append({
+                'Índice': idx_nombre.upper(),
+                'Valor': idx_valor,
+                'Celda': area['area']
+            })
+    
+    df_indices = pd.DataFrame(indices_data)
+    
+    # Box plot
+    fig = px.box(
+        df_indices, 
+        x='Índice', 
+        y='Valor',
+        title='Distribución de Índices de Vegetación',
+        color='Índice',
+        color_discrete_sequence=px.colors.qualitative.Set3
+    )
+    
+    fig.update_layout(height=400)
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Correlación entre índices
+    st.markdown("### 🔗 Correlación entre Índices")
+    
+    # Crear matriz de correlación
+    correlacion_data = []
+    for area in resultados['areas']:
+        correlacion_data.append(area['indices_vegetacion'])
+    
+    df_corr = pd.DataFrame(correlacion_data)
+    corr_matrix = df_corr.corr()
+    
+    fig = go.Figure(data=go.Heatmap(
+        z=corr_matrix.values,
+        x=corr_matrix.columns,
+        y=corr_matrix.columns,
+        colorscale='RdBu',
+        zmin=-1, zmax=1,
+        text=np.round(corr_matrix.values, 2),
+        texttemplate='%{text}',
+        textfont={"size": 10}
+    ))
+    
+    fig.update_layout(
+        title='Matriz de Correlación entre Índices',
+        height=400
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+def mostrar_biodiversidad_carbono():
+    """Mostrar análisis de biodiversidad y carbono"""
+    st.markdown("## 🦋 Análisis de Biodiversidad y Captura de Carbono")
+    
+    if st.session_state.resultados_ambientales is None:
+        st.warning("Ejecuta el análisis ambiental primero")
+        return
+    
+    resultados = st.session_state.resultados_ambientales
+    
+    # Dos columnas para métricas
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### 🌿 Índice de Shannon (Biodiversidad)")
+        
+        # Preparar datos para mapa de biodiversidad
+        datos_shannon = []
+        for area in resultados['areas']:
+            datos_shannon.append({
+                'area': area['area'],
+                'geometry': area['geometry'],
+                'shannon': area['indice_shannon']
+            })
+        
+        # Configuración del mapa
+        config_shannon = {
+            'titulo': 'Índice de Shannon (Biodiversidad)',
+            'columna': 'shannon',
+            'colores': {
+                (0, 1.0): '#8B0000',
+                (1.0, 2.0): '#FF4500',
+                (2.0, 2.5): '#FFD700',
+                (2.5, 3.0): '#32CD32',
+                (3.0, 4.0): '#006400'
+            }
+        }
+        
+        # Crear y mostrar mapa
+        mapa_shannon = st.session_state.analizador.sistema_mapas.crear_mapa_indicador(
+            st.session_state.poligono_data,
+            datos_shannon,
+            config_shannon
+        )
+        folium_static(mapa_shannon, width=400, height=400)
+        
+        # Estadísticas de biodiversidad
+        shannon_values = [area['indice_shannon'] for area in resultados['areas']]
+        
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            st.metric("Promedio", f"{np.mean(shannon_values):.2f}")
+        with col_b:
+            st.metric("Máximo", f"{np.max(shannon_values):.2f}")
+        with col_c:
+            st.metric("Mínimo", f"{np.min(shannon_values):.2f}")
+    
+    with col2:
+        st.markdown("### 🌳 Captura de Carbono")
+        
+        # Preparar datos para mapa de carbono
+        datos_carbono = []
+        for area in resultados['areas']:
+            datos_carbono.append({
+                'area': area['area'],
+                'geometry': area['geometry'],
+                'carbono_ha': area['carbono']['carbono_ton_ha']
+            })
+        
+        # Configuración del mapa
+        config_carbono = {
+            'titulo': 'Carbono Almacenado (ton/ha)',
+            'columna': 'carbono_ha',
+            'colores': {
+                (0, 50): '#FFFACD',
+                (50, 100): '#C2E699',
+                (100, 150): '#78C679',
+                (150, 200): '#238443',
+                (200, 300): '#00441B'
+            }
+        }
+        
+        # Crear y mostrar mapa
+        mapa_carbono = st.session_state.analizador.sistema_mapas.crear_mapa_indicador(
+            st.session_state.poligono_data,
+            datos_carbono,
+            config_carbono
+        )
+        folium_static(mapa_carbono, width=400, height=400)
+        
+        # Estadísticas de carbono
+        carbono_total = sum(area['carbono']['co2_total'] for area in resultados['areas'])
+        carbono_promedio = np.mean([area['carbono']['carbono_ton_ha'] for area in resultados['areas']])
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("CO₂ Total", f"{carbono_total:,.0f} ton")
+        with col_b:
+            st.metric("Promedio/ha", f"{carbono_promedio:.1f} ton")
+    
+    # Relación entre biodiversidad y carbono
+    st.markdown("### 🔄 Relación Biodiversidad-Carbono")
+    
+    # Preparar datos para gráfico de dispersión
+    dispersion_data = []
+    for area in resultados['areas']:
+        dispersion_data.append({
+            'Carbono (ton/ha)': area['carbono']['carbono_ton_ha'],
+            'Biodiversidad (Shannon)': area['indice_shannon'],
+            'NDVI': area['indices_vegetacion']['ndvi'],
+            'Área (ha)': area['area_ha'],
+            'Celda': area['area']
+        })
+    
+    df_dispersion = pd.DataFrame(dispersion_data)
+    
+    # Gráfico de dispersión
+    fig = px.scatter(
+        df_dispersion,
+        x='Carbono (ton/ha)',
+        y='Biodiversidad (Shannon)',
+        size='Área (ha)',
+        color='NDVI',
+        hover_name='Celda',
+        title='Relación entre Carbono y Biodiversidad',
+        color_continuous_scale='viridis'
+    )
+    
+    fig.update_layout(height=500)
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Análisis de potencial
+    st.markdown("### 📊 Potencial de Conservación")
+    
+    # Calcular potencial combinado
+    potencial_data = []
+    for area in resultados['areas']:
+        # Normalizar valores (0-1)
+        ndvi_norm = area['indices_vegetacion']['ndvi']
+        shannon_norm = area['indice_shannon'] / 4.0  # Máximo teórico 4.0
+        carbono_norm = min(1.0, area['carbono']['carbono_ton_ha'] / 300)  # Máximo 300 ton/ha
+        
+        # Potencial combinado (promedio ponderado)
+        potencial = (ndvi_norm * 0.3 + shannon_norm * 0.4 + carbono_norm * 0.3)
+        
+        potencial_data.append({
+            'Celda': area['area'],
+            'Potencial': round(potencial, 3),
+            'Categoría': 'Alto' if potencial > 0.7 else 'Medio' if potencial > 0.4 else 'Bajo',
+            'NDVI': ndvi_norm,
+            'Shannon': shannon_norm,
+            'Carbono': carbono_norm
+        })
+    
+    df_potencial = pd.DataFrame(potencial_data)
+    df_potencial = df_potencial.sort_values('Potencial', ascending=False)
+    
+    # Mostrar ranking
+    st.markdown("#### 🏆 Ranking de Celdas por Potencial de Conservación")
+    st.dataframe(df_potencial.head(10), use_container_width=True)
+
+def mostrar_conservacion_especies():
+    """Mostrar análisis de conservación de especies UICN"""
+    st.markdown("## 🎯 Análisis de Conservación de Especies UICN")
+    
+    if st.session_state.resultados_ambientales is None:
+        st.warning("Ejecuta el análisis ambiental primero")
+        return
+    
+    resultados = st.session_state.resultados_ambientales
+    base_especies = BaseDatosEspeciesUICN()
+    todas_especies = base_especies.obtener_todas_especies()
+    
+    # Selección de especies
+    st.markdown("### 🦋 Selección de Especies para Análisis")
+    
+    especies_lista = list(todas_especies.keys())
+    especies_seleccionadas = st.multiselect(
+        "Selecciona las especies a analizar",
+        especies_lista,
+        default=especies_lista[:3]
+    )
+    
+    if not especies_seleccionadas:
+        st.info("Selecciona al menos una especie para analizar")
+        return
+    
+    # Calcular idoneidad para cada especie
+    st.markdown("### 📊 Idoneidad de Hábitat por Especie")
+    
+    resultados_idoneidad = {}
+    
+    for especie in especies_seleccionadas:
+        idoneidades = []
+        
+        for area in resultados['areas']:
+            # Preparar características del área
+            caracteristicas = {
+                'temperatura_promedio': area['temperatura'],
+                'precipitacion_anual': area['precipitacion'],
+                'ndvi': area['indices_vegetacion']['ndvi'],
+                'presion_antropica': area['presion_antropica'],
+                'humedad_suelo': area['humedad_suelo']
+            }
+            
+            idoneidad = base_especies.calcular_idoneidad_habitat(caracteristicas, especie)
+            idoneidades.append(idoneidad)
+        
+        resultados_idoneidad[especie] = {
+            'idoneidad_promedio': np.mean(idoneidades) if idoneidades else 0,
+            'idoneidad_max': np.max(idoneidades) if idoneidades else 0,
+            'idoneidad_min': np.min(idoneidades) if idoneidades else 0,
+            'areas_optimas': len([i for i in idoneidades if i > 0.7]),
+            'areas_moderadas': len([i for i in idoneidades if 0.4 <= i <= 0.7]),
+            'areas_pobres': len([i for i in idoneidades if i < 0.4])
+        }
+    
+    # Mostrar resultados
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 📈 Resumen por Especie")
+        
+        for especie, datos in resultados_idoneidad.items():
+            with st.expander(f"{especie} - {datos['idoneidad_promedio']:.2%}"):
+                st.write(f"**Categoría UICN:** {todas_especies[especie]['categoria_uicn']}")
+                st.write(f"**Idoneidad promedio:** {datos['idoneidad_promedio']:.2%}")
+                st.write(f"**Áreas óptimas:** {datos['areas_optimas']}")
+                st.write(f"**Áreas moderadas:** {datos['areas_moderadas']}")
+                st.write(f"**Áreas pobres:** {datos['areas_pobres']}")
+                
+                # Recomendación basada en idoneidad
+                if datos['idoneidad_promedio'] > 0.7:
+                    st.success("✅ Hábitat óptimo - Ideal para conservación in-situ")
+                elif datos['idoneidad_promedio'] > 0.4:
+                    st.warning("⚠️ Hábitat moderado - Considerar restauración")
+                else:
+                    st.error("❌ Hábitat pobre - Evaluar translocación")
+    
+    with col2:
+        st.markdown("#### 📊 Comparativa de Idoneidad")
+        
+        # Preparar datos para gráfico
+        comparacion_data = []
+        for especie, datos in resultados_idoneidad.items():
+            comparacion_data.append({
+                'Especie': especie,
+                'Idoneidad': datos['idoneidad_promedio'],
+                'Categoría': todas_especies[especie]['categoria_uicn'],
+                'Áreas Óptimas': datos['areas_optimas']
+            })
+        
+        df_comparacion = pd.DataFrame(comparacion_data)
+        
+        # Gráfico de barras
+        fig = px.bar(
+            df_comparacion,
+            x='Especie',
+            y='Idoneidad',
+            color='Categoría',
+            title='Idoneidad de Hábitat por Especie',
+            text='Idoneidad',
+            color_discrete_sequence=px.colors.qualitative.Set3
+        )
+        
+        fig.update_traces(texttemplate='%{text:.2%}', textposition='outside')
+        fig.update_layout(height=400)
+        
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Áreas prioritarias para conservación
+    st.markdown("### 🎯 Áreas Prioritarias para Conservación")
+    
+    # Calcular prioridad por celda basada en múltiples especies
+    prioridad_celdas = {}
+    
+    for i, area in enumerate(resultados['areas']):
+        prioridad_total = 0
+        especies_presentes = 0
+        
+        for especie in especies_seleccionadas:
+            # Obtener idoneidad para esta especie en esta celda
+            caracteristicas = {
+                'temperatura_promedio': area['temperatura'],
+                'precipitacion_anual': area['precipitacion'],
+                'ndvi': area['indices_vegetacion']['ndvi'],
+                'presion_antropica': area['presion_antropica'],
+                'humedad_suelo': area['humedad_suelo']
+            }
+            
+            idoneidad = base_especies.calcular_idoneidad_habitat(caracteristicas, especie)
+            prioridad_especie = todas_especies[especie]['prioridad_conservacion']
+            
+            prioridad_total += idoneidad * prioridad_especie
+            especies_presentes += 1
+        
+        if especies_presentes > 0:
+            prioridad_promedio = prioridad_total / especies_presentes
+            prioridad_celdas[area['area']] = {
+                'prioridad': prioridad_promedio,
+                'especies': especies_presentes,
+                'categoria': 'Alta' if prioridad_promedio > 0.7 else 'Media' if prioridad_promedio > 0.4 else 'Baja'
+            }
+    
+    # Mostrar ranking de áreas prioritarias
+    if prioridad_celdas:
+        df_prioridad = pd.DataFrame.from_dict(prioridad_celdas, orient='index')
+        df_prioridad = df_prioridad.sort_values('prioridad', ascending=False)
+        df_prioridad['Prioridad %'] = df_prioridad['prioridad'].apply(lambda x: f"{x:.2%}")
+        
+        st.markdown("#### 🏆 Top 10 Áreas Prioritarias")
+        st.dataframe(
+            df_prioridad[['Prioridad %', 'categoria', 'especies']].head(10),
+            use_container_width=True
+        )
+        
+        # Mapa de prioridades
+        st.markdown("#### 🗺️ Mapa de Prioridades de Conservación")
+        
+        # Preparar datos para mapa
+        datos_prioridad = []
+        for area in resultados['areas']:
+            if area['area'] in prioridad_celdas:
+                datos_prioridad.append({
+                    'area': area['area'],
+                    'geometry': area['geometry'],
+                    'prioridad': prioridad_celdas[area['area']]['prioridad']
+                })
+        
+        config_prioridad = {
+            'titulo': 'Prioridad de Conservación',
+            'columna': 'prioridad',
+            'colores': {
+                (0, 0.4): '#FF0000',
+                (0.4, 0.7): '#FFA500',
+                (0.7, 1.0): '#00FF00'
+            }
+        }
+        
+        mapa_prioridad = st.session_state.analizador.sistema_mapas.crear_mapa_indicador(
+            st.session_state.poligono_data,
+            datos_prioridad,
+            config_prioridad
+        )
+        
+        folium_static(mapa_prioridad, width=800, height=500)
+    
+    # Recomendaciones finales
+    st.markdown("### 💡 Recomendaciones de Conservación")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**Acciones Inmediatas:**")
+        st.markdown("""
+        1. 🛡️ Establecer vigilancia en áreas de alta prioridad
+        2. 📊 Monitorear especies clave regularmente
+        3. 🌿 Proteger corredores entre áreas óptimas
+        4. 🤝 Involucrar a comunidades locales
+        5. 📚 Educación ambiental en áreas adyacentes
+        """)
+    
+    with col2:
+        st.markdown("**Acciones a Largo Plazo:**")
+        st.markdown("""
+        1. 🏞️ Crear reservas naturales formales
+        2. 🌳 Programas de restauración ecológica
+        3. 🔬 Investigación científica continua
+        4. 💰 Buscar financiamiento internacional
+        5. 📈 Sistema de monitoreo permanente
+        """)
+
+# ===============================
+# 🚀 EJECUCIÓN PRINCIPAL
+# ===============================
 
 if __name__ == "__main__":
     main()
