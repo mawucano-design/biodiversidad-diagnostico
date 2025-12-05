@@ -990,7 +990,7 @@ def main():
                     st.error(f"Error: {str(e)}")
         
         # Configuración del análisis
-        if st.session_state.poligono_data is not None:
+        if st.session_state.poligono_data is not None and not st.session_state.poligono_data.empty:
             st.markdown("---")
             st.subheader("🛰️ Configuración Satelital")
             
@@ -1151,7 +1151,12 @@ def mostrar_dashboard_ejecutivo():
         # Mapa de calor de NDVI
         st.markdown("### 🗺️ Mapa de Calor - NDVI")
         
-        if st.session_state.poligono_data and st.session_state.resultados['areas']:
+        # CORRECCIÓN: Verificar explícitamente si poligono_data no es None y si hay áreas
+        if (st.session_state.poligono_data is not None and 
+            st.session_state.resultados and 
+            'areas' in st.session_state.resultados and 
+            len(st.session_state.resultados['areas']) > 0):
+            
             # Preparar datos para el mapa
             datos_areas = st.session_state.resultados['areas']
             
@@ -1228,7 +1233,7 @@ def mostrar_indices_vegetacion():
     
     with col1:
         # Mapa del índice seleccionado
-        if st.session_state.poligono_data:
+        if st.session_state.poligono_data is not None:
             mapa_indice = st.session_state.sistema_analisis.sistema_mapas.crear_mapa_indices(
                 st.session_state.poligono_data,
                 areas,
