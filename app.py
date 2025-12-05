@@ -806,7 +806,7 @@ class SistemaAnalisisAmbiental:
                 for j in range(n_divisiones):
                     xmin = bounds[0] + (i * (bounds[2]-bounds[0])/n_divisiones)
                     xmax = xmin + (bounds[2]-bounds[0])/n_divisiones
-                    ymin = bounds[1] + (j * (bounds[3]-bounds[1])/n_divisiones
+                    ymin = bounds[1] + (j * (bounds[3]-bounds[1])/n_divisiones)
                     ymax = ymin + (bounds[3]-bounds[1])/n_divisiones
                     
                     celda = Polygon([
