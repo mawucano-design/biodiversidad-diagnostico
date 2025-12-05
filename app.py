@@ -544,7 +544,7 @@ def crear_grafico_radial_bar(datos_combinados, categorias):
 
 def crear_grafico_ridge(datos, columna_valor, columna_grupo, titulo):
     """Crear gráfico Ridge (joyplot) para distribución de valores"""
-    if not datos:
+    if not datos or len(datos) == 0:
         return go.Figure()
     
     try:
@@ -559,14 +559,16 @@ def crear_grafico_ridge(datos, columna_valor, columna_grupo, titulo):
             valores = df[df[columna_grupo] == grupo][columna_valor]
             
             if len(valores) > 0:
+                # Usar índice entero para seleccionar color
+                color_idx = int(i % len(px.colors.sequential.Viridis))
                 fig.add_trace(go.Violin(
                     x=valores,
-                    y0=grupo,
-                    name=grupo,
+                    y0=str(grupo),  # Asegurar que sea string
+                    name=str(grupo),
                     orientation='h',
                     side='positive',
-                    line_color=px.colors.sequential.Viridis[i / len(grupos)],
-                    fillcolor=px.colors.sequential.Viridis[i / len(grupos)],
+                    line_color=px.colors.sequential.Viridis[color_idx],
+                    fillcolor=px.colors.sequential.Viridis[color_idx],
                     opacity=0.7,
                     meanline_visible=True,
                     meanline_color='white',
@@ -1263,9 +1265,9 @@ class AnalizadorBiodiversidad:
             presion_vals = [r['presion_total'] for r in resultados_presiones]
             
             # Calcular estado general
-            promedio_ndvi = np.mean(ndvi_vals)
-            promedio_conectividad = np.mean(conect_vals)
-            promedio_presion = np.mean(presion_vals)
+            promedio_ndvi = np.mean(ndvi_vals) if ndvi_vals else 0
+            promedio_conectividad = np.mean(conect_vals) if conect_vals else 0
+            promedio_presion = np.mean(presion_vals) if presion_vals else 0
             
             if promedio_ndvi >= 0.7 and promedio_presion <= 0.3:
                 estado_general = "Excelente"
@@ -1278,10 +1280,10 @@ class AnalizadorBiodiversidad:
             
             summary_metrics = {
                 'estado_general': estado_general,
-                'carbono_total_co2_ton': round(sum(co2_vals), 2),
-                'indice_biodiversidad_promedio': round(np.mean(shannon_vals), 3),
-                'disponibilidad_agua_promedio': round(np.mean(agua_vals), 3),
-                'salud_suelo_promedio': round(np.mean(suelo_vals), 3),
+                'carbono_total_co2_ton': round(sum(co2_vals) if co2_vals else 0, 2),
+                'indice_biodiversidad_promedio': round(np.mean(shannon_vals) if shannon_vals else 0, 3),
+                'disponibilidad_agua_promedio': round(np.mean(agua_vals) if agua_vals else 0, 3),
+                'salud_suelo_promedio': round(np.mean(suelo_vals) if suelo_vals else 0, 3),
                 'conectividad_promedio': round(promedio_conectividad, 3),
                 'presion_antropica_promedio': round(promedio_presion, 3),
                 'areas_analizadas': len(areas_analisis),
@@ -1314,7 +1316,7 @@ class AnalizadorBiodiversidad:
             return None
 
 # ===============================
-# 📁 MANEJO DE ARCHIVOS Y DESCARGAS (MANTENIDO IGUAL)
+# 📁 MANEJO DE ARCHIVOS Y DESCARGAS CORREGIDO
 # ===============================
 def generar_geojson_indicador(datos, nombre_indicador):
     """Generar GeoJSON para un indicador específico"""
@@ -1337,34 +1339,50 @@ def generar_geojson_indicador(datos, nombre_indicador):
         return None
 
 def generar_geojson_completo(resultados):
-    """Generar un GeoJSON completo con todos los indicadores"""
+    """Generar un GeoJSON completo con todos los indicadores - CORREGIDO"""
     try:
         todos_datos = []
+        # Asumimos que todos los arrays tienen la misma longitud
         for i in range(len(resultados['resultados']['vegetacion'])):
-            area_id = resultados['resultados']['vegetacion'][i]['area']
-            geometry = None
-            for area in resultados['areas_analisis']:
-                if area['id'] == area_id:
-                    geometry = area['geometry']
-                    break
+            # Crear diccionario con todos los datos
+            area_data = {
+                'area': resultados['resultados']['vegetacion'][i]['area'],
+                'geometry': resultados['resultados']['vegetacion'][i]['geometry'],
+                'ndvi': resultados['resultados']['vegetacion'][i]['ndvi'],
+                'salud_vegetacion': resultados['resultados']['vegetacion'][i]['salud_vegetacion'],
+                'area_ha': resultados['resultados']['vegetacion'][i]['area_ha']
+            }
             
-            if geometry:
-                area_data = {
-                    'area': area_id,
-                    'geometry': geometry,
-                    'ndvi': resultados['resultados']['vegetacion'][i]['ndvi'],
-                    'salud_vegetacion': resultados['resultados']['vegetacion'][i]['salud_vegetacion'],
-                    'co2_total_ton': resultados['resultados']['carbono'][i]['co2_total_ton'],
-                    'indice_shannon': resultados['resultados']['biodiversidad'][i]['indice_shannon'],
-                    'disponibilidad_agua': resultados['resultados']['agua'][i]['disponibilidad_agua'],
-                    'salud_suelo': resultados['resultados']['suelo'][i]['salud_suelo'],
-                    'conectividad_total': resultados['resultados']['conectividad'][i]['conectividad_total'],
-                    'presion_total': resultados['resultados']['presiones'][i]['presion_total']
-                }
-                todos_datos.append(area_data)
+            # Agregar carbono si existe
+            if i < len(resultados['resultados']['carbono']):
+                area_data['co2_total_ton'] = resultados['resultados']['carbono'][i]['co2_total_ton']
+                area_data['carbono_ton_ha'] = resultados['resultados']['carbono'][i]['carbono_ton_ha']
+            
+            # Agregar biodiversidad si existe
+            if i < len(resultados['resultados']['biodiversidad']):
+                area_data['indice_shannon'] = resultados['resultados']['biodiversidad'][i]['indice_shannon']
+                area_data['estado_biodiversidad'] = resultados['resultados']['biodiversidad'][i]['estado_biodiversidad']
+            
+            # Agregar agua si existe
+            if i < len(resultados['resultados']['agua']):
+                area_data['disponibilidad_agua'] = resultados['resultados']['agua'][i]['disponibilidad_agua']
+            
+            # Agregar suelo si existe
+            if i < len(resultados['resultados']['suelo']):
+                area_data['salud_suelo'] = resultados['resultados']['suelo'][i]['salud_suelo']
+            
+            # Agregar conectividad si existe
+            if i < len(resultados['resultados']['conectividad']):
+                area_data['conectividad_total'] = resultados['resultados']['conectividad'][i]['conectividad_total']
+            
+            # Agregar presiones si existe
+            if i < len(resultados['resultados']['presiones']):
+                area_data['presion_total'] = resultados['resultados']['presiones'][i]['presion_total']
+            
+            todos_datos.append(area_data)
         
-        gdf = gpd.GeoDataFrame(todos_datos, geometry='geometry')
-        gdf.crs = "EPSG:4326"
+        # Crear GeoDataFrame
+        gdf = gpd.GeoDataFrame(todos_datos, geometry='geometry', crs="EPSG:4326")
         geojson_str = gdf.to_json()
         return geojson_str
     except Exception as e:
@@ -1547,7 +1565,7 @@ def sidebar_config():
         return uploaded_file, vegetation_type, divisiones
 
 # ===============================
-# 🎯 APLICACIÓN PRINCIPAL MEJORADA
+# 🎯 APLICACIÓN PRINCIPAL MEJORADA Y CORREGIDA
 # ===============================
 def main():
     aplicar_estilos_globales()
@@ -1757,7 +1775,7 @@ def main():
         ]
         
         # MAPAS POR INDICADOR CON ZOOM AUTOMÁTICO
-        for config in indicadores_config:
+        for idx, config in enumerate(indicadores_config):
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.subheader(config['titulo'])
             st.markdown(f"*{config['descripcion']}*")
@@ -1769,7 +1787,7 @@ def main():
                 resultados['resultados'][config['key']],
                 config
             )
-            st_folium(mapa, width=900, height=500, key=f"map_{config['key']}")
+            st_folium(mapa, width=900, height=500, key=f"map_{config['key']}_{idx}")
             st.markdown('</div>', unsafe_allow_html=True)
             
             # Visualizaciones avanzadas
@@ -1783,7 +1801,8 @@ def main():
                         'area',
                         f"Distribución de {config['titulo']}"
                     ),
-                    use_container_width=True
+                    use_container_width=True,
+                    key=f"ridge_{config['key']}_{idx}"
                 )
             with col_viz2:
                 # Gráfico de violín mejorado
@@ -1793,7 +1812,8 @@ def main():
                         config['columna'],
                         f"Distribución de {config['titulo']}"
                     ),
-                    use_container_width=True
+                    use_container_width=True,
+                    key=f"violin_{config['key']}_{idx}"
                 )
             st.markdown('</div>', unsafe_allow_html=True)
         
@@ -1820,7 +1840,8 @@ def main():
         st.subheader("📊 Dashboard Integrado")
         st.plotly_chart(
             crear_dashboard_indicadores(datos_combinados),
-            use_container_width=True
+            use_container_width=True,
+            key="dashboard"
         )
         
         # GRÁFICOS DE RELACIÓN
@@ -1837,7 +1858,8 @@ def main():
             }
             st.plotly_chart(
                 crear_grafico_radial_bar(datos_combinados, categorias_radar),
-                use_container_width=True
+                use_container_width=True,
+                key="radial_bar"
             )
         with col_rel2:
             # Gráfico de burbujas
@@ -1850,7 +1872,8 @@ def main():
             }
             st.plotly_chart(
                 crear_grafico_bubble_chart(datos_combinados, ejes_burbuja),
-                use_container_width=True
+                use_container_width=True,
+                key="bubble_chart"
             )
         
         # GRÁFICO 3D MEJORADO
@@ -1866,7 +1889,8 @@ def main():
         st.plotly_chart(
             crear_grafico_3d_scatter_mejorado(datos_combinados, ejes_3d),
             use_container_width=True,
-            height=600
+            height=600,
+            key="3d_scatter"
         )
         
         # CORRELACIONES Y CATEGORÍAS PARALELAS
@@ -1883,7 +1907,8 @@ def main():
             }
             st.plotly_chart(
                 crear_grafico_heatmap_correlacion(datos_combinados, indicadores_corr),
-                use_container_width=True
+                use_container_width=True,
+                key="heatmap"
             )
         with col_corr2:
             # Categorías paralelas
@@ -1893,7 +1918,8 @@ def main():
                     ['ndvi', 'indice_shannon', 'co2_total_ton'],
                     "Relaciones Categóricas entre Indicadores"
                 ),
-                use_container_width=True
+                use_container_width=True,
+                key="parallel_categories"
             )
         
         st.markdown('</div>', unsafe_allow_html=True)
@@ -1944,7 +1970,7 @@ def main():
 
 def crear_grafico_violin_mejorado(datos, columna_valor, titulo):
     """Gráfico de violín mejorado con más opciones"""
-    if not datos:
+    if not datos or len(datos) == 0:
         return go.Figure()
     
     try:
@@ -1970,9 +1996,9 @@ def crear_grafico_violin_mejorado(datos, columna_valor, titulo):
         ))
         
         # Agregar estadísticas
-        media = df[columna_valor].mean()
-        mediana = df[columna_valor].median()
-        std = df[columna_valor].std()
+        media = df[columna_valor].mean() if not df.empty else 0
+        mediana = df[columna_valor].median() if not df.empty else 0
+        std = df[columna_valor].std() if not df.empty else 0
         
         fig.add_annotation(
             x=0.5, y=1.05,
