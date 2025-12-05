@@ -719,6 +719,56 @@ def crear_grafico_bubble_chart(datos_combinados, ejes_config):
         st.error(f"Error creando gráfico de burbujas: {str(e)}")
         return go.Figure()
 
+def crear_grafico_3d_scatter(datos_combinados, ejes_config):
+    """Crear gráfico 3D scatter básico"""
+    if not datos_combinados:
+        return go.Figure()
+    
+    try:
+        df = pd.DataFrame(datos_combinados)
+        
+        # Verificar columnas requeridas
+        required_cols = ['x', 'y', 'z']
+        available_cols = {}
+        
+        for col in required_cols:
+            if col in ejes_config and ejes_config[col] in df.columns:
+                available_cols[col] = ejes_config[col]
+        
+        if len(available_cols) >= 3:
+            fig = go.Figure(data=[go.Scatter3d(
+                x=df[available_cols['x']],
+                y=df[available_cols['y']],
+                z=df[available_cols['z']],
+                mode='markers',
+                marker=dict(
+                    size=8,
+                    color=df.get(ejes_config.get('color', available_cols['x']), df[available_cols['x']]),
+                    colorscale='Viridis',
+                    opacity=0.8
+                ),
+                text=df['area'],
+                hoverinfo='text+x+y+z'
+            )])
+            
+            fig.update_layout(
+                title=ejes_config.get('titulo', 'Gráfico 3D'),
+                scene=dict(
+                    xaxis_title=available_cols.get('x'),
+                    yaxis_title=available_cols.get('y'),
+                    zaxis_title=available_cols.get('z')
+                ),
+                height=500
+            )
+            
+            return fig
+        else:
+            return go.Figure()
+            
+    except Exception as e:
+        st.error(f"Error creando gráfico 3D: {str(e)}")
+        return go.Figure()
+
 def crear_grafico_3d_scatter_mejorado(datos_combinados, ejes_config):
     """Crear gráfico 3D scatter mejorado"""
     if not datos_combinados:
@@ -907,7 +957,7 @@ def crear_dashboard_indicadores(datos_combinados):
         return go.Figure()
 
 # ===============================
-# 🧩 CLASE PRINCIPAL DE ANÁLISIS (MANTENIDA IGUAL)
+# 🧩 CLASE PRINCIPAL DE ANÁLISIS (COMPLETA)
 # ===============================
 class AnalizadorBiodiversidad:
     """Analizador integral de biodiversidad para el polígono cargado"""
@@ -970,10 +1020,6 @@ class AnalizadorBiodiversidad:
             }
         }
     
-    # ... (mantener todos los métodos anteriores igual) ...
-    # [El resto de la clase AnalizadorBiodiversidad se mantiene igual]
-    # Solo se muestran los primeros métodos como ejemplo
-
     def _calcular_area_hectareas(self, poligono):
         """Calcular área en hectáreas de forma precisa usando proyección UTM"""
         try:
@@ -997,7 +1043,275 @@ class AnalizadorBiodiversidad:
         hemisferio = 'north' if lat >= 0 else 'south'
         return f"EPSG:326{zona:02d}" if hemisferio == 'north' else f"EPSG:327{zona:02d}"
     
-    # ... [El resto de los métodos de la clase se mantienen igual] ...
+    def _calcular_area_aproximada(self, poligono):
+        """Cálculo aproximado del área en hectáreas"""
+        try:
+            area_grados = poligono.area
+            # Aproximación: 1 grado ≈ 111 km (en latitud)
+            lat_centro = poligono.centroid.y
+            cos_lat = math.cos(math.radians(lat_centro))
+            area_km2 = area_grados * 111 * 111 * cos_lat
+            return round(area_km2 * 100, 2)  # Convertir a hectáreas
+        except:
+            return 0
+    
+    def _dividir_poligono_grilla(self, poligono, n_divisiones):
+        """Dividir el polígono en una grilla de n x n celdas"""
+        try:
+            bounds = poligono.bounds
+            minx, miny, maxx, maxy = bounds
+            
+            width = (maxx - minx) / n_divisiones
+            height = (maxy - miny) / n_divisiones
+            
+            celdas = []
+            id_celda = 1
+            
+            for i in range(n_divisiones):
+                for j in range(n_divisiones):
+                    xmin = minx + (i * width)
+                    xmax = xmin + width
+                    ymin = miny + (j * height)
+                    ymax = ymin + height
+                    
+                    celda_rect = Polygon([
+                        (xmin, ymin), (xmax, ymin),
+                        (xmax, ymax), (xmin, ymax), (xmin, ymin)
+                    ])
+                    
+                    # Intersectar con el polígono original
+                    interseccion = poligono.intersection(celda_rect)
+                    if not interseccion.is_empty:
+                        area_celda = self._calcular_area_hectareas(interseccion)
+                        if area_celda > 0.01:  # Ignorar celdas muy pequeñas
+                            celdas.append({
+                                'id': id_celda,
+                                'area': f"Área-{id_celda}",
+                                'geometry': interseccion,
+                                'centroid': interseccion.centroid,
+                                'area_ha': area_celda
+                            })
+                            id_celda += 1
+            
+            return celdas
+        except Exception as e:
+            st.error(f"Error dividiendo polígono: {str(e)}")
+            return []
+    
+    def _calcular_indicador_con_variacion(self, base, variacion=0.2):
+        """Calcular valor con variación aleatoria controlada"""
+        variacion_real = np.random.uniform(-variacion, variacion)
+        return base * (1 + variacion_real)
+    
+    def _simular_distribucion_normal(self, base, desviacion=0.15):
+        """Simular distribución normal alrededor del valor base"""
+        return np.random.normal(base, base * desviacion)
+    
+    def procesar_poligono(self, gdf, tipo_vegetacion, n_divisiones=5):
+        """Método principal para procesar el polígono y calcular todos los indicadores"""
+        try:
+            if gdf is None or gdf.empty:
+                st.error("No hay datos geoespaciales para procesar")
+                return None
+            
+            poligono_principal = gdf.geometry.iloc[0]
+            area_total = self._calcular_area_hectareas(poligono_principal)
+            
+            # 1. Dividir en grilla
+            areas_analisis = self._dividir_poligono_grilla(poligono_principal, n_divisiones)
+            
+            if not areas_analisis:
+                st.error("No se pudieron crear áreas de análisis")
+                return None
+            
+            # Obtener parámetros base según tipo de vegetación
+            if tipo_vegetacion not in self.parametros_ecosistemas:
+                tipo_vegetacion = 'Bosque Secundario'
+            
+            params = self.parametros_ecosistemas[tipo_vegetacion]
+            
+            # 2. Calcular indicadores para cada área
+            resultados_vegetacion = []
+            resultados_carbono = []
+            resultados_biodiversidad = []
+            resultados_agua = []
+            resultados_suelo = []
+            resultados_conectividad = []
+            resultados_presiones = []
+            
+            for area in areas_analisis:
+                area_id = area['area']
+                area_ha = area['area_ha']
+                
+                # Vegetación (NDVI)
+                ndvi_base = params['ndvi_base']
+                ndvi = self._calcular_indicador_con_variacion(ndvi_base, 0.15)
+                
+                # Salud vegetación basada en NDVI
+                if ndvi >= 0.7:
+                    salud = "Excelente"
+                elif ndvi >= 0.5:
+                    salud = "Buena"
+                elif ndvi >= 0.3:
+                    salud = "Moderada"
+                else:
+                    salud = "Degradada"
+                
+                resultados_vegetacion.append({
+                    'area': area_id,
+                    'ndvi': round(ndvi, 3),
+                    'salud_vegetacion': salud,
+                    'area_ha': area_ha,
+                    'geometry': area['geometry']
+                })
+                
+                # Carbono (CO2)
+                carbono_min = params['carbono']['min']
+                carbono_max = params['carbono']['max']
+                carbono_ton_ha = np.random.uniform(carbono_min, carbono_max)
+                co2_total = carbono_ton_ha * area_ha * 3.67  # Convertir a CO2
+                
+                resultados_carbono.append({
+                    'area': area_id,
+                    'carbono_ton_ha': round(carbono_ton_ha, 2),
+                    'co2_total_ton': round(co2_total, 2),
+                    'area_ha': area_ha,
+                    'geometry': area['geometry']
+                })
+                
+                # Biodiversidad (Índice de Shannon)
+                biod_base = params['biodiversidad']
+                indice_shannon = self._simular_distribucion_normal(biod_base * 2.5, 0.2)  # Escalar a rango 0-3
+                indice_shannon = max(0.1, min(3.0, indice_shannon))
+                
+                # Clasificar biodiversidad
+                if indice_shannon >= 2.0:
+                    estado_biod = "Alta"
+                elif indice_shannon >= 1.0:
+                    estado_biod = "Moderada"
+                else:
+                    estado_biod = "Baja"
+                
+                resultados_biodiversidad.append({
+                    'area': area_id,
+                    'indice_shannon': round(indice_shannon, 3),
+                    'estado_biodiversidad': estado_biod,
+                    'area_ha': area_ha,
+                    'geometry': area['geometry']
+                })
+                
+                # Agua (Disponibilidad)
+                # Relacionar con NDVI y tipo de vegetación
+                disponibilidad_base = ndvi * 0.8 + params['resiliencia'] * 0.2
+                disponibilidad = self._calcular_indicador_con_variacion(disponibilidad_base, 0.25)
+                
+                resultados_agua.append({
+                    'area': area_id,
+                    'disponibilidad_agua': round(disponibilidad, 3),
+                    'area_ha': area_ha,
+                    'geometry': area['geometry']
+                })
+                
+                # Suelo (Salud)
+                # Relacionar con vegetación y carbono
+                salud_suelo_base = (ndvi * 0.6 + (carbono_ton_ha / carbono_max) * 0.4)
+                salud_suelo = self._calcular_indicador_con_variacion(salud_suelo_base, 0.2)
+                
+                resultados_suelo.append({
+                    'area': area_id,
+                    'salud_suelo': round(salud_suelo, 3),
+                    'area_ha': area_ha,
+                    'geometry': area['geometry']
+                })
+                
+                # Conectividad ecológica
+                # Depende del área y ubicación en la grilla
+                # Áreas centrales tienen mejor conectividad
+                centro_pol = poligono_principal.centroid
+                distancia_al_centro = area['centroid'].distance(centro_pol)
+                max_dist = centro_pol.distance(Point(poligono_principal.bounds[0], poligono_principal.bounds[1]))
+                conectividad_base = 1.0 - (distancia_al_centro / max_dist)
+                conectividad = self._calcular_indicador_con_variacion(conectividad_base, 0.3)
+                
+                resultados_conectividad.append({
+                    'area': area_id,
+                    'conectividad_total': round(conectividad, 3),
+                    'area_ha': area_ha,
+                    'geometry': area['geometry']
+                })
+                
+                # Presiones antrópicas
+                # Inversamente relacionada con NDVI y conectividad
+                presion_base = (1.0 - ndvi) * 0.7 + (1.0 - conectividad) * 0.3
+                presion = self._calcular_indicador_con_variacion(presion_base, 0.25)
+                
+                resultados_presiones.append({
+                    'area': area_id,
+                    'presion_total': round(presion, 3),
+                    'area_ha': area_ha,
+                    'geometry': area['geometry']
+                })
+            
+            # 3. Calcular métricas de resumen
+            # Extraer arrays de valores para cálculo
+            ndvi_vals = [r['ndvi'] for r in resultados_vegetacion]
+            co2_vals = [r['co2_total_ton'] for r in resultados_carbono]
+            shannon_vals = [r['indice_shannon'] for r in resultados_biodiversidad]
+            agua_vals = [r['disponibilidad_agua'] for r in resultados_agua]
+            suelo_vals = [r['salud_suelo'] for r in resultados_suelo]
+            conect_vals = [r['conectividad_total'] for r in resultados_conectividad]
+            presion_vals = [r['presion_total'] for r in resultados_presiones]
+            
+            # Calcular estado general
+            promedio_ndvi = np.mean(ndvi_vals)
+            promedio_conectividad = np.mean(conect_vals)
+            promedio_presion = np.mean(presion_vals)
+            
+            if promedio_ndvi >= 0.7 and promedio_presion <= 0.3:
+                estado_general = "Excelente"
+            elif promedio_ndvi >= 0.5 and promedio_presion <= 0.5:
+                estado_general = "Bueno"
+            elif promedio_ndvi >= 0.3:
+                estado_general = "Moderado"
+            else:
+                estado_general = "Crítico"
+            
+            summary_metrics = {
+                'estado_general': estado_general,
+                'carbono_total_co2_ton': round(sum(co2_vals), 2),
+                'indice_biodiversidad_promedio': round(np.mean(shannon_vals), 3),
+                'disponibilidad_agua_promedio': round(np.mean(agua_vals), 3),
+                'salud_suelo_promedio': round(np.mean(suelo_vals), 3),
+                'conectividad_promedio': round(promedio_conectividad, 3),
+                'presion_antropica_promedio': round(promedio_presion, 3),
+                'areas_analizadas': len(areas_analisis),
+                'ndvi_promedio': round(promedio_ndvi, 3)
+            }
+            
+            # 4. Compilar resultados finales
+            resultados = {
+                'resultados': {
+                    'vegetacion': resultados_vegetacion,
+                    'carbono': resultados_carbono,
+                    'biodiversidad': resultados_biodiversidad,
+                    'agua': resultados_agua,
+                    'suelo': resultados_suelo,
+                    'conectividad': resultados_conectividad,
+                    'presiones': resultados_presiones,
+                    'summary_metrics': summary_metrics
+                },
+                'areas_analisis': areas_analisis,
+                'area_hectareas': area_total,
+                'tipo_vegetacion': tipo_vegetacion
+            }
+            
+            return resultados
+            
+        except Exception as e:
+            st.error(f"Error procesando polígono: {str(e)}")
+            import traceback
+            st.error(traceback.format_exc())
+            return None
 
 # ===============================
 # 📁 MANEJO DE ARCHIVOS Y DESCARGAS (MANTENIDO IGUAL)
