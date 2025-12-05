@@ -3,8 +3,8 @@ import streamlit as st
 
 # ✅ LUEGO: Configurar la página
 st.set_page_config(
-    page_title="Sistema Integral de Análisis Ambiental",
-    page_icon="🌿",
+    page_title="Sistema Satelital de Análisis Ambiental",
+    page_icon="🛰️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -40,725 +40,773 @@ import pyproj
 from branca.colormap import LinearColormap
 import matplotlib.cm as cm
 
+# Para simulación de datos satelitales
+import random
+from dataclasses import dataclass
+from typing import Dict, List, Tuple, Optional
+from enum import Enum
+
 # ===============================
-# 🌿 BASE DE DATOS DE ESPECIES UICN MEJORADA
+# 🛰️ ENUMERACIONES Y CLASES DE DATOS SATELITALES
 # ===============================
 
-class BaseDatosEspeciesUICN:
-    """Base de datos de especies en lista roja y amarilla con sus nichos ecológicos"""
+class Satelite(Enum):
+    """Tipos de satélites disponibles"""
+    PLANETSCOPE = "PlanetScope"
+    SENTINEL2 = "Sentinel-2"
+    LANDSAT8 = "Landsat-8"
+    MODIS = "MODIS"
+
+@dataclass
+class BandaSatelital:
+    """Información de bandas satelitales"""
+    nombre: str
+    longitud_onda: str
+    resolucion: float  # en metros
+    descripcion: str
+
+@dataclass
+class ImagenSatelital:
+    """Metadatos de imagen satelital"""
+    satelite: Satelite
+    fecha_adquisicion: datetime
+    nubosidad: float  # 0-1
+    indice_calidad: float  # 0-1
+    bandas_disponibles: List[str]
+    url_visualizacion: Optional[str] = None
+
+# ===============================
+# 🛰️ SIMULADOR DE DATOS SATELITALES
+# ===============================
+
+class SimuladorSatelital:
+    """Simulador de datos satelitales para PlanetScope y Sentinel-2"""
     
     def __init__(self):
-        # Datos reales aproximados de especies emblemáticas de Sudamérica
-        self.especies_lista_roja = {
-            'Jaguar': {
-                'nombre_cientifico': 'Panthera onca',
-                'categoria_uicn': 'Casi Amenazada',
-                'tipo': 'Mamífero',
-                'nicho': {
-                    'temperatura_min': 20,  # °C
-                    'temperatura_max': 35,
-                    'precipitacion_min': 1000,  # mm/año
-                    'precipitacion_max': 3000,
-                    'elevacion_min': 0,  # msnm
-                    'elevacion_max': 2000,
-                    'cobertura_bosque_min': 0.7,  # % de cobertura
-                    'humedad_suelo_min': 0.5,
-                    'vegetacion_densa': True,
-                    'cuerpos_agua': True,
-                    'presion_antropica_max': 0.3
-                },
-                'requerimientos_habitat': [
-                    'Bosques tropicales húmedos',
-                    'Bosques secos',
-                    'Sabanas arboladas',
-                    'Proximidad a fuentes de agua'
-                ],
-                'area_home_range': 50,  # km² por individuo
-                'densidad_poblacional': 0.5,  # ind/100km²
-                'prioridad_conservacion': 0.9
+        # Configuración de bandas por satélite
+        self.bandas = {
+            Satelite.PLANETSCOPE: {
+                'B1': BandaSatelital('Blue', '455-515 nm', 3.0, 'Banda azul - vegetación acuática'),
+                'B2': BandaSatelital('Green', '500-590 nm', 3.0, 'Banda verde - vigor vegetación'),
+                'B3': BandaSatelital('Red', '590-670 nm', 3.0, 'Banda roja - clorofila'),
+                'B4': BandaSatelital('NIR', '780-860 nm', 3.0, 'Infrarrojo cercano - biomasa'),
+                'B5': BandaSatelital('Red Edge', '700-730 nm', 3.0, 'Borde rojo - estrés vegetal')
             },
-            'Oso de Anteojos': {
-                'nombre_cientifico': 'Tremarctos ornatus',
-                'categoria_uicn': 'Vulnerable',
-                'tipo': 'Mamífero',
-                'nicho': {
-                    'temperatura_min': 10,
-                    'temperatura_max': 25,
-                    'precipitacion_min': 800,
-                    'precipitacion_max': 2500,
-                    'elevacion_min': 500,
-                    'elevacion_max': 3800,
-                    'cobertura_bosque_min': 0.6,
-                    'humedad_suelo_min': 0.6,
-                    'vegetacion_densa': True,
-                    'cuerpos_agua': True,
-                    'presion_antropica_max': 0.4
-                },
-                'requerimientos_habitat': [
-                    'Bosques montanos',
-                    'Páramos',
-                    'Bosques nublados',
-                    'Áreas remotas'
-                ],
-                'area_home_range': 30,
-                'densidad_poblacional': 1.0,
-                'prioridad_conservacion': 0.85
-            },
-            'Guacamayo Rojo': {
-                'nombre_cientifico': 'Ara macao',
-                'categoria_uicn': 'En Peligro',
-                'tipo': 'Ave',
-                'nicho': {
-                    'temperatura_min': 22,
-                    'temperatura_max': 32,
-                    'precipitacion_min': 1500,
-                    'precipitacion_max': 3500,
-                    'elevacion_min': 0,
-                    'elevacion_max': 800,
-                    'cobertura_bosque_min': 0.8,
-                    'humedad_suelo_min': 0.7,
-                    'vegetacion_densa': True,
-                    'arboles_altos': True,
-                    'presion_antropica_max': 0.2
-                },
-                'requerimientos_habitat': [
-                    'Bosques tropicales maduros',
-                    'Árboles emergentes para anidación',
-                    'Palmeras para alimentación',
-                    'Claros naturales'
-                ],
-                'area_home_range': 15,
-                'densidad_poblacional': 2.0,
-                'prioridad_conservacion': 0.95
-            },
-            'Tapir Amazónico': {
-                'nombre_cientifico': 'Tapirus terrestris',
-                'categoria_uicn': 'Vulnerable',
-                'tipo': 'Mamífero',
-                'nicho': {
-                    'temperatura_min': 22,
-                    'temperatura_max': 30,
-                    'precipitacion_min': 1800,
-                    'precipitacion_max': 4000,
-                    'elevacion_min': 0,
-                    'elevacion_max': 1500,
-                    'cobertura_bosque_min': 0.7,
-                    'humedad_suelo_min': 0.8,
-                    'vegetacion_densa': True,
-                    'cuerpos_agua': True,
-                    'presion_antropica_max': 0.3
-                },
-                'requerimientos_habitat': [
-                    'Bosques húmedos tropicales',
-                    'Bosques de galería',
-                    'Pantanos y humedales',
-                    'Áreas con suelo blando'
-                ],
-                'area_home_range': 5,
-                'densidad_poblacional': 3.0,
-                'prioridad_conservacion': 0.8
-            },
-            'Caimán Negro': {
-                'nombre_cientifico': 'Melanosuchus niger',
-                'categoria_uicn': 'En Peligro',
-                'tipo': 'Reptil',
-                'nicho': {
-                    'temperatura_min': 25,
-                    'temperatura_max': 35,
-                    'precipitacion_min': 2000,
-                    'precipitacion_max': 4500,
-                    'elevacion_min': 0,
-                    'elevacion_max': 300,
-                    'cobertura_bosque_min': 0.5,
-                    'humedad_suelo_min': 0.9,
-                    'cuerpos_agua': True,
-                    'vegetacion_riparia': True,
-                    'presion_antropica_max': 0.2
-                },
-                'requerimientos_habitat': [
-                    'Ríos y lagos grandes',
-                    'Bosques inundables',
-                    'Madera muerta en agua',
-                    'Playas arenosas para anidar'
-                ],
-                'area_home_range': 10,
-                'densidad_poblacional': 0.8,
-                'prioridad_conservacion': 0.9
+            Satelite.SENTINEL2: {
+                'B2': BandaSatelital('Blue', '458-523 nm', 10.0, 'Banda azul'),
+                'B3': BandaSatelital('Green', '543-578 nm', 10.0, 'Banda verde'),
+                'B4': BandaSatelital('Red', '650-680 nm', 10.0, 'Banda roja'),
+                'B8': BandaSatelital('NIR', '785-900 nm', 10.0, 'Infrarrojo cercano'),
+                'B5': BandaSatelital('Vegetation Red Edge', '698-713 nm', 20.0, 'Borde rojo 1'),
+                'B6': BandaSatelital('Vegetation Red Edge', '733-748 nm', 20.0, 'Borde rojo 2'),
+                'B7': BandaSatelital('Vegetation Red Edge', '773-793 nm', 20.0, 'Borde rojo 3'),
+                'B8A': BandaSatelital('Narrow NIR', '855-875 nm', 20.0, 'NIR estrecho'),
+                'B11': BandaSatelital('SWIR1', '1565-1655 nm', 20.0, 'Infrarrojo de onda corta 1'),
+                'B12': BandaSatelital('SWIR2', '2100-2280 nm', 20.0, 'Infrarrojo de onda corta 2')
             }
         }
         
-        self.especies_lista_amarilla = {
-            'Mono Araña': {
-                'nombre_cientifico': 'Ateles geoffroyi',
-                'categoria_uicn': 'Preocupación Menor',
-                'tipo': 'Mamífero',
-                'nicho': {
-                    'temperatura_min': 20,
-                    'temperatura_max': 30,
-                    'precipitacion_min': 1200,
-                    'precipitacion_max': 3000,
-                    'elevacion_min': 0,
-                    'elevacion_max': 1800,
-                    'cobertura_bosque_min': 0.6,
-                    'humedad_suelo_min': 0.6,
-                    'vegetacion_densa': True,
-                    'arboles_altos': True,
-                    'presion_antropica_max': 0.5
-                },
-                'requerimientos_habitat': [
-                    'Bosques tropicales',
-                    'Estratos altos del bosque',
-                    'Árboles frutales',
-                    'Corredores arbóreos'
-                ],
-                'area_home_range': 3,
-                'densidad_poblacional': 5.0,
-                'prioridad_conservacion': 0.6
+        # Rangos típicos de reflectancia por tipo de cobertura
+        self.rangos_reflectancia = {
+            'bosque_denso': {
+                'blue': (0.02, 0.05),
+                'green': (0.03, 0.07),
+                'red': (0.02, 0.04),
+                'nir': (0.30, 0.45),
+                'swir': (0.10, 0.20)
             },
-            'Tucán Pico Iris': {
-                'nombre_cientifico': 'Ramphastos sulfuratus',
-                'categoria_uicn': 'Casi Amenazada',
-                'tipo': 'Ave',
-                'nicho': {
-                    'temperatura_min': 18,
-                    'temperatura_max': 28,
-                    'precipitacion_min': 1000,
-                    'precipitacion_max': 2800,
-                    'elevacion_min': 0,
-                    'elevacion_max': 1500,
-                    'cobertura_bosque_min': 0.5,
-                    'humedad_suelo_min': 0.5,
-                    'vegetacion_densa': False,
-                    'arboles_huecos': True,
-                    'presion_antropica_max': 0.6
-                },
-                'requerimientos_habitat': [
-                    'Bosques húmedos',
-                    'Bosques secundarios',
-                    'Árboles con frutos',
-                    'Claros boscosos'
-                ],
-                'area_home_range': 2,
-                'densidad_poblacional': 8.0,
-                'prioridad_conservacion': 0.5
+            'bosque_secundario': {
+                'blue': (0.03, 0.06),
+                'green': (0.05, 0.10),
+                'red': (0.04, 0.07),
+                'nir': (0.25, 0.40),
+                'swir': (0.15, 0.25)
             },
-            'Pecarí de Labios Blancos': {
-                'nombre_cientifico': 'Tayassu pecari',
-                'categoria_uicn': 'Vulnerable',
-                'tipo': 'Mamífero',
-                'nicho': {
-                    'temperatura_min': 20,
-                    'temperatura_max': 32,
-                    'precipitacion_min': 1000,
-                    'precipitacion_max': 3500,
-                    'elevacion_min': 0,
-                    'elevacion_max': 2000,
-                    'cobertura_bosque_min': 0.4,
-                    'humedad_suelo_min': 0.5,
-                    'vegetacion_densa': False,
-                    'cuerpos_agua': True,
-                    'presion_antropica_max': 0.4
-                },
-                'requerimientos_habitat': [
-                    'Bosques húmedos',
-                    'Sabanas arboladas',
-                    'Áreas abiertas dentro del bosque',
-                    'Caminos naturales'
-                ],
-                'area_home_range': 20,
-                'densidad_poblacional': 4.0,
-                'prioridad_conservacion': 0.7
+            'pastizal': {
+                'blue': (0.04, 0.07),
+                'green': (0.08, 0.12),
+                'red': (0.06, 0.09),
+                'nir': (0.20, 0.30),
+                'swir': (0.20, 0.30)
             },
-            'Iguana Verde': {
-                'nombre_cientifico': 'Iguana iguana',
-                'categoria_uicn': 'Preocupación Menor',
-                'tipo': 'Reptil',
-                'nicho': {
-                    'temperatura_min': 24,
-                    'temperatura_max': 38,
-                    'precipitacion_min': 800,
-                    'precipitacion_max': 2500,
-                    'elevacion_min': 0,
-                    'elevacion_max': 1000,
-                    'cobertura_bosque_min': 0.3,
-                    'humedad_suelo_min': 0.4,
-                    'vegetacion_densa': False,
-                    'arboles_soleados': True,
-                    'presion_antropica_max': 0.7
-                },
-                'requerimientos_habitat': [
-                    'Bosques ribereños',
-                    'Árboles aislados',
-                    'Zonas de sol y sombra',
-                    'Troncos sobre el agua'
-                ],
-                'area_home_range': 0.5,
-                'densidad_poblacional': 15.0,
-                'prioridad_conservacion': 0.4
+            'suelo_desnudo': {
+                'blue': (0.08, 0.12),
+                'green': (0.10, 0.15),
+                'red': (0.12, 0.18),
+                'nir': (0.15, 0.25),
+                'swir': (0.25, 0.35)
             },
-            'Venado Cola Blanca': {
-                'nombre_cientifico': 'Odocoileus virginianus',
-                'categoria_uicn': 'Preocupación Menor',
-                'tipo': 'Mamífero',
-                'nicho': {
-                    'temperatura_min': 10,
-                    'temperatura_max': 30,
-                    'precipitacion_min': 500,
-                    'precipitacion_max': 2000,
-                    'elevacion_min': 0,
-                    'elevacion_max': 3000,
-                    'cobertura_bosque_min': 0.2,
-                    'humedad_suelo_min': 0.3,
-                    'vegetacion_densa': False,
-                    'matorrales': True,
-                    'presion_antropica_max': 0.6
-                },
-                'requerimientos_habitat': [
-                    'Bosques abiertos',
-                    'Matorrales',
-                    'Límites bosque-pastizal',
-                    'Áreas con agua disponible'
-                ],
-                'area_home_range': 2,
-                'densidad_poblacional': 10.0,
-                'prioridad_conservacion': 0.3
+            'agua': {
+                'blue': (0.01, 0.03),
+                'green': (0.01, 0.02),
+                'red': (0.01, 0.02),
+                'nir': (0.01, 0.02),
+                'swir': (0.01, 0.02)
             }
         }
     
-    def obtener_todas_especies(self):
-        """Retorna todas las especies combinadas"""
-        return {**self.especies_lista_roja, **self.especies_lista_amarilla}
+    def generar_imagen_satelital(self, satelite: Satelite, fecha: datetime = None):
+        """Generar metadatos de imagen satelital simulada"""
+        if fecha is None:
+            fecha = datetime.now() - timedelta(days=random.randint(1, 30))
+        
+        return ImagenSatelital(
+            satelite=satelite,
+            fecha_adquisicion=fecha,
+            nubosidad=random.uniform(0, 0.3),
+            indice_calidad=random.uniform(0.7, 0.95),
+            bandas_disponibles=list(self.bandas[satelite].keys()),
+            url_visualizacion=f"https://api.planet.com/v1/visualizations/{random.randint(10000, 99999)}"
+        )
     
-    def calcular_idoneidad_habitat(self, caracteristicas_area, especie_nombre):
-        """Calcula la idoneidad del hábitat para una especie específica"""
-        especies = self.obtener_todas_especies()
-        if especie_nombre not in especies:
-            return 0
+    def simular_reflectancia(self, tipo_cobertura: str, banda: str, satelite: Satelite):
+        """Simular valores de reflectancia para una banda específica"""
+        if satelite not in self.bandas:
+            return 0.0
         
-        especie = especies[especie_nombre]
-        nicho = especie['nicho']
+        # Mapear bandas a categorías generales
+        banda_nombre = self.bandas[satelite][banda].nombre.lower()
         
-        factores = []
+        if 'blue' in banda_nombre:
+            cat = 'blue'
+        elif 'green' in banda_nombre:
+            cat = 'green'
+        elif 'red' in banda_nombre and 'edge' not in banda_nombre:
+            cat = 'red'
+        elif 'nir' in banda_nombre or 'b8' in banda:
+            cat = 'nir'
+        elif 'swir' in banda_nombre:
+            cat = 'swir'
+        else:
+            cat = 'nir'  # Por defecto
         
-        # 1. Temperatura
-        if 'temperatura_promedio' in caracteristicas_area:
-            temp = caracteristicas_area['temperatura_promedio']
-            if nicho['temperatura_min'] <= temp <= nicho['temperatura_max']:
-                factores.append(1.0)
-            else:
-                distancia = min(abs(temp - nicho['temperatura_min']), 
-                              abs(temp - nicho['temperatura_max']))
-                penalizacion = max(0, 1 - distancia / 10)
-                factores.append(penalizacion)
+        # Obtener rango según tipo de cobertura
+        if tipo_cobertura in self.rangos_reflectancia:
+            rango = self.rangos_reflectancia[tipo_cobertura].get(cat, (0.01, 0.1))
+        else:
+            rango = (0.01, 0.1)
         
-        # 2. Precipitación
-        if 'precipitacion_anual' in caracteristicas_area:
-            precip = caracteristicas_area['precipitacion_anual']
-            if nicho['precipitacion_min'] <= precip <= nicho['precipitacion_max']:
-                factores.append(1.0)
-            else:
-                distancia = min(abs(precip - nicho['precipitacion_min']),
-                              abs(precip - nicho['precipitacion_max']))
-                penalizacion = max(0, 1 - distancia / 1000)
-                factores.append(penalizacion)
-        
-        # 3. NDVI como proxy de cobertura bosque
-        if 'ndvi' in caracteristicas_area:
-            ndvi = caracteristicas_area['ndvi']
-            cobertura_min = nicho.get('cobertura_bosque_min', 0)
-            if ndvi >= cobertura_min:
-                factores.append(1.0)
-            else:
-                factores.append(ndvi / cobertura_min if cobertura_min > 0 else 0)
-        
-        # 4. Presión antrópica
-        if 'presion_antropica' in caracteristicas_area:
-            presion = caracteristicas_area['presion_antropica']
-            presion_max = nicho.get('presion_antropica_max', 1.0)
-            if presion <= presion_max:
-                factores.append(1.0)
-            else:
-                factores.append(max(0, 1 - (presion - presion_max) / (1 - presion_max)))
-        
-        # 5. Humedad del suelo
-        if 'humedad_suelo' in caracteristicas_area:
-            humedad = caracteristicas_area['humedad_suelo']
-            humedad_min = nicho.get('humedad_suelo_min', 0)
-            if humedad >= humedad_min:
-                factores.append(1.0)
-            else:
-                factores.append(humedad / humedad_min if humedad_min > 0 else 0)
-        
-        if factores:
-            idoneidad = np.mean(factores)
-            idoneidad *= especie['prioridad_conservacion']
-            return round(idoneidad, 3)
-        
-        return 0
-
-# ===============================
-# 🗺️ SISTEMA DE MAPAS MEJORADO CON ZOOM AUTOMÁTICO
-# ===============================
-
-class SistemaMapas:
-    """Sistema avanzado de mapas con zoom automático y múltiples capas"""
+        # Añadir variación aleatoria
+        return random.uniform(rango[0], rango[1])
     
-    def __init__(self):
-        self.capas_base = {
-            'Satélite': {
-                'tiles': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-                'attr': 'Esri World Imagery',
-                'nombre': '🌍 Satélite ESRI'
-            },
-            'Topográfico': {
-                'tiles': 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-                'attr': 'OpenTopoMap',
-                'nombre': '⛰️ Topográfico'
-            },
-            'OSM': {
-                'tiles': 'OpenStreetMap',
-                'attr': 'OpenStreetMap',
-                'nombre': '🗺️ OpenStreetMap'
-            }
-        }
-    
-    def calcular_centro_y_zoom(self, gdf):
-        """Calcular centro y zoom automático basado en el polígono"""
-        if gdf is None or gdf.empty:
-            return [-14.0, -60.0], 4
+    def calcular_indices(self, reflectancias: Dict[str, float], satelite: Satelite):
+        """Calcular índices espectrales a partir de reflectancias"""
+        indices = {}
         
         try:
+            # NDVI - Índice de Vegetación de Diferencia Normalizada
+            if satelite == Satelite.PLANETSCOPE:
+                red = reflectancias.get('B3', 0.1)
+                nir = reflectancias.get('B4', 0.3)
+            else:  # Sentinel-2
+                red = reflectancias.get('B4', 0.1)
+                nir = reflectancias.get('B8', 0.3)
+            
+            if nir + red > 0:
+                indices['NDVI'] = (nir - red) / (nir + red)
+            else:
+                indices['NDVI'] = 0.0
+            
+            # SAVI - Índice de Vegetación Ajustado al Suelo
+            L = 0.5  # Factor de corrección del suelo
+            if nir + red + L > 0:
+                indices['SAVI'] = ((nir - red) / (nir + red + L)) * (1 + L)
+            else:
+                indices['SAVI'] = 0.0
+            
+            # EVI - Índice de Vegetación Mejorado
+            if satelite == Satelite.SENTINEL2:
+                blue = reflectancias.get('B2', 0.05)
+                indices['EVI'] = 2.5 * ((nir - red) / (nir + 6 * red - 7.5 * blue + 1))
+            else:
+                indices['EVI'] = indices['NDVI'] * 1.2  # Aproximación
+            
+            # NDWI - Índice de Agua de Diferencia Normalizada
+            if satelite == Satelite.SENTINEL2:
+                green = reflectancias.get('B3', 0.08)
+                nir2 = reflectancias.get('B8A', nir)
+                indices['NDWI'] = (green - nir2) / (green + nir2)
+            else:
+                indices['NDWI'] = -indices['NDVI'] * 0.5  # Aproximación
+            
+            # MSAVI - Índice de Vegetación Ajustado al Suelo Modificado
+            indices['MSAVI'] = (2 * nir + 1 - np.sqrt((2 * nir + 1)**2 - 8 * (nir - red))) / 2
+            
+            # GNDVI - Índice de Vegetación de Diferencia Normalizada Verde
+            if satelite == Satelite.SENTINEL2:
+                green = reflectancias.get('B3', 0.08)
+                indices['GNDVI'] = (nir - green) / (nir + green)
+            
+            # Clasificar salud vegetal basada en NDVI
+            ndvi_val = indices['NDVI']
+            if ndvi_val > 0.7:
+                indices['Salud_Vegetacion'] = 'Excelente'
+            elif ndvi_val > 0.5:
+                indices['Salud_Vegetacion'] = 'Buena'
+            elif ndvi_val > 0.3:
+                indices['Salud_Vegetacion'] = 'Moderada'
+            elif ndvi_val > 0.1:
+                indices['Salud_Vegetacion'] = 'Pobre'
+            else:
+                indices['Salud_Vegetacion'] = 'Degradada'
+            
+        except Exception as e:
+            # Valores por defecto en caso de error
+            indices = {
+                'NDVI': 0.5,
+                'SAVI': 0.4,
+                'EVI': 0.3,
+                'NDWI': 0.1,
+                'MSAVI': 0.4,
+                'Salud_Vegetacion': 'Moderada'
+            }
+        
+        return indices
+
+# ===============================
+# 🗺️ SISTEMA DE MAPAS AVANZADO CON IMÁGENES SATELITALES
+# ===============================
+
+class SistemaMapasAvanzado:
+    """Sistema de mapas con integración satelital y zoom automático"""
+    
+    def __init__(self):
+        self.simulador = SimuladorSatelital()
+        
+        # Capas base con URLs reales de servicios WMS/TMS
+        self.capas_base = {
+            'PlanetScope': {
+                'tiles': 'https://tiles.planet.com/basemaps/v1/planet-tiles/global_monthly_{date}_mosaic/gmap/{z}/{x}/{y}.png?api_key=DEMO_KEY',
+                'attr': '© Planet Labs',
+                'nombre': '🛰️ PlanetScope',
+                'max_zoom': 15
+            },
+            'Sentinel-2': {
+                'tiles': 'https://services.sentinel-hub.com/ogc/wms/{id}?REQUEST=GetMap&LAYERS=TRUE-COLOR-S2-L1C&MAXCC=20&WIDTH=512&HEIGHT=512&FORMAT=image/png&TIME={date}&BBOX={bbox}',
+                'attr': '© ESA Sentinel-2',
+                'nombre': '🛰️ Sentinel-2',
+                'max_zoom': 14
+            },
+            'ESRI World Imagery': {
+                'tiles': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                'attr': 'Esri, Maxar, Earthstar Geographics',
+                'nombre': '🌍 ESRI World Imagery',
+                'max_zoom': 19
+            },
+            'OpenTopoMap': {
+                'tiles': 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+                'attr': 'OpenTopoMap',
+                'nombre': '⛰️ Topográfico',
+                'max_zoom': 17
+            }
+        }
+    
+    def calcular_zoom_automatico(self, gdf):
+        """Calcular zoom óptimo basado en el área del polígono"""
+        if gdf is None or gdf.empty:
+            return [-14.0, -60.0], 6
+        
+        try:
+            # Calcular centroide
             bounds = gdf.total_bounds
             centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
             
-            # Calcular área aproximada para determinar zoom
+            # Calcular área en km²
             poligono = gdf.geometry.iloc[0]
             if hasattr(poligono, 'area'):
-                area_grados = poligono.area
+                # Conversión aproximada de grados a km²
                 lat_centro = centro[0]
                 cos_lat = math.cos(math.radians(lat_centro))
+                area_grados = poligono.area
                 area_km2 = area_grados * 111 * 111 * cos_lat
                 
-                # Determinar zoom basado en área
-                if area_km2 < 1:
+                # Algoritmo de zoom basado en área (optimizado)
+                if area_km2 < 0.1:      # Muy pequeño (< 0.1 km²)
                     zoom = 16
-                elif area_km2 < 10:
+                elif area_km2 < 1:      # Pequeño (0.1-1 km²)
+                    zoom = 15
+                elif area_km2 < 10:     # Pequeño-mediano (1-10 km²)
                     zoom = 14
-                elif area_km2 < 50:
+                elif area_km2 < 50:     # Mediano (10-50 km²)
                     zoom = 13
-                elif area_km2 < 100:
+                elif area_km2 < 100:    # Mediano-grande (50-100 km²)
                     zoom = 12
-                elif area_km2 < 500:
+                elif area_km2 < 500:    # Grande (100-500 km²)
                     zoom = 11
-                elif area_km2 < 1000:
+                elif area_km2 < 1000:   # Muy grande (500-1000 km²)
                     zoom = 10
-                elif area_km2 < 5000:
+                elif area_km2 < 5000:   # Enorme (1000-5000 km²)
                     zoom = 9
-                elif area_km2 < 10000:
+                else:                   # Gigantesco (>5000 km²)
                     zoom = 8
-                else:
-                    zoom = 7
             else:
                 zoom = 10
             
-            return centro, zoom
+            return centro, min(zoom, 16)  # Limitar zoom máximo
         
-        except Exception as e:
-            return [-14.0, -60.0], 4
+        except Exception:
+            return [-14.0, -60.0], 6
     
-    def crear_mapa_base(self, gdf, titulo="Área de Estudio", capa_seleccionada='Satélite'):
-        """Crear mapa base con zoom automático y múltiples capas"""
-        centro, zoom = self.calcular_centro_y_zoom(gdf)
+    def crear_mapa_satelital(self, gdf, titulo="Área de Estudio", capa_base="ESRI World Imagery"):
+        """Crear mapa con capa satelital y polígono"""
+        centro, zoom = self.calcular_zoom_automatico(gdf)
         
+        # Crear mapa base
         m = folium.Map(
             location=centro,
             zoom_start=zoom,
             tiles=None,
             control_scale=True,
-            zoom_control=True
+            zoom_control=True,
+            prefer_canvas=True
         )
         
-        # Agregar todas las capas base
-        for nombre, config in self.capas_base.items():
-            if nombre == 'OSM':
-                folium.TileLayer(
-                    config['tiles'],
-                    attr=config['attr'],
-                    name=config['nombre'],
-                    overlay=False,
-                    control=True
-                ).add_to(m)
-            else:
-                folium.TileLayer(
-                    tiles=config['tiles'],
-                    attr=config['attr'],
-                    name=config['nombre'],
-                    overlay=False,
-                    control=True
-                ).add_to(m)
+        # Agregar capa base seleccionada
+        capa_config = self.capas_base.get(capa_base, self.capas_base['ESRI World Imagery'])
+        
+        if '{date}' in capa_config['tiles']:
+            # Reemplazar parámetros dinámicos
+            fecha = datetime.now().strftime('%Y-%m')
+            tiles_url = capa_config['tiles'].replace('{date}', fecha)
+            folium.TileLayer(
+                tiles=tiles_url,
+                attr=capa_config['attr'],
+                name=capa_config['nombre'],
+                max_zoom=capa_config.get('max_zoom', 19),
+                overlay=False,
+                control=True
+            ).add_to(m)
+        else:
+            folium.TileLayer(
+                tiles=capa_config['tiles'],
+                attr=capa_config['attr'],
+                name=capa_config['nombre'],
+                max_zoom=capa_config.get('max_zoom', 19),
+                overlay=False,
+                control=True
+            ).add_to(m)
         
         # Agregar polígono si existe
         if gdf is not None and not gdf.empty:
             try:
                 poligono = gdf.geometry.iloc[0]
                 
-                # Calcular área para tooltip
+                # Calcular área aproximada
                 bounds = gdf.total_bounds
-                area_km2 = gdf.geometry.area.iloc[0] * 111 * 111 * math.cos(math.radians(centro[0]))
+                lat_centro = centro[0]
+                cos_lat = math.cos(math.radians(lat_centro))
+                area_grados = gdf.geometry.area.iloc[0]
+                area_km2 = area_grados * 111 * 111 * cos_lat
+                area_ha = area_km2 * 100
                 
-                tooltip_text = f"""
-                <div style='font-family: Arial; font-size: 12px;'>
-                <b>{titulo}</b><br>
-                Área: {area_km2:.2f} km²<br>
-                Centro: {centro[0]:.4f}°, {centro[1]:.4f}°
+                # Tooltip informativo
+                tooltip_html = f"""
+                <div style="font-family: Arial; font-size: 12px; padding: 5px;">
+                    <b>{titulo}</b><br>
+                    <hr style="margin: 5px 0;">
+                    <b>Área:</b> {area_ha:,.1f} ha<br>
+                    <b>Coordenadas centro:</b><br>
+                    {centro[0]:.6f}°, {centro[1]:.6f}°<br>
+                    <b>Zoom recomendado:</b> {zoom}
                 </div>
                 """
                 
+                # Estilo del polígono
                 folium.GeoJson(
                     poligono,
                     style_function=lambda x: {
                         'fillColor': '#3b82f6',
                         'color': '#1d4ed8',
                         'weight': 3,
-                        'fillOpacity': 0.2,
-                        'dashArray': '5, 5'
+                        'fillOpacity': 0.15,
+                        'dashArray': '5, 5',
+                        'opacity': 0.8
                     },
                     name='Área de Estudio',
-                    tooltip=folium.Tooltip(tooltip_text, sticky=True)
+                    tooltip=folium.Tooltip(tooltip_html, sticky=True)
                 ).add_to(m)
                 
-                # Ajustar vista al polígono
-                m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
+                # Agregar marcador en el centro
+                folium.Marker(
+                    location=centro,
+                    popup=f"<b>Centro del área de estudio</b><br>Área: {area_ha:,.1f} ha",
+                    icon=folium.Icon(color='blue', icon='info-sign', prefix='fa')
+                ).add_to(m)
+                
+                # Ajustar vista al polígono con margen
+                m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]], padding=(50, 50))
                 
             except Exception as e:
-                pass
+                st.warning(f"Error al visualizar polígono: {str(e)}")
         
-        # Agregar controles
+        # Agregar capas adicionales
+        for nombre, config in self.capas_base.items():
+            if nombre != capa_base:
+                folium.TileLayer(
+                    tiles=config['tiles'] if '{date}' not in config['tiles'] else config['tiles'].replace('{date}', datetime.now().strftime('%Y-%m')),
+                    attr=config['attr'],
+                    name=config['nombre'],
+                    overlay=False,
+                    control=True
+                ).add_to(m)
+        
+        # Controles adicionales
+        Fullscreen(position='topright').add_to(m)
+        MousePosition(position='bottomleft').add_to(m)
+        folium.LayerControl(position='topright', collapsed=False).add_to(m)
+        
+        # Medir distancia
+        Draw(
+            export=True,
+            position='topleft',
+            draw_options={
+                'polyline': True,
+                'rectangle': True,
+                'polygon': True,
+                'circle': False,
+                'marker': True,
+                'circlemarker': False
+            }
+        ).add_to(m)
+        
+        return m
+    
+    def crear_mapa_indices(self, gdf, datos_areas, indice_seleccionado, titulo="Mapa de Índices"):
+        """Crear mapa temático para índices satelitales"""
+        centro, zoom = self.calcular_zoom_automatico(gdf)
+        
+        # Mapa base con capa satelital
+        m = folium.Map(
+            location=centro,
+            zoom_start=zoom,
+            tiles=self.capas_base['ESRI World Imagery']['tiles'],
+            attr=self.capas_base['ESRI World Imagery']['attr'],
+            control_scale=True
+        )
+        
+        # Agregar polígono base semi-transparente
+        if gdf is not None and not gdf.empty:
+            folium.GeoJson(
+                gdf.geometry.iloc[0],
+                style_function=lambda x: {
+                    'fillColor': '#ffffff',
+                    'color': '#000000',
+                    'weight': 1,
+                    'fillOpacity': 0.05,
+                    'opacity': 0.3
+                }
+            ).add_to(m)
+        
+        # Definir paletas de colores por índice
+        paletas_colores = {
+            'NDVI': ['#8B0000', '#FF4500', '#FFD700', '#32CD32', '#006400'],  # Rojo a Verde
+            'SAVI': ['#8B4513', '#DEB887', '#FFD700', '#32CD32', '#006400'],  # Marrón a Verde
+            'EVI': ['#4B0082', '#9370DB', '#32CD32', '#FFD700', '#FF4500'],   # Violeta a Rojo
+            'NDWI': ['#8B0000', '#FF4500', '#FFD700', '#87CEEB', '#00008B'],  # Rojo a Azul
+            'MSAVI': ['#8B4513', '#D2691E', '#FFD700', '#32CD32', '#006400'] # Marrón a Verde
+        }
+        
+        # Obtener paleta para el índice seleccionado
+        colores = paletas_colores.get(indice_seleccionado, ['#808080', '#A9A9A9', '#D3D3D3'])
+        
+        # Crear capa de calor para los índices
+        heatmap_data = []
+        
+        for area_data in datos_areas:
+            try:
+                valor = area_data.get('indices', {}).get(indice_seleccionado, 0)
+                geometry = area_data.get('geometry')
+                
+                if geometry and hasattr(geometry, 'centroid'):
+                    centroid = geometry.centroid
+                    heatmap_data.append([centroid.y, centroid.x, valor])
+                    
+                    # También agregar polígono coloreado
+                    color_idx = min(int(valor * (len(colores) - 1)), len(colores) - 1)
+                    color = colores[color_idx]
+                    
+                    folium.GeoJson(
+                        geometry,
+                        style_function=lambda x, color=color: {
+                            'fillColor': color,
+                            'color': color,
+                            'weight': 1,
+                            'fillOpacity': 0.4,
+                            'opacity': 0.6
+                        },
+                        tooltip=f"Valor: {valor:.3f}"
+                    ).add_to(m)
+                    
+            except Exception:
+                continue
+        
+        # Agregar heatmap si hay datos suficientes
+        if len(heatmap_data) > 3:
+            HeatMap(
+                heatmap_data,
+                name='Heatmap',
+                min_opacity=0.3,
+                max_zoom=15,
+                radius=20,
+                blur=15,
+                gradient={0.2: 'blue', 0.4: 'lime', 0.6: 'yellow', 0.8: 'orange', 1.0: 'red'}
+            ).add_to(m)
+        
+        # Agregar leyenda
+        self._agregar_leyenda(m, indice_seleccionado, colores)
+        
+        # Controles
         Fullscreen().add_to(m)
-        MousePosition().add_to(m)
         folium.LayerControl().add_to(m)
         
         return m
     
-    def crear_mapa_indicador(self, gdf, datos_indicador, config_indicador):
-        """Crear mapa para un indicador específico"""
-        centro, zoom = self.calcular_centro_y_zoom(gdf)
+    def _agregar_leyenda(self, mapa, indice, colores):
+        """Agregar leyenda al mapa"""
+        leyenda_html = f'''
+        <div style="position: fixed; 
+                    bottom: 50px; 
+                    left: 50px; 
+                    width: 250px;
+                    background-color: white; 
+                    border: 2px solid grey; 
+                    z-index: 9999; 
+                    padding: 10px;
+                    border-radius: 5px;
+                    box-shadow: 0 0 10px rgba(0,0,0,0.2);
+                    font-family: Arial;">
+            <h4 style="margin-top: 0; color: #1e3a8a; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
+                🛰️ {indice}
+            </h4>
+            <div style="margin: 10px 0;">
+                <div style="height: 20px; background: linear-gradient(90deg, {', '.join(colores)}); border: 1px solid #666;"></div>
+                <div style="display: flex; justify-content: space-between; margin-top: 5px;">
+                    <span>0.0</span>
+                    <span>0.5</span>
+                    <span>1.0</span>
+                </div>
+            </div>
+            <div style="font-size: 12px; color: #666;">
+                <div>🟢 >0.7: Excelente</div>
+                <div>🟡 0.5-0.7: Bueno</div>
+                <div>🟠 0.3-0.5: Moderado</div>
+                <div>🔴 <0.3: Pobre</div>
+            </div>
+        </div>
+        '''
         
-        m = folium.Map(
-            location=centro,
-            zoom_start=zoom,
-            tiles=self.capas_base['Satélite']['tiles'],
-            attr=self.capas_base['Satélite']['attr'],
-            control_scale=True
-        )
-        
-        # Agregar polígono base
-        if gdf is not None and not gdf.empty:
-            poligono = gdf.geometry.iloc[0]
-            folium.GeoJson(
-                poligono,
-                style_function=lambda x: {
-                    'fillColor': '#ffffff',
-                    'color': '#0066cc',
-                    'weight': 1,
-                    'fillOpacity': 0.05
-                }
-            ).add_to(m)
-        
-        # Agregar datos del indicador
-        if datos_indicador and len(datos_indicador) > 0:
-            for area_data in datos_indicador:
-                try:
-                    valor = area_data.get(config_indicador['columna'], 0)
-                    geometry = area_data.get('geometry')
-                    area_id = area_data.get('area', 'Desconocida')
-                    
-                    if geometry and hasattr(geometry, 'centroid'):
-                        centroid = geometry.centroid
-                        lat, lon = centroid.y, centroid.x
-                        
-                        # Determinar color basado en valor
-                        color = '#808080'
-                        for rango, color_rango in config_indicador['colores'].items():
-                            if rango[0] <= valor <= rango[1]:
-                                color = color_rango
-                                break
-                        
-                        # Crear marcador
-                        folium.CircleMarker(
-                            location=[lat, lon],
-                            radius=8,
-                            popup=f"<b>{area_id}</b><br>{config_indicador['titulo']}: {valor:.3f}",
-                            color=color,
-                            fill=True,
-                            fillColor=color,
-                            fillOpacity=0.7,
-                            tooltip=f"{area_id}: {valor:.3f}"
-                        ).add_to(m)
-                        
-                except Exception as e:
-                    continue
-        
-        return m
+        mapa.get_root().html.add_child(folium.Element(leyenda_html))
 
 # ===============================
-# 📊 SISTEMA DE ANÁLISIS AMBIENTAL COMPLETO
+# 📊 DASHBOARD DE RESUMEN EJECUTIVO
 # ===============================
 
-class AnalizadorAmbientalCompleto:
-    """Analizador ambiental completo con todos los indicadores"""
+class DashboardResumen:
+    """Dashboard ejecutivo con KPIs y visualizaciones"""
     
     def __init__(self):
-        self.base_especies = BaseDatosEspeciesUICN()
-        self.sistema_mapas = SistemaMapas()
-        
-        # Parámetros base por tipo de ecosistema
-        self.parametros_ecosistemas = {
-            'Bosque Tropical Húmedo': {
-                'ndvi_base': 0.85,
-                'savi_base': 0.70,
-                'mndvi_base': 0.80,
-                'evi_base': 0.65,
-                'ndwi_base': 0.45,
-                'carbono_ton_ha': 250,
-                'shannon_base': 2.8,
-                'temperatura': 26,
-                'precipitacion': 2500,
-                'humedad_suelo': 0.8
-            },
-            'Bosque Seco Tropical': {
-                'ndvi_base': 0.65,
-                'savi_base': 0.50,
-                'mndvi_base': 0.60,
-                'evi_base': 0.45,
-                'ndwi_base': 0.25,
-                'carbono_ton_ha': 120,
-                'shannon_base': 2.0,
-                'temperatura': 28,
-                'precipitacion': 800,
-                'humedad_suelo': 0.4
-            },
-            'Bosque Montano': {
-                'ndvi_base': 0.75,
-                'savi_base': 0.60,
-                'mndvi_base': 0.70,
-                'evi_base': 0.55,
-                'ndwi_base': 0.35,
-                'carbono_ton_ha': 180,
-                'shannon_base': 2.5,
-                'temperatura': 18,
-                'precipitacion': 1500,
-                'humedad_suelo': 0.7
-            },
-            'Sabana Arborizada': {
-                'ndvi_base': 0.55,
-                'savi_base': 0.40,
-                'mndvi_base': 0.50,
-                'evi_base': 0.35,
-                'ndwi_base': 0.20,
-                'carbono_ton_ha': 80,
-                'shannon_base': 1.8,
-                'temperatura': 25,
-                'precipitacion': 1200,
-                'humedad_suelo': 0.5
-            },
-            'Humeral': {
-                'ndvi_base': 0.70,
-                'savi_base': 0.55,
-                'mndvi_base': 0.65,
-                'evi_base': 0.50,
-                'ndwi_base': 0.60,
-                'carbono_ton_ha': 150,
-                'shannon_base': 2.2,
-                'temperatura': 22,
-                'precipitacion': 3000,
-                'humedad_suelo': 0.9
-            }
+        self.colores_kpi = {
+            'excelente': '#10b981',
+            'bueno': '#3b82f6',
+            'moderado': '#f59e0b',
+            'pobre': '#ef4444'
         }
     
-    def calcular_indices_vegetacion(self, params_base, area_ha):
-        """Calcular todos los índices de vegetación"""
-        # Simular variación basada en área y parámetros aleatorios
-        variacion = np.random.uniform(-0.15, 0.15)
+    def crear_kpi_card(self, titulo, valor, icono, color, unidad="", cambio=None):
+        """Crear tarjeta KPI estilizada"""
+        cambio_html = ""
+        if cambio is not None:
+            cambio_clase = "positive" if cambio > 0 else "negative"
+            signo = "+" if cambio > 0 else ""
+            cambio_html = f'<span style="font-size: 0.8rem; padding: 2px 8px; background-color: {"#d1fae5" if cambio > 0 else "#fee2e2"}; color: {"#065f46" if cambio > 0 else "#991b1b"}; border-radius: 12px;">{signo}{cambio}%</span>'
         
-        resultados = {
-            'ndvi': max(0.1, min(1.0, params_base['ndvi_base'] + variacion)),
-            'savi': max(0.1, min(1.0, params_base['savi_base'] + np.random.uniform(-0.1, 0.1))),
-            'mndvi': max(0.1, min(1.0, params_base['mndvi_base'] + np.random.uniform(-0.1, 0.1))),
-            'evi': max(0.1, min(1.0, params_base['evi_base'] + np.random.uniform(-0.1, 0.1))),
-            'ndwi': max(0.1, min(1.0, params_base['ndwi_base'] + np.random.uniform(-0.1, 0.1))),
+        return f"""
+        <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid {color}; margin-bottom: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: start;">
+                <div>
+                    <div style="font-size: 0.9rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px;">{titulo}</div>
+                    <div style="font-size: 2rem; font-weight: 700; margin: 0.5rem 0; color: {color};">{valor}</div>
+                    <div style="font-size: 0.9rem; color: #6b7280;">{unidad}</div>
+                </div>
+                <div style="font-size: 2rem; color: {color};">{icono}</div>
+            </div>
+            {cambio_html}
+        </div>
+        """
+    
+    def crear_dashboard_ejecutivo(self, resultados):
+        """Crear dashboard ejecutivo completo"""
+        if not resultados:
+            return None
+        
+        resumen = resultados.get('resumen', {})
+        
+        # Crear HTML del dashboard
+        dashboard_html = f"""
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 2rem; border-radius: 15px; margin-bottom: 2rem; color: white;">
+            <h2 style="margin: 0; font-size: 2rem;">📊 Dashboard Ejecutivo</h2>
+            <p style="margin: 0.5rem 0 0 0; opacity: 0.9;">Resumen integral del análisis ambiental</p>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 2rem;">
+            {self.crear_kpi_card('Estado General', resumen.get('estado_general', 'N/A'), '📈', resumen.get('color_estado', '#808080'))}
+            {self.crear_kpi_card('Área Total', f"{resumen.get('area_total_ha', 0):,.0f}", '📐', '#3b82f6', 'hectáreas')}
+            {self.crear_kpi_card('NDVI Promedio', f"{resumen.get('ndvi_promedio', 0):.3f}", '🌿', '#10b981')}
+            {self.crear_kpi_card('Biodiversidad', f"{resumen.get('shannon_promedio', 0):.2f}", '🦋', '#8b5cf6', 'Índice')}
+        </div>
+        
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem;">
+            {self.crear_kpi_card('Carbono Total', f"{resumen.get('carbono_total_co2', 0):,.0f}", '🌳', '#065f46', 'ton CO₂')}
+            {self.crear_kpi_card('Áreas Óptimas', resumen.get('areas_optimas', 0), '✅', '#10b981')}
+            {self.crear_kpi_card('Temperatura', f"{resumen.get('temperatura_promedio', 0):.1f}", '🌡️', '#ef4444', '°C')}
+            {self.crear_kpi_card('Precipitación', f"{resumen.get('precipitacion_promedio', 0):.0f}", '💧', '#0ea5e9', 'mm/año')}
+        </div>
+        """
+        
+        return dashboard_html
+    
+    def crear_grafico_radar(self, resultados):
+        """Crear gráfico radar para comparación de índices"""
+        if not resultados:
+            return None
+        
+        resumen = resultados.get('resumen', {})
+        
+        # Datos para el radar
+        categorias = ['NDVI', 'SAVI', 'EVI', 'Biodiversidad', 'Carbono']
+        valores = [
+            resumen.get('ndvi_promedio', 0) * 100,
+            resumen.get('savi_promedio', 0) * 100,
+            resumen.get('evi_promedio', 0) * 100,
+            min(resumen.get('shannon_promedio', 0) * 25, 100),  # Escalar Shannon (0-4 -> 0-100)
+            min(resumen.get('carbono_promedio_ha', 0) / 3, 100)  # Escalar Carbono (0-300 -> 0-100)
+        ]
+        
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatterpolar(
+            r=valores,
+            theta=categorias,
+            fill='toself',
+            name='Índices',
+            line_color='#3b82f6',
+            fillcolor='rgba(59, 130, 246, 0.3)'
+        ))
+        
+        fig.update_layout(
+            polar=dict(
+                radialaxis=dict(
+                    visible=True,
+                    range=[0, 100]
+                )),
+            showlegend=True,
+            title='Comparación de Índices Ambientales',
+            height=400
+        )
+        
+        return fig
+    
+    def crear_grafico_barras_apiladas(self, resultados):
+        """Crear gráfico de barras apiladas para distribución de áreas"""
+        if not resultados:
+            return None
+        
+        areas = resultados.get('areas', [])
+        
+        # Contar áreas por categoría de salud
+        categorias = {
+            'Excelente': 0,
+            'Buena': 0,
+            'Moderada': 0,
+            'Pobre': 0,
+            'Degradada': 0
         }
         
-        # Ajustar por área (áreas más grandes tienden a tener mejor vegetación)
-        factor_area = min(1.5, 1 + (area_ha / 1000))
-        for key in resultados:
-            resultados[key] = min(1.0, resultados[key] * factor_area)
+        for area in areas:
+            salud = area.get('indices', {}).get('Salud_Vegetacion', 'Moderada')
+            if salud in categorias:
+                categorias[salud] += 1
         
-        return resultados
+        fig = go.Figure(data=[
+            go.Bar(
+                x=list(categorias.keys()),
+                y=list(categorias.values()),
+                marker_color=['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#991b1b'],
+                text=list(categorias.values()),
+                textposition='auto',
+            )
+        ])
+        
+        fig.update_layout(
+            title='Distribución de Salud de la Vegetación',
+            xaxis_title='Categoría de Salud',
+            yaxis_title='Número de Áreas',
+            height=400
+        )
+        
+        return fig
+
+# ===============================
+# 🌿 SISTEMA DE ANÁLISIS AMBIENTAL COMPLETO
+# ===============================
+
+class SistemaAnalisisAmbiental:
+    """Sistema completo de análisis ambiental con datos satelitales"""
     
-    def calcular_indice_shannon(self, params_base, indices_vegetacion, area_ha):
-        """Calcular índice de Shannon de biodiversidad"""
-        # Base del índice
-        shannon = params_base['shannon_base']
+    def __init__(self):
+        self.simulador = SimuladorSatelital()
+        self.sistema_mapas = SistemaMapasAvanzado()
+        self.dashboard = DashboardResumen()
         
-        # Ajustar por NDVI (mejor vegetación = más biodiversidad)
-        shannon *= (0.5 + 0.5 * indices_vegetacion['ndvi'])
-        
-        # Ajustar por área (efecto de área-especie)
-        factor_area = min(2.0, 1 + math.log10(area_ha + 1) / 2)
-        shannon *= factor_area
-        
-        # Añadir variación aleatoria
-        shannon += np.random.uniform(-0.3, 0.3)
-        
-        return max(0.1, min(4.0, shannon))
-    
-    def calcular_carbono(self, params_base, area_ha, indices_vegetacion):
-        """Calcular captura de carbono"""
-        # Carbono base por hectárea
-        carbono_ton_ha = params_base['carbono_ton_ha']
-        
-        # Ajustar por NDVI (mejor vegetación = más carbono)
-        carbono_ton_ha *= (0.7 + 0.3 * indices_vegetacion['ndvi'])
-        
-        # Añadir variación
-        carbono_ton_ha += np.random.uniform(-20, 20)
-        
-        # Calcular totales
-        carbono_total = carbono_ton_ha * area_ha
-        co2_total = carbono_total * 3.67  # Conversión a CO2
-        
-        return {
-            'carbono_ton_ha': max(0, round(carbono_ton_ha, 2)),
-            'carbono_total': max(0, round(carbono_total, 2)),
-            'co2_total': max(0, round(co2_total, 2))
+        # Tipos de cobertura vegetal
+        self.tipos_cobertura = {
+            'Bosque Tropical Húmedo': 'bosque_denso',
+            'Bosque Seco Tropical': 'bosque_secundario',
+            'Bosque Montano': 'bosque_denso',
+            'Sabana Arborizada': 'pastizal',
+            'Humeral': 'pastizal',
+            'Agricultura': 'pastizal',
+            'Zona Urbana': 'suelo_desnudo',
+            'Cuerpo de Agua': 'agua'
         }
     
-    def analizar_area(self, gdf, tipo_ecosistema, n_divisiones=6):
-        """Analizar toda el área dividida en celdas"""
+    def analizar_area_completa(self, gdf, tipo_ecosistema, satelite_seleccionado, n_divisiones=8):
+        """Realizar análisis ambiental completo con datos satelitales"""
         try:
             poligono_principal = gdf.geometry.iloc[0]
             bounds = poligono_principal.bounds
             
-            params_base = self.parametros_ecosistemas.get(
-                tipo_ecosistema, 
-                self.parametros_ecosistemas['Bosque Tropical Húmedo']
-            )
+            # Determinar satélite
+            satelite = Satelite.PLANETSCOPE if satelite_seleccionado == "PlanetScope" else Satelite.SENTINEL2
+            
+            # Generar metadatos de imagen
+            imagen = self.simulador.generar_imagen_satelital(satelite)
             
             resultados = {
+                'metadatos_imagen': {
+                    'satelite': imagen.satelite.value,
+                    'fecha': imagen.fecha_adquisicion.strftime('%Y-%m-%d'),
+                    'nubosidad': f"{imagen.nubosidad:.1%}",
+                    'calidad': f"{imagen.indice_calidad:.1%}",
+                    'bandas_disponibles': len(imagen.bandas_disponibles)
+                },
                 'areas': [],
                 'resumen': {},
-                'tipo_ecosistema': tipo_ecosistema
+                'tipo_ecosistema': tipo_ecosistema,
+                'satelite_usado': satelite_seleccionado
             }
+            
+            # Determinar tipo de cobertura para simulación
+            tipo_cobertura = self.tipos_cobertura.get(tipo_ecosistema, 'bosque_secundario')
             
             id_area = 1
             
-            # Dividir en grilla
+            # Dividir en grilla y analizar cada celda
             for i in range(n_divisiones):
                 for j in range(n_divisiones):
                     xmin = bounds[0] + (i * (bounds[2]-bounds[0])/n_divisiones)
                     xmax = xmin + (bounds[2]-bounds[0])/n_divisiones
-                    ymin = bounds[1] + (j * (bounds[3]-bounds[1])/n_divisiones)
+                    ymin = bounds[1] + (j * (bounds[3]-bounds[1])/n_divisiones
                     ymax = ymin + (bounds[3]-bounds[1])/n_divisiones
                     
                     celda = Polygon([
@@ -772,33 +820,53 @@ class AnalizadorAmbientalCompleto:
                         area_m2 = interseccion.area * 111000 * 111000 * math.cos(math.radians((ymin+ymax)/2))
                         area_ha = area_m2 / 10000
                         
-                        if area_ha > 0.01:  # Ignorar áreas muy pequeñas
-                            # Calcular todos los indicadores
-                            indices_vegetacion = self.calcular_indices_vegetacion(params_base, area_ha)
-                            indice_shannon = self.calcular_indice_shannon(params_base, indices_vegetacion, area_ha)
-                            carbono = self.calcular_carbono(params_base, area_ha, indices_vegetacion)
+                        if area_ha > 0.01:
+                            # Simular reflectancias para cada banda
+                            reflectancias = {}
+                            for banda in imagen.bandas_disponibles[:5]:  # Usar primeras 5 bandas
+                                reflectancias[banda] = self.simulador.simular_reflectancia(
+                                    tipo_cobertura, banda, satelite
+                                )
+                            
+                            # Calcular índices
+                            indices = self.simulador.calcular_indices(reflectancias, satelite)
+                            
+                            # Calcular biodiversidad (Shannon) basada en NDVI y área
+                            ndvi = indices.get('NDVI', 0.5)
+                            indice_shannon = 2.0 + (ndvi * 2.0) + (math.log10(area_ha + 1) * 0.5)
+                            indice_shannon = max(0.1, min(4.0, indice_shannon + random.uniform(-0.3, 0.3)))
+                            
+                            # Calcular carbono basado en NDVI y área
+                            carbono_ton_ha = 50 + (ndvi * 200) + (area_ha * 0.1)
+                            carbono_total = carbono_ton_ha * area_ha
+                            co2_total = carbono_total * 3.67
                             
                             area_data = {
                                 'id': id_area,
                                 'area': f"Celda-{id_area:03d}",
                                 'geometry': interseccion,
                                 'area_ha': round(area_ha, 2),
-                                'indices_vegetacion': indices_vegetacion,
+                                'reflectancias': {k: round(v, 4) for k, v in reflectancias.items()},
+                                'indices': {k: round(v, 4) if isinstance(v, (int, float)) else v for k, v in indices.items()},
                                 'indice_shannon': round(indice_shannon, 3),
-                                'carbono': carbono,
-                                'temperatura': params_base['temperatura'] + np.random.uniform(-2, 2),
-                                'precipitacion': params_base['precipitacion'] + np.random.uniform(-100, 100),
-                                'humedad_suelo': params_base['humedad_suelo'] + np.random.uniform(-0.1, 0.1),
-                                'presion_antropica': np.random.uniform(0.1, 0.6),
-                                'conectividad': np.random.uniform(0.4, 0.9)
+                                'carbono': {
+                                    'ton_ha': round(carbono_ton_ha, 2),
+                                    'total': round(carbono_total, 2),
+                                    'co2_total': round(co2_total, 2)
+                                },
+                                'temperatura': 25 + random.uniform(-5, 5),
+                                'precipitacion': 1500 + random.uniform(-300, 300),
+                                'humedad_suelo': 0.5 + random.uniform(-0.2, 0.2),
+                                'presion_antropica': random.uniform(0.1, 0.6),
+                                'cobertura_vegetal': tipo_cobertura
                             }
                             
                             resultados['areas'].append(area_data)
                             id_area += 1
             
-            # Calcular resumen general
+            # Calcular resumen estadístico
             if resultados['areas']:
-                self._calcular_resumen(resultados)
+                self._calcular_resumen_estadistico(resultados)
             
             return resultados
             
@@ -806,28 +874,51 @@ class AnalizadorAmbientalCompleto:
             st.error(f"Error en análisis ambiental: {str(e)}")
             return None
     
-    def _calcular_resumen(self, resultados):
-        """Calcular estadísticas resumen"""
+    def _calcular_resumen_estadistico(self, resultados):
+        """Calcular estadísticas resumen del análisis"""
         areas = resultados['areas']
         
         resumen = {
             'total_areas': len(areas),
             'area_total_ha': sum(a['area_ha'] for a in areas),
-            'ndvi_promedio': np.mean([a['indices_vegetacion']['ndvi'] for a in areas]),
-            'savi_promedio': np.mean([a['indices_vegetacion']['savi'] for a in areas]),
-            'evi_promedio': np.mean([a['indices_vegetacion']['evi'] for a in areas]),
+            
+            # Índices de vegetación
+            'ndvi_promedio': np.mean([a['indices'].get('NDVI', 0) for a in areas]),
+            'savi_promedio': np.mean([a['indices'].get('SAVI', 0) for a in areas]),
+            'evi_promedio': np.mean([a['indices'].get('EVI', 0) for a in areas]),
+            'ndwi_promedio': np.mean([a['indices'].get('NDWI', 0) for a in areas]),
+            'msavi_promedio': np.mean([a['indices'].get('MSAVI', 0) for a in areas]),
+            
+            # Biodiversidad y carbono
             'shannon_promedio': np.mean([a['indice_shannon'] for a in areas]),
+            'carbono_promedio_ha': np.mean([a['carbono']['ton_ha'] for a in areas]),
             'carbono_total_co2': sum(a['carbono']['co2_total'] for a in areas),
-            'carbono_promedio_ha': np.mean([a['carbono']['carbono_ton_ha'] for a in areas]),
+            
+            # Variables ambientales
             'temperatura_promedio': np.mean([a['temperatura'] for a in areas]),
-            'precipitacion_promedio': np.mean([a['precipitacion'] for a in areas])
+            'precipitacion_promedio': np.mean([a['precipitacion'] for a in areas]),
+            'humedad_suelo_promedio': np.mean([a['humedad_suelo'] for a in areas]),
+            'presion_antropica_promedio': np.mean([a['presion_antropica'] for a in areas]),
+            
+            # Conteo por categoría de salud
+            'areas_excelente': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Excelente']),
+            'areas_buena': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Buena']),
+            'areas_moderada': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Moderada']),
+            'areas_pobre': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Pobre']),
+            'areas_degradada': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Degradada'])
         }
         
-        # Clasificar estado general
+        # Calcular áreas óptimas (NDVI > 0.7 y Shannon > 2.5)
+        resumen['areas_optimas'] = len([
+            a for a in areas 
+            if a['indices'].get('NDVI', 0) > 0.7 and a['indice_shannon'] > 2.5
+        ])
+        
+        # Determinar estado general
         ndvi_avg = resumen['ndvi_promedio']
         shannon_avg = resumen['shannon_promedio']
         
-        if ndvi_avg > 0.7 and shannon_avg > 2.5:
+        if ndvi_avg > 0.7 and shannon_avg > 2.5 and resumen['areas_optimas'] > len(areas) * 0.3:
             resumen['estado_general'] = 'Excelente'
             resumen['color_estado'] = '#10b981'
         elif ndvi_avg > 0.5 and shannon_avg > 1.8:
@@ -837,24 +928,32 @@ class AnalizadorAmbientalCompleto:
             resumen['estado_general'] = 'Moderado'
             resumen['color_estado'] = '#f59e0b'
         else:
-            resumen['estado_general'] = 'Degradado'
+            resumen['estado_general'] = 'Preocupante'
             resumen['color_estado'] = '#ef4444'
         
         resultados['resumen'] = resumen
 
 # ===============================
-# 🎨 INTERFAZ DE USUARIO COMPLETA
+# 🎨 INTERFAZ PRINCIPAL DE LA APLICACIÓN
 # ===============================
 
 def main():
-    st.title("🌿 Sistema Integral de Análisis Ambiental")
-    st.markdown("### Análisis de Biodiversidad, Vegetación, Carbono y Conservación de Especies")
+    # Configurar título y estilos
+    st.set_page_config(
+        page_title="Sistema Satelital de Análisis Ambiental",
+        page_icon="🛰️",
+        layout="wide"
+    )
+    
+    # Título principal
+    st.title("🛰️ Sistema Satelital de Análisis Ambiental")
+    st.markdown("### Análisis con PlanetScope & Sentinel-2 | Dashboard Ejecutivo")
     
     # Inicializar sistemas
-    if 'analizador' not in st.session_state:
-        st.session_state.analizador = AnalizadorAmbientalCompleto()
-    if 'resultados_ambientales' not in st.session_state:
-        st.session_state.resultados_ambientales = None
+    if 'sistema_analisis' not in st.session_state:
+        st.session_state.sistema_analisis = SistemaAnalisisAmbiental()
+    if 'resultados' not in st.session_state:
+        st.session_state.resultados = None
     if 'poligono_data' not in st.session_state:
         st.session_state.poligono_data = None
     
@@ -870,270 +969,315 @@ def main():
         )
         
         if uploaded_file is not None:
-            try:
-                if uploaded_file.name.endswith('.kml'):
-                    gdf = gpd.read_file(uploaded_file, driver='KML')
-                elif uploaded_file.name.endswith('.geojson'):
-                    gdf = gpd.read_file(uploaded_file)
-                elif uploaded_file.name.endswith('.zip'):
-                    with tempfile.TemporaryDirectory() as tmpdir:
-                        with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
-                            zip_ref.extractall(tmpdir)
-                        for file in os.listdir(tmpdir):
-                            if file.endswith('.shp'):
-                                gdf = gpd.read_file(os.path.join(tmpdir, file))
-                                break
-                
-                if gdf is not None and not gdf.empty:
-                    st.session_state.poligono_data = gdf
-                    st.success("✅ Polígono cargado exitosamente")
-            except Exception as e:
-                st.error(f"Error cargando archivo: {str(e)}")
+            with st.spinner("Procesando archivo..."):
+                try:
+                    if uploaded_file.name.endswith('.kml'):
+                        gdf = gpd.read_file(uploaded_file, driver='KML')
+                    elif uploaded_file.name.endswith('.geojson'):
+                        gdf = gpd.read_file(uploaded_file)
+                    elif uploaded_file.name.endswith('.zip'):
+                        with tempfile.TemporaryDirectory() as tmpdir:
+                            with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
+                                zip_ref.extractall(tmpdir)
+                            shp_files = [f for f in os.listdir(tmpdir) if f.endswith('.shp')]
+                            if shp_files:
+                                gdf = gpd.read_file(os.path.join(tmpdir, shp_files[0]))
+                    
+                    if gdf is not None and not gdf.empty:
+                        st.session_state.poligono_data = gdf
+                        st.success("✅ Polígono cargado exitosamente")
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
         
-        # Parámetros de análisis
+        # Configuración del análisis
         if st.session_state.poligono_data is not None:
             st.markdown("---")
-            st.subheader("📊 Parámetros del Análisis")
+            st.subheader("🛰️ Configuración Satelital")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                satelite = st.selectbox(
+                    "Satélite",
+                    ["PlanetScope", "Sentinel-2"],
+                    help="PlanetScope: 3m resolución | Sentinel-2: 10-20m resolución"
+                )
+            with col2:
+                capa_base = st.selectbox(
+                    "Capa base del mapa",
+                    ["ESRI World Imagery", "PlanetScope", "Sentinel-2", "OpenTopoMap"]
+                )
+            
+            st.subheader("🌿 Parámetros Ambientales")
             
             tipo_ecosistema = st.selectbox(
                 "Tipo de ecosistema predominante",
                 ['Bosque Tropical Húmedo', 'Bosque Seco Tropical', 'Bosque Montano', 
-                 'Sabana Arborizada', 'Humeral']
+                 'Sabana Arborizada', 'Humeral', 'Agricultura', 'Zona Urbana']
             )
             
-            nivel_detalle = st.slider("Nivel de detalle (divisiones)", 3, 10, 6)
+            nivel_detalle = st.slider("Nivel de detalle (divisiones)", 4, 12, 8)
             
-            if st.button("🚀 Ejecutar Análisis Ambiental Completo", type="primary"):
-                with st.spinner("Realizando análisis integral..."):
-                    resultados = st.session_state.analizador.analizar_area(
+            if st.button("🚀 Ejecutar Análisis Completo", type="primary", use_container_width=True):
+                with st.spinner("Procesando datos satelitales..."):
+                    resultados = st.session_state.sistema_analisis.analizar_area_completa(
                         st.session_state.poligono_data,
                         tipo_ecosistema,
+                        satelite,
                         nivel_detalle
                     )
                     
                     if resultados:
-                        st.session_state.resultados_ambientales = resultados
+                        st.session_state.resultados = resultados
                         st.success("✅ Análisis completado exitosamente!")
     
     # Pestañas principales
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "🗺️ Mapa del Área", 
-        "📊 Indicadores Ambientales",
-        "🌿 Análisis de Vegetación",
-        "🦋 Biodiversidad y Carbono",
-        "🎯 Conservación de Especies"
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "🗺️ Mapa Satelital", 
+        "📊 Dashboard Ejecutivo",
+        "🌿 Índices de Vegetación",
+        "📈 Datos Completos"
     ])
     
     with tab1:
-        mostrar_mapa_area()
+        mostrar_mapa_satelital(capa_base if 'capa_base' in locals() else "ESRI World Imagery")
     
     with tab2:
-        mostrar_indicadores_ambientales()
+        mostrar_dashboard_ejecutivo()
     
     with tab3:
-        mostrar_analisis_vegetacion()
+        mostrar_indices_vegetacion()
     
     with tab4:
-        mostrar_biodiversidad_carbono()
-    
-    with tab5:
-        mostrar_conservacion_especies()
+        mostrar_datos_completos()
 
-def mostrar_mapa_area():
-    """Mostrar mapa del área con zoom automático"""
-    st.markdown("## 🗺️ Visualización del Área de Estudio")
+def mostrar_mapa_satelital(capa_base="ESRI World Imagery"):
+    """Mostrar mapa satelital con el área de estudio"""
+    st.markdown("## 🗺️ Mapa Satelital del Área de Estudio")
     
     if st.session_state.poligono_data is not None:
-        # Selector de capa base
-        col1, col2 = st.columns([3, 1])
-        
-        with col2:
-            capa_base = st.selectbox(
-                "Capa base del mapa",
-                ["Satélite", "Topográfico", "OSM"],
-                index=0
-            )
-        
-        with col1:
-            # Crear y mostrar mapa
-            mapa = st.session_state.analizador.sistema_mapas.crear_mapa_base(
-                st.session_state.poligono_data,
-                "Área de Análisis Ambiental",
-                capa_base
-            )
-            folium_static(mapa, width=800, height=600)
-        
         # Información del área
-        if st.session_state.resultados_ambientales:
-            resumen = st.session_state.resultados_ambientales['resumen']
+        gdf = st.session_state.poligono_data
+        bounds = gdf.total_bounds
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            area_km2 = gdf.geometry.area.iloc[0] * 111 * 111 * math.cos(math.radians((bounds[1] + bounds[3])/2))
+            st.metric("Área aproximada", f"{area_km2:.2f} km²")
+        with col2:
+            st.metric("Centroide", f"{(bounds[1] + bounds[3])/2:.4f}°, {(bounds[0] + bounds[2])/2:.4f}°")
+        with col3:
+            st.metric("Tipo de geometría", gdf.geometry.iloc[0].geom_type)
+        
+        # Crear y mostrar mapa
+        mapa = st.session_state.sistema_analisis.sistema_mapas.crear_mapa_satelital(
+            st.session_state.poligono_data,
+            "Área de Análisis Satelital",
+            capa_base
+        )
+        
+        folium_static(mapa, width=1000, height=600)
+        
+        # Información adicional si hay resultados
+        if st.session_state.resultados:
+            st.markdown("### 📋 Metadatos de la Imagen Satelital")
             
+            metadatos = st.session_state.resultados.get('metadatos_imagen', {})
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Área total", f"{resumen['area_total_ha']:,.1f} ha")
+                st.metric("Satélite", metadatos.get('satelite', 'N/A'))
             with col2:
-                st.metric("Celdas analizadas", resumen['total_areas'])
+                st.metric("Fecha", metadatos.get('fecha', 'N/A'))
             with col3:
-                st.metric("Estado general", resumen['estado_general'])
+                st.metric("Nubosidad", metadatos.get('nubosidad', 'N/A'))
             with col4:
-                st.metric("Tipo de ecosistema", 
-                         st.session_state.resultados_ambientales['tipo_ecosistema'])
+                st.metric("Calidad", metadatos.get('calidad', 'N/A'))
     else:
         st.info("👈 Carga un polígono en el panel lateral para comenzar")
+        
+        # Mapa de ejemplo
+        st.markdown("### 🎯 Ejemplo de visualización satelital")
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            ejemplo_capa = st.selectbox("Capa de ejemplo", list(st.session_state.sistema_analisis.sistema_mapas.capas_base.keys()))
+        
+        with col1:
+            # Crear un polígono de ejemplo
+            polygon_ejemplo = Polygon([
+                (-60.0, -14.0),
+                (-59.5, -14.0),
+                (-59.5, -13.5),
+                (-60.0, -13.5),
+                (-60.0, -14.0)
+            ])
+            gdf_ejemplo = gpd.GeoDataFrame({'geometry': [polygon_ejemplo]}, crs="EPSG:4326")
+            
+            mapa_ejemplo = st.session_state.sistema_analisis.sistema_mapas.crear_mapa_satelital(
+                gdf_ejemplo,
+                "Área de Ejemplo",
+                ejemplo_capa
+            )
+            folium_static(mapa_ejemplo, width=800, height=500)
 
-def mostrar_indicadores_ambientales():
-    """Mostrar todos los indicadores ambientales"""
-    st.markdown("## 📊 Indicadores Ambientales por Celda")
+def mostrar_dashboard_ejecutivo():
+    """Mostrar dashboard ejecutivo con KPIs"""
+    st.markdown("## 📊 Dashboard Ejecutivo de Análisis Ambiental")
     
-    if st.session_state.resultados_ambientales is None:
+    if st.session_state.resultados is not None:
+        # Dashboard principal
+        dashboard_html = st.session_state.sistema_analisis.dashboard.crear_dashboard_ejecutivo(
+            st.session_state.resultados
+        )
+        st.markdown(dashboard_html, unsafe_allow_html=True)
+        
+        # Gráficos complementarios
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### 📈 Comparación de Índices")
+            fig_radar = st.session_state.sistema_analisis.dashboard.crear_grafico_radar(
+                st.session_state.resultados
+            )
+            if fig_radar:
+                st.plotly_chart(fig_radar, use_container_width=True)
+        
+        with col2:
+            st.markdown("### 🌿 Salud de la Vegetación")
+            fig_barras = st.session_state.sistema_analisis.dashboard.crear_grafico_barras_apiladas(
+                st.session_state.resultados
+            )
+            if fig_barras:
+                st.plotly_chart(fig_barras, use_container_width=True)
+        
+        # Mapa de calor de NDVI
+        st.markdown("### 🗺️ Mapa de Calor - NDVI")
+        
+        if st.session_state.poligono_data and st.session_state.resultados['areas']:
+            # Preparar datos para el mapa
+            datos_areas = st.session_state.resultados['areas']
+            
+            # Crear mapa de calor
+            mapa_calor = st.session_state.sistema_analisis.sistema_mapas.crear_mapa_indices(
+                st.session_state.poligono_data,
+                datos_areas,
+                'NDVI',
+                'Mapa de NDVI'
+            )
+            
+            folium_static(mapa_calor, width=1000, height=500)
+        
+        # Resumen ejecutivo textual
+        st.markdown("### 📋 Resumen Ejecutivo")
+        
+        resumen = st.session_state.resultados.get('resumen', {})
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**Fortalezas del Área:**")
+            if resumen.get('ndvi_promedio', 0) > 0.7:
+                st.success("✅ Alta salud de la vegetación (NDVI > 0.7)")
+            if resumen.get('shannon_promedio', 0) > 2.5:
+                st.success("✅ Alta biodiversidad (Índice Shannon > 2.5)")
+            if resumen.get('carbono_total_co2', 0) > 10000:
+                st.success(f"✅ Alto potencial de captura de carbono ({resumen.get('carbono_total_co2', 0):,.0f} ton CO₂)")
+        
+        with col2:
+            st.markdown("**Oportunidades de Mejora:**")
+            if resumen.get('presion_antropica_promedio', 0) > 0.5:
+                st.warning("⚠️ Presión antrópica moderada-alta")
+            if resumen.get('areas_degradada', 0) > 0:
+                st.error(f"❌ {resumen.get('areas_degradada', 0)} áreas degradadas detectadas")
+            if resumen.get('ndwi_promedio', 0) < 0:
+                st.info("💧 Baja disponibilidad de agua (NDWI negativo)")
+    
+    else:
+        st.warning("Ejecuta el análisis ambiental primero para ver el dashboard")
+
+def mostrar_indices_vegetacion():
+    """Mostrar análisis detallado de índices de vegetación"""
+    st.markdown("## 🌿 Análisis de Índices de Vegetación Satelital")
+    
+    if st.session_state.resultados is None:
         st.warning("Ejecuta el análisis ambiental primero")
         return
     
-    resultados = st.session_state.resultados_ambientales
+    resultados = st.session_state.resultados
+    areas = resultados.get('areas', [])
     
-    # KPIs principales
-    resumen = resultados['resumen']
-    
-    st.markdown("### 📈 Resumen General")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("NDVI Promedio", f"{resumen['ndvi_promedio']:.3f}")
-    with col2:
-        st.metric("Índice Shannon", f"{resumen['shannon_promedio']:.3f}")
-    with col3:
-        st.metric("Carbono Total CO₂", f"{resumen['carbono_total_co2']:,.0f} ton")
-    with col4:
-        st.metric("Estado General", resumen['estado_general'])
-    
-    # Tabla de datos
-    st.markdown("### 📋 Datos por Celda")
-    
-    # Preparar datos para tabla
-    datos_tabla = []
-    for area in resultados['areas']:
-        datos_tabla.append({
-            'Celda': area['area'],
-            'Área (ha)': area['area_ha'],
-            'NDVI': area['indices_vegetacion']['ndvi'],
-            'SAVI': area['indices_vegetacion']['savi'],
-            'EVI': area['indices_vegetacion']['evi'],
-            'Shannon': area['indice_shannon'],
-            'Carbono (ton/ha)': area['carbono']['carbono_ton_ha'],
-            'CO₂ Total': area['carbono']['co2_total'],
-            'Temp. (°C)': area['temperatura'],
-            'Precip. (mm)': area['precipitacion']
-        })
-    
-    df = pd.DataFrame(datos_tabla)
-    st.dataframe(df, use_container_width=True)
-    
-    # Descarga de datos
-    st.markdown("### 📥 Exportar Datos")
-    
-    if st.button("⬇️ Descargar Datos Completos como CSV"):
-        csv = df.to_csv(index=False)
-        b64 = base64.b64encode(csv.encode()).decode()
-        href = f'<a href="data:file/csv;base64,{b64}" download="datos_ambientales.csv">Descargar CSV</a>'
-        st.markdown(href, unsafe_allow_html=True)
-
-def mostrar_analisis_vegetacion():
-    """Mostrar análisis detallado de vegetación"""
-    st.markdown("## 🌿 Análisis Detallado de Vegetación")
-    
-    if st.session_state.resultados_ambientales is None:
-        st.warning("Ejecuta el análisis ambiental primero")
+    if not areas:
+        st.error("No hay datos de áreas para mostrar")
         return
     
-    resultados = st.session_state.resultados_ambientales
+    # Selector de índice para visualización
+    indices_disponibles = ['NDVI', 'SAVI', 'EVI', 'NDWI', 'MSAVI']
     
-    # Selector de índice de vegetación
-    indices_opciones = {
-        'NDVI': 'ndvi',
-        'SAVI': 'savi', 
-        'MNDVI': 'mndvi',
-        'EVI': 'evi',
-        'NDWI': 'ndwi'
-    }
-    
-    col1, col2 = st.columns([2, 1])
+    col1, col2 = st.columns([3, 1])
     
     with col2:
         indice_seleccionado = st.selectbox(
             "Seleccionar índice para visualizar",
-            list(indices_opciones.keys())
+            indices_disponibles,
+            index=0
         )
         
-        # Configuración para el mapa
-        config_mapa = {
-            'titulo': f'Índice {indice_seleccionado}',
-            'columna': indices_opciones[indice_seleccionado],
-            'colores': {
-                (0, 0.2): '#8B0000',
-                (0.2, 0.4): '#FF4500',
-                (0.4, 0.6): '#FFD700',
-                (0.6, 0.8): '#32CD32',
-                (0.8, 1.0): '#006400'
-            }
-        }
+        # Estadísticas del índice seleccionado
+        valores_indice = [area['indices'].get(indice_seleccionado, 0) for area in areas]
+        if valores_indice:
+            st.metric(f"{indice_seleccionado} Promedio", f"{np.mean(valores_indice):.3f}")
+            st.metric(f"{indice_seleccionado} Máximo", f"{np.max(valores_indice):.3f}")
+            st.metric(f"{indice_seleccionado} Mínimo", f"{np.min(valores_indice):.3f}")
     
     with col1:
-        # Preparar datos para el mapa
-        datos_mapa = []
-        for area in resultados['areas']:
-            datos_mapa.append({
-                'area': area['area'],
-                'geometry': area['geometry'],
-                indices_opciones[indice_seleccionado]: area['indices_vegetacion'][indices_opciones[indice_seleccionado]]
-            })
-        
-        # Crear y mostrar mapa
-        mapa = st.session_state.analizador.sistema_mapas.crear_mapa_indicador(
-            st.session_state.poligono_data,
-            datos_mapa,
-            config_mapa
-        )
-        folium_static(mapa, width=800, height=500)
+        # Mapa del índice seleccionado
+        if st.session_state.poligono_data:
+            mapa_indice = st.session_state.sistema_analisis.sistema_mapas.crear_mapa_indices(
+                st.session_state.poligono_data,
+                areas,
+                indice_seleccionado,
+                f"Mapa de {indice_seleccionado}"
+            )
+            folium_static(mapa_indice, width=800, height=500)
     
-    # Gráficos de distribución
-    st.markdown("### 📈 Distribución de Índices de Vegetación")
+    # Gráficos de comparación de índices
+    st.markdown("### 📊 Comparación entre Índices")
     
-    # Preparar datos para gráficos
-    indices_data = []
-    for area in resultados['areas']:
-        for idx_nombre, idx_valor in area['indices_vegetacion'].items():
-            indices_data.append({
-                'Índice': idx_nombre.upper(),
-                'Valor': idx_valor,
-                'Celda': area['area']
-            })
+    # Preparar datos para gráfico de dispersión
+    datos_grafico = []
+    for area in areas[:50]:  # Limitar a 50 áreas para mejor visualización
+        datos_grafico.append({
+            'NDVI': area['indices'].get('NDVI', 0),
+            'SAVI': area['indices'].get('SAVI', 0),
+            'EVI': area['indices'].get('EVI', 0),
+            'NDWI': area['indices'].get('NDWI', 0),
+            'Área (ha)': area['area_ha'],
+            'Salud': area['indices'].get('Salud_Vegetacion', 'Moderada')
+        })
     
-    df_indices = pd.DataFrame(indices_data)
+    df_indices = pd.DataFrame(datos_grafico)
     
-    # Box plot
-    fig = px.box(
-        df_indices, 
-        x='Índice', 
-        y='Valor',
-        title='Distribución de Índices de Vegetación',
-        color='Índice',
-        color_discrete_sequence=px.colors.qualitative.Set3
+    # Matriz de dispersión
+    fig = px.scatter_matrix(
+        df_indices,
+        dimensions=['NDVI', 'SAVI', 'EVI', 'NDWI'],
+        color='Salud',
+        title='Matriz de Dispersión entre Índices',
+        color_discrete_map={
+            'Excelente': '#10b981',
+            'Buena': '#3b82f6',
+            'Moderada': '#f59e0b',
+            'Pobre': '#ef4444',
+            'Degradada': '#991b1b'
+        }
     )
     
-    fig.update_layout(height=400)
+    fig.update_layout(height=600)
     st.plotly_chart(fig, use_container_width=True)
     
     # Correlación entre índices
-    st.markdown("### 🔗 Correlación entre Índices")
+    st.markdown("### 🔗 Matriz de Correlación")
     
-    # Crear matriz de correlación
-    correlacion_data = []
-    for area in resultados['areas']:
-        correlacion_data.append(area['indices_vegetacion'])
+    corr_matrix = df_indices[['NDVI', 'SAVI', 'EVI', 'NDWI']].corr()
     
-    df_corr = pd.DataFrame(correlacion_data)
-    corr_matrix = df_corr.corr()
-    
-    fig = go.Figure(data=go.Heatmap(
+    fig_corr = go.Figure(data=go.Heatmap(
         z=corr_matrix.values,
         x=corr_matrix.columns,
         y=corr_matrix.columns,
@@ -1141,387 +1285,219 @@ def mostrar_analisis_vegetacion():
         zmin=-1, zmax=1,
         text=np.round(corr_matrix.values, 2),
         texttemplate='%{text}',
-        textfont={"size": 10}
+        textfont={"size": 12}
     ))
     
-    fig.update_layout(
-        title='Matriz de Correlación entre Índices',
+    fig_corr.update_layout(
+        title='Correlación entre Índices de Vegetación',
         height=400
     )
     
-    st.plotly_chart(fig, use_container_width=True)
-
-def mostrar_biodiversidad_carbono():
-    """Mostrar análisis de biodiversidad y carbono"""
-    st.markdown("## 🦋 Análisis de Biodiversidad y Captura de Carbono")
+    st.plotly_chart(fig_corr, use_container_width=True)
     
-    if st.session_state.resultados_ambientales is None:
-        st.warning("Ejecuta el análisis ambiental primero")
-        return
+    # Tabla de valores por área
+    st.markdown("### 📋 Valores de Índices por Área")
     
-    resultados = st.session_state.resultados_ambientales
-    
-    # Dos columnas para métricas
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("### 🌿 Índice de Shannon (Biodiversidad)")
-        
-        # Preparar datos para mapa de biodiversidad
-        datos_shannon = []
-        for area in resultados['areas']:
-            datos_shannon.append({
-                'area': area['area'],
-                'geometry': area['geometry'],
-                'shannon': area['indice_shannon']
-            })
-        
-        # Configuración del mapa
-        config_shannon = {
-            'titulo': 'Índice de Shannon (Biodiversidad)',
-            'columna': 'shannon',
-            'colores': {
-                (0, 1.0): '#8B0000',
-                (1.0, 2.0): '#FF4500',
-                (2.0, 2.5): '#FFD700',
-                (2.5, 3.0): '#32CD32',
-                (3.0, 4.0): '#006400'
-            }
-        }
-        
-        # Crear y mostrar mapa
-        mapa_shannon = st.session_state.analizador.sistema_mapas.crear_mapa_indicador(
-            st.session_state.poligono_data,
-            datos_shannon,
-            config_shannon
-        )
-        folium_static(mapa_shannon, width=400, height=400)
-        
-        # Estadísticas de biodiversidad
-        shannon_values = [area['indice_shannon'] for area in resultados['areas']]
-        
-        col_a, col_b, col_c = st.columns(3)
-        with col_a:
-            st.metric("Promedio", f"{np.mean(shannon_values):.2f}")
-        with col_b:
-            st.metric("Máximo", f"{np.max(shannon_values):.2f}")
-        with col_c:
-            st.metric("Mínimo", f"{np.min(shannon_values):.2f}")
-    
-    with col2:
-        st.markdown("### 🌳 Captura de Carbono")
-        
-        # Preparar datos para mapa de carbono
-        datos_carbono = []
-        for area in resultados['areas']:
-            datos_carbono.append({
-                'area': area['area'],
-                'geometry': area['geometry'],
-                'carbono_ha': area['carbono']['carbono_ton_ha']
-            })
-        
-        # Configuración del mapa
-        config_carbono = {
-            'titulo': 'Carbono Almacenado (ton/ha)',
-            'columna': 'carbono_ha',
-            'colores': {
-                (0, 50): '#FFFACD',
-                (50, 100): '#C2E699',
-                (100, 150): '#78C679',
-                (150, 200): '#238443',
-                (200, 300): '#00441B'
-            }
-        }
-        
-        # Crear y mostrar mapa
-        mapa_carbono = st.session_state.analizador.sistema_mapas.crear_mapa_indicador(
-            st.session_state.poligono_data,
-            datos_carbono,
-            config_carbono
-        )
-        folium_static(mapa_carbono, width=400, height=400)
-        
-        # Estadísticas de carbono
-        carbono_total = sum(area['carbono']['co2_total'] for area in resultados['areas'])
-        carbono_promedio = np.mean([area['carbono']['carbono_ton_ha'] for area in resultados['areas']])
-        
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.metric("CO₂ Total", f"{carbono_total:,.0f} ton")
-        with col_b:
-            st.metric("Promedio/ha", f"{carbono_promedio:.1f} ton")
-    
-    # Relación entre biodiversidad y carbono
-    st.markdown("### 🔄 Relación Biodiversidad-Carbono")
-    
-    # Preparar datos para gráfico de dispersión
-    dispersion_data = []
-    for area in resultados['areas']:
-        dispersion_data.append({
-            'Carbono (ton/ha)': area['carbono']['carbono_ton_ha'],
-            'Biodiversidad (Shannon)': area['indice_shannon'],
-            'NDVI': area['indices_vegetacion']['ndvi'],
+    datos_tabla = []
+    for area in areas[:20]:  # Mostrar primeras 20 áreas
+        datos_tabla.append({
+            'Área': area['area'],
             'Área (ha)': area['area_ha'],
-            'Celda': area['area']
+            'NDVI': area['indices'].get('NDVI', 0),
+            'SAVI': area['indices'].get('SAVI', 0),
+            'EVI': area['indices'].get('EVI', 0),
+            'NDWI': area['indices'].get('NDWI', 0),
+            'Salud': area['indices'].get('Salud_Vegetacion', 'Moderada')
         })
     
-    df_dispersion = pd.DataFrame(dispersion_data)
-    
-    # Gráfico de dispersión
-    fig = px.scatter(
-        df_dispersion,
-        x='Carbono (ton/ha)',
-        y='Biodiversidad (Shannon)',
-        size='Área (ha)',
-        color='NDVI',
-        hover_name='Celda',
-        title='Relación entre Carbono y Biodiversidad',
-        color_continuous_scale='viridis'
-    )
-    
-    fig.update_layout(height=500)
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Análisis de potencial
-    st.markdown("### 📊 Potencial de Conservación")
-    
-    # Calcular potencial combinado
-    potencial_data = []
-    for area in resultados['areas']:
-        # Normalizar valores (0-1)
-        ndvi_norm = area['indices_vegetacion']['ndvi']
-        shannon_norm = area['indice_shannon'] / 4.0  # Máximo teórico 4.0
-        carbono_norm = min(1.0, area['carbono']['carbono_ton_ha'] / 300)  # Máximo 300 ton/ha
-        
-        # Potencial combinado (promedio ponderado)
-        potencial = (ndvi_norm * 0.3 + shannon_norm * 0.4 + carbono_norm * 0.3)
-        
-        potencial_data.append({
-            'Celda': area['area'],
-            'Potencial': round(potencial, 3),
-            'Categoría': 'Alto' if potencial > 0.7 else 'Medio' if potencial > 0.4 else 'Bajo',
-            'NDVI': ndvi_norm,
-            'Shannon': shannon_norm,
-            'Carbono': carbono_norm
-        })
-    
-    df_potencial = pd.DataFrame(potencial_data)
-    df_potencial = df_potencial.sort_values('Potencial', ascending=False)
-    
-    # Mostrar ranking
-    st.markdown("#### 🏆 Ranking de Celdas por Potencial de Conservación")
-    st.dataframe(df_potencial.head(10), use_container_width=True)
+    df_tabla = pd.DataFrame(datos_tabla)
+    st.dataframe(df_tabla, use_container_width=True)
 
-def mostrar_conservacion_especies():
-    """Mostrar análisis de conservación de especies UICN"""
-    st.markdown("## 🎯 Análisis de Conservación de Especies UICN")
+def mostrar_datos_completos():
+    """Mostrar todos los datos completos del análisis"""
+    st.markdown("## 📈 Datos Completos del Análisis Ambiental")
     
-    if st.session_state.resultados_ambientales is None:
+    if st.session_state.resultados is None:
         st.warning("Ejecuta el análisis ambiental primero")
         return
     
-    resultados = st.session_state.resultados_ambientales
-    base_especies = BaseDatosEspeciesUICN()
-    todas_especies = base_especies.obtener_todas_especies()
+    resultados = st.session_state.resultados
     
-    # Selección de especies
-    st.markdown("### 🦋 Selección de Especies para Análisis")
+    # Información general
+    st.markdown("### 📊 Información General del Análisis")
     
-    especies_lista = list(todas_especies.keys())
-    especies_seleccionadas = st.multiselect(
-        "Selecciona las especies a analizar",
-        especies_lista,
-        default=especies_lista[:3]
-    )
-    
-    if not especies_seleccionadas:
-        st.info("Selecciona al menos una especie para analizar")
-        return
-    
-    # Calcular idoneidad para cada especie
-    st.markdown("### 📊 Idoneidad de Hábitat por Especie")
-    
-    resultados_idoneidad = {}
-    
-    for especie in especies_seleccionadas:
-        idoneidades = []
-        
-        for area in resultados['areas']:
-            # Preparar características del área
-            caracteristicas = {
-                'temperatura_promedio': area['temperatura'],
-                'precipitacion_anual': area['precipitacion'],
-                'ndvi': area['indices_vegetacion']['ndvi'],
-                'presion_antropica': area['presion_antropica'],
-                'humedad_suelo': area['humedad_suelo']
-            }
-            
-            idoneidad = base_especies.calcular_idoneidad_habitat(caracteristicas, especie)
-            idoneidades.append(idoneidad)
-        
-        resultados_idoneidad[especie] = {
-            'idoneidad_promedio': np.mean(idoneidades) if idoneidades else 0,
-            'idoneidad_max': np.max(idoneidades) if idoneidades else 0,
-            'idoneidad_min': np.min(idoneidades) if idoneidades else 0,
-            'areas_optimas': len([i for i in idoneidades if i > 0.7]),
-            'areas_moderadas': len([i for i in idoneidades if 0.4 <= i <= 0.7]),
-            'areas_pobres': len([i for i in idoneidades if i < 0.4])
-        }
-    
-    # Mostrar resultados
-    col1, col2 = st.columns(2)
-    
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.markdown("#### 📈 Resumen por Especie")
-        
-        for especie, datos in resultados_idoneidad.items():
-            with st.expander(f"{especie} - {datos['idoneidad_promedio']:.2%}"):
-                st.write(f"**Categoría UICN:** {todas_especies[especie]['categoria_uicn']}")
-                st.write(f"**Idoneidad promedio:** {datos['idoneidad_promedio']:.2%}")
-                st.write(f"**Áreas óptimas:** {datos['areas_optimas']}")
-                st.write(f"**Áreas moderadas:** {datos['areas_moderadas']}")
-                st.write(f"**Áreas pobres:** {datos['areas_pobres']}")
-                
-                # Recomendación basada en idoneidad
-                if datos['idoneidad_promedio'] > 0.7:
-                    st.success("✅ Hábitat óptimo - Ideal para conservación in-situ")
-                elif datos['idoneidad_promedio'] > 0.4:
-                    st.warning("⚠️ Hábitat moderado - Considerar restauración")
-                else:
-                    st.error("❌ Hábitat pobre - Evaluar translocación")
-    
+        st.metric("Satélite utilizado", resultados.get('satelite_usado', 'N/A'))
     with col2:
-        st.markdown("#### 📊 Comparativa de Idoneidad")
+        st.metric("Tipo de ecosistema", resultados.get('tipo_ecosistema', 'N/A'))
+    with col3:
+        st.metric("Número de áreas", resultados.get('resumen', {}).get('total_areas', 0))
+    with col4:
+        st.metric("Área total", f"{resultados.get('resumen', {}).get('area_total_ha', 0):,.1f} ha")
+    
+    # Metadatos de la imagen satelital
+    st.markdown("### 🛰️ Metadatos de la Imagen Satelital")
+    
+    metadatos = resultados.get('metadatos_imagen', {})
+    if metadatos:
+        df_metadatos = pd.DataFrame([metadatos])
+        st.dataframe(df_metadatos.T.rename(columns={0: 'Valor'}), use_container_width=True)
+    
+    # Datos detallados por área
+    st.markdown("### 📋 Datos Detallados por Área")
+    
+    areas = resultados.get('areas', [])
+    if areas:
+        # Preparar datos para la tabla
+        datos_completos = []
+        for area in areas:
+            # Extraer datos principales
+            fila = {
+                'ID': area['id'],
+                'Área': area['area'],
+                'Área (ha)': area['area_ha'],
+                'NDVI': area['indices'].get('NDVI', 0),
+                'SAVI': area['indices'].get('SAVI', 0),
+                'EVI': area['indices'].get('EVI', 0),
+                'Shannon': area['indice_shannon'],
+                'Carbono (ton/ha)': area['carbono']['ton_ha'],
+                'CO₂ Total': area['carbono']['co2_total'],
+                'Temperatura (°C)': area['temperatura'],
+                'Precipitación (mm)': area['precipitacion'],
+                'Salud Vegetación': area['indices'].get('Salud_Vegetacion', 'Moderada'),
+                'Cobertura': area['cobertura_vegetal']
+            }
+            datos_completos.append(fila)
         
-        # Preparar datos para gráfico
-        comparacion_data = []
-        for especie, datos in resultados_idoneidad.items():
-            comparacion_data.append({
-                'Especie': especie,
-                'Idoneidad': datos['idoneidad_promedio'],
-                'Categoría': todas_especies[especie]['categoria_uicn'],
-                'Áreas Óptimas': datos['areas_optimas']
-            })
+        df_completo = pd.DataFrame(datos_completos)
         
-        df_comparacion = pd.DataFrame(comparacion_data)
+        # Mostrar tabla con filtros
+        st.dataframe(df_completo, use_container_width=True)
         
-        # Gráfico de barras
-        fig = px.bar(
-            df_comparacion,
-            x='Especie',
-            y='Idoneidad',
-            color='Categoría',
-            title='Idoneidad de Hábitat por Especie',
-            text='Idoneidad',
-            color_discrete_sequence=px.colors.qualitative.Set3
+        # Opciones de descarga
+        st.markdown("### 📥 Exportar Datos")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Convertir a CSV
+            csv = df_completo.to_csv(index=False)
+            st.download_button(
+                label="⬇️ Descargar CSV",
+                data=csv,
+                file_name="datos_analisis_ambiental.csv",
+                mime="text/csv"
+            )
+        
+        with col2:
+            # Generar reporte ejecutivo
+            if st.button("📄 Generar Reporte Ejecutivo"):
+                reporte = generar_reporte_ejecutivo(resultados)
+                st.download_button(
+                    label="⬇️ Descargar Reporte",
+                    data=reporte,
+                    file_name="reporte_ejecutivo.txt",
+                    mime="text/plain"
+                )
+    
+    # Estadísticas avanzadas
+    st.markdown("### 📊 Estadísticas Avanzadas")
+    
+    if areas:
+        # Seleccionar variable para histograma
+        variables = ['NDVI', 'SAVI', 'EVI', 'Shannon', 'Carbono (ton/ha)']
+        variable_seleccionada = st.selectbox("Seleccionar variable para histograma", variables)
+        
+        # Extraer valores
+        if variable_seleccionada == 'Shannon':
+            valores = [area['indice_shannon'] for area in areas]
+        elif variable_seleccionada == 'Carbono (ton/ha)':
+            valores = [area['carbono']['ton_ha'] for area in areas]
+        else:
+            valores = [area['indices'].get(variable_seleccionada, 0) for area in areas]
+        
+        # Crear histograma
+        fig = px.histogram(
+            x=valores,
+            nbins=20,
+            title=f'Distribución de {variable_seleccionada}',
+            labels={'x': variable_seleccionada, 'y': 'Frecuencia'},
+            color_discrete_sequence=['#3b82f6']
         )
         
-        fig.update_traces(texttemplate='%{text:.2%}', textposition='outside')
-        fig.update_layout(height=400)
+        fig.update_layout(
+            height=400,
+            showlegend=False,
+            bargap=0.1
+        )
         
         st.plotly_chart(fig, use_container_width=True)
+
+def generar_reporte_ejecutivo(resultados):
+    """Generar reporte ejecutivo en texto"""
+    resumen = resultados.get('resumen', {})
+    metadatos = resultados.get('metadatos_imagen', {})
     
-    # Áreas prioritarias para conservación
-    st.markdown("### 🎯 Áreas Prioritarias para Conservación")
+    reporte = f"""
+    ===========================================
+    REPORTE EJECUTIVO DE ANÁLISIS AMBIENTAL
+    ===========================================
     
-    # Calcular prioridad por celda basada en múltiples especies
-    prioridad_celdas = {}
+    Fecha de generación: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+    Satélite utilizado: {resultados.get('satelite_usado', 'N/A')}
+    Tipo de ecosistema: {resultados.get('tipo_ecosistema', 'N/A')}
     
-    for i, area in enumerate(resultados['areas']):
-        prioridad_total = 0
-        especies_presentes = 0
-        
-        for especie in especies_seleccionadas:
-            # Obtener idoneidad para esta especie en esta celda
-            caracteristicas = {
-                'temperatura_promedio': area['temperatura'],
-                'precipitacion_anual': area['precipitacion'],
-                'ndvi': area['indices_vegetacion']['ndvi'],
-                'presion_antropica': area['presion_antropica'],
-                'humedad_suelo': area['humedad_suelo']
-            }
-            
-            idoneidad = base_especies.calcular_idoneidad_habitat(caracteristicas, especie)
-            prioridad_especie = todas_especies[especie]['prioridad_conservacion']
-            
-            prioridad_total += idoneidad * prioridad_especie
-            especies_presentes += 1
-        
-        if especies_presentes > 0:
-            prioridad_promedio = prioridad_total / especies_presentes
-            prioridad_celdas[area['area']] = {
-                'prioridad': prioridad_promedio,
-                'especies': especies_presentes,
-                'categoria': 'Alta' if prioridad_promedio > 0.7 else 'Media' if prioridad_promedio > 0.4 else 'Baja'
-            }
+    METADATOS SATELITALES:
+    ---------------------
+    • Satélite: {metadatos.get('satelite', 'N/A')}
+    • Fecha de adquisición: {metadatos.get('fecha', 'N/A')}
+    • Nubosidad: {metadatos.get('nubosidad', 'N/A')}
+    • Calidad de imagen: {metadatos.get('calidad', 'N/A')}
+    • Bandas disponibles: {metadatos.get('bandas_disponibles', 0)}
     
-    # Mostrar ranking de áreas prioritarias
-    if prioridad_celdas:
-        df_prioridad = pd.DataFrame.from_dict(prioridad_celdas, orient='index')
-        df_prioridad = df_prioridad.sort_values('prioridad', ascending=False)
-        df_prioridad['Prioridad %'] = df_prioridad['prioridad'].apply(lambda x: f"{x:.2%}")
-        
-        st.markdown("#### 🏆 Top 10 Áreas Prioritarias")
-        st.dataframe(
-            df_prioridad[['Prioridad %', 'categoria', 'especies']].head(10),
-            use_container_width=True
-        )
-        
-        # Mapa de prioridades
-        st.markdown("#### 🗺️ Mapa de Prioridades de Conservación")
-        
-        # Preparar datos para mapa
-        datos_prioridad = []
-        for area in resultados['areas']:
-            if area['area'] in prioridad_celdas:
-                datos_prioridad.append({
-                    'area': area['area'],
-                    'geometry': area['geometry'],
-                    'prioridad': prioridad_celdas[area['area']]['prioridad']
-                })
-        
-        config_prioridad = {
-            'titulo': 'Prioridad de Conservación',
-            'columna': 'prioridad',
-            'colores': {
-                (0, 0.4): '#FF0000',
-                (0.4, 0.7): '#FFA500',
-                (0.7, 1.0): '#00FF00'
-            }
-        }
-        
-        mapa_prioridad = st.session_state.analizador.sistema_mapas.crear_mapa_indicador(
-            st.session_state.poligono_data,
-            datos_prioridad,
-            config_prioridad
-        )
-        
-        folium_static(mapa_prioridad, width=800, height=500)
+    RESUMEN EJECUTIVO:
+    -----------------
+    • Área total analizada: {resumen.get('area_total_ha', 0):,.1f} ha
+    • Número de áreas: {resumen.get('total_areas', 0)}
+    • Estado general: {resumen.get('estado_general', 'N/A')}
     
-    # Recomendaciones finales
-    st.markdown("### 💡 Recomendaciones de Conservación")
+    INDICADORES CLAVE:
+    -----------------
+    • NDVI promedio: {resumen.get('ndvi_promedio', 0):.3f}
+    • Índice Shannon (biodiversidad): {resumen.get('shannon_promedio', 0):.2f}
+    • Carbono total capturado: {resumen.get('carbono_total_co2', 0):,.0f} ton CO₂
+    • Áreas óptimas detectadas: {resumen.get('areas_optimas', 0)}
     
-    col1, col2 = st.columns(2)
+    DISTRIBUCIÓN DE SALUD VEGETAL:
+    -----------------------------
+    • Áreas excelentes: {resumen.get('areas_excelente', 0)}
+    • Áreas buenas: {resumen.get('areas_buena', 0)}
+    • Áreas moderadas: {resumen.get('areas_moderada', 0)}
+    • Áreas pobres: {resumen.get('areas_pobre', 0)}
+    • Áreas degradadas: {resumen.get('areas_degradada', 0)}
     
-    with col1:
-        st.markdown("**Acciones Inmediatas:**")
-        st.markdown("""
-        1. 🛡️ Establecer vigilancia en áreas de alta prioridad
-        2. 📊 Monitorear especies clave regularmente
-        3. 🌿 Proteger corredores entre áreas óptimas
-        4. 🤝 Involucrar a comunidades locales
-        5. 📚 Educación ambiental en áreas adyacentes
-        """)
+    VARIABLES AMBIENTALES:
+    ---------------------
+    • Temperatura promedio: {resumen.get('temperatura_promedio', 0):.1f} °C
+    • Precipitación promedio: {resumen.get('precipitacion_promedio', 0):.0f} mm/año
+    • Humedad del suelo: {resumen.get('humedad_suelo_promedio', 0):.2f}
+    • Presión antrópica: {resumen.get('presion_antropica_promedio', 0):.2f}
     
-    with col2:
-        st.markdown("**Acciones a Largo Plazo:**")
-        st.markdown("""
-        1. 🏞️ Crear reservas naturales formales
-        2. 🌳 Programas de restauración ecológica
-        3. 🔬 Investigación científica continua
-        4. 💰 Buscar financiamiento internacional
-        5. 📈 Sistema de monitoreo permanente
-        """)
+    RECOMENDACIONES:
+    ---------------
+    1. Proteger las {resumen.get('areas_optimas', 0)} áreas óptimas identificadas
+    2. Implementar programas de restauración en áreas degradadas
+    3. Monitorear continuamente la presión antrópica
+    4. Establecer corredores biológicos entre áreas de alta biodiversidad
+    5. Considerar certificaciones de carbono para áreas con alto potencial
+    
+    ===========================================
+    FIN DEL REPORTE
+    ===========================================
+    """
+    
+    return reporte
 
 # ===============================
 # 🚀 EJECUCIÓN PRINCIPAL
