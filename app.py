@@ -1,18 +1,15 @@
 # ✅ ABSOLUTAMENTE PRIMERO: Importar streamlit
 import streamlit as st
 
-# ✅ SEGUNDO: Configurar la página (DEBE SER LO PRIMERO)
+# ✅ LUEGO: Configurar la página
 st.set_page_config(
-    page_title="Sistema Satelital de Análisis Ambiental + Carbono Verra",
-    page_icon="🌍",
+    page_title="Sistema Satelital de Análisis Ambiental con Verra VCS",
+    page_icon="🛰️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ===============================
-# 📦 IMPORTS DE BIBLIOTECAS (DESPUÉS DE set_page_config)
-# ===============================
-
+# Ahora sí, el resto de los imports
 import pandas as pd
 import numpy as np
 import tempfile
@@ -50,6 +47,529 @@ from typing import Dict, List, Tuple, Optional
 from enum import Enum
 
 # ===============================
+# 🌳 CLASE PARA METODOLOGÍA VERR A (VCS)
+# ===============================
+
+class MetodologiaVerra:
+    """Implementación de la metodología Verra VCS para cálculo de carbono forestal"""
+    
+    def __init__(self):
+        # Factores de expansión de biomasa según VCS (VM0007, VM0035, etc.)
+        self.factores_vcs = {
+            # Biomasa Aérea viva (AGB)
+            'AGB': {
+                'ecuaciones_alometricas': {
+                    'tropical_humedo': {
+                        'ecuacion': lambda D, H: 0.0673 * (D**2 * H)**0.976,  # Chave et al. 2014
+                        'rango_dap': (10, 150),  # cm
+                        'incertidumbre': 0.15
+                    },
+                    'tropical_seco': {
+                        'ecuacion': lambda D, H: 0.0509 * (D**2 * H)**0.919,
+                        'rango_dap': (10, 100),
+                        'incertidumbre': 0.18
+                    },
+                    'subtropical': {
+                        'ecuacion': lambda D, H: 0.062 * (D**2 * H)**0.912,
+                        'rango_dap': (10, 120),
+                        'incertidumbre': 0.20
+                    }
+                },
+                'factor_conversion_carbono': 0.47,  # IPCC 2006
+                'factor_incertidumbre': 1.645  # 90% intervalo de confianza
+            },
+            # Biomasa Subterránea (BGB) - Raíces
+            'BGB': {
+                'ratio_raiz_tallo': {
+                    'tropical_humedo': 0.24,  # IPCC 2006
+                    'tropical_seco': 0.27,
+                    'subtropical': 0.26,
+                    'templado': 0.25
+                },
+                'incertidumbre': 0.20
+            },
+            # Madera Muerta (DW)
+            'DW': {
+                'proporcion_AGB': {
+                    'bosque_primario': 0.15,
+                    'bosque_secundario': 0.10,
+                    'bosque_degradado': 0.20
+                },
+                'densidad_base': 0.5,  # ton/m3
+                'incertidumbre': 0.25
+            },
+            # Hojarasca (LI)
+            'LI': {
+                'acumulacion_anual': {
+                    'tropical_humedo': 8.5,  # ton/ha/año
+                    'tropical_seco': 6.2,
+                    'subtropical': 7.3
+                },
+                'incertidumbre': 0.30
+            },
+            # Carbono Orgánico del Suelo (SOC)
+            'SOC': {
+                'profundidad_referencia': 30,  # cm (VCS default)
+                'densidad_aparente': 1.2,  # g/cm3
+                'contenido_carbono': {
+                    'bosque_no_intervenido': 2.5,  # %
+                    'bosque_secundario': 2.0,
+                    'pastizal': 1.5,
+                    'agricultura': 1.0
+                },
+                'factor_cambio_uso_suelo': {
+                    'bosque_a_agricultura': 0.58,
+                    'bosque_a_pastizal': 0.71,
+                    'secundario_a_primario': 1.25
+                },
+                'incertidumbre': 0.40
+            }
+        }
+        
+        # Factores de conservatividad (VCS)
+        self.factores_conservatividad = {
+            'alto': 0.8,    # 20% descuento conservativo
+            'medio': 0.9,   # 10% descuento conservativo
+            'bajo': 0.95    # 5% descuento conservativo
+        }
+        
+        # Clases de estrato VCS
+        self.estratos_vcs = {
+            'A': {'density': 'Alta', 'ndvi_range': (0.7, 1.0), 'carbon_factor': 1.0},
+            'B': {'density': 'Media-Alta', 'ndvi_range': (0.5, 0.7), 'carbon_factor': 0.8},
+            'C': {'density': 'Media', 'ndvi_range': (0.3, 0.5), 'carbon_factor': 0.6},
+            'D': {'density': 'Baja', 'ndvi_range': (0.1, 0.3), 'carbon_factor': 0.4},
+            'E': {'density': 'Muy Baja', 'ndvi_range': (-1.0, 0.1), 'carbon_factor': 0.1}
+        }
+    
+    def calcular_carbono_arbol_individual(self, dap_cm, altura_m, tipo_bosque="tropical_humedo"):
+        """Calcular carbono en un árbol individual usando ecuaciones alométricas VCS"""
+        if dap_cm < 10:  # Límite mínimo VCS
+            return 0.0
+        
+        try:
+            # Obtener ecuación alométrica
+            ecuacion = self.factores_vcs['AGB']['ecuaciones_alometricas'][tipo_bosque]['ecuacion']
+            
+            # Calcular biomasa aérea (kg)
+            agb_kg = ecuacion(dap_cm, altura_m)
+            
+            # Convertir a carbono (47% de la biomasa)
+            carbono_arbol_kg = agb_kg * self.factores_vcs['AGB']['factor_conversion_carbono']
+            
+            return carbono_arbol_kg / 1000  # Retornar en toneladas
+            
+        except Exception as e:
+            # Fórmula simplificada de respaldo
+            return (0.05 * dap_cm**2 * altura_m * 0.47) / 1000
+    
+    def calcular_carbono_hectarea(self, ndvi, tipo_bosque="tropical_humedo", estado="bosque_secundario", area_ha=1.0):
+        """Calcular carbono total por hectárea según metodología VCS"""
+        
+        # Estimación de biomasa basada en NDVI
+        if ndvi > 0.7:
+            # Bosque denso
+            agb_ton_ha = 200 + (ndvi - 0.7) * 100  # 200-250 ton/ha
+        elif ndvi > 0.5:
+            # Bosque medio
+            agb_ton_ha = 120 + (ndvi - 0.5) * 400  # 120-200 ton/ha
+        elif ndvi > 0.3:
+            # Bosque bajo/vegetación arbustiva
+            agb_ton_ha = 40 + (ndvi - 0.3) * 400   # 40-120 ton/ha
+        else:
+            # No bosque
+            agb_ton_ha = 5 + ndvi * 100            # 5-40 ton/ha
+        
+        # Ajustar por tipo de bosque
+        if tipo_bosque == "tropical_seco":
+            agb_ton_ha *= 0.8
+        elif tipo_bosque == "subtropical":
+            agb_ton_ha *= 0.9
+        
+        # ===== CÁLCULO DE POOLS DE CARBONO VCS =====
+        
+        # 1. Carbono en Biomasa Aérea viva (AGB)
+        carbono_agb = agb_ton_ha * self.factores_vcs['AGB']['factor_conversion_carbono']
+        
+        # 2. Carbono en Biomasa Subterránea (BGB - raíces)
+        ratio_bgb = self.factores_vcs['BGB']['ratio_raiz_tallo'][tipo_bosque]
+        carbono_bgb = carbono_agb * ratio_bgb
+        
+        # 3. Carbono en Madera Muerta (DW)
+        proporcion_dw = self.factores_vcs['DW']['proporcion_AGB'][estado]
+        carbono_dw = carbono_agb * proporcion_dw
+        
+        # 4. Carbono en Hojarasca (LI)
+        acumulacion_li = self.factores_vcs['LI']['acumulacion_anual'][tipo_bosque]
+        # Asumir 5 años de acumulación
+        carbono_li = acumulacion_li * 5 * self.factores_vcs['AGB']['factor_conversion_carbono'] * 0.3
+        
+        # 5. Carbono Orgánico del Suelo (SOC)
+        contenido_soc = self.factores_vcs['SOC']['contenido_carbono'][estado]
+        # Cálculo simplificado: ton C/ha en primeros 30cm
+        carbono_soc = (self.factores_vcs['SOC']['profundidad_referencia'] * 
+                      self.factores_vcs['SOC']['densidad_aparente'] * 
+                      contenido_soc * 10)  # 10 para convertir a ton/ha
+        
+        # Total carbono por hectárea (ton C/ha)
+        carbono_total_ton_ha = (
+            carbono_agb + 
+            carbono_bgb + 
+            carbono_dw + 
+            carbono_li + 
+            carbono_soc
+        )
+        
+        # Aplicar factor de conservatividad (default: medio)
+        factor_conservatividad = self.factores_conservatividad['medio']
+        carbono_total_ton_ha *= factor_conservatividad
+        
+        # Convertir a CO₂ equivalente
+        co2_equivalente_ton_ha = carbono_total_ton_ha * 3.67
+        
+        return {
+            'carbono_total_ton_ha': round(carbono_total_ton_ha, 2),
+            'co2_equivalente_ton_ha': round(co2_equivalente_ton_ha, 2),
+            'desglose': {
+                'AGB': round(carbono_agb, 2),
+                'BGB': round(carbono_bgb, 2),
+                'DW': round(carbono_dw, 2),
+                'LI': round(carbono_li, 2),
+                'SOC': round(carbono_soc, 2)
+            },
+            'factores_aplicados': {
+                'tipo_bosque': tipo_bosque,
+                'estado': estado,
+                'factor_conservatividad': factor_conservatividad,
+                'ratio_co2_carbono': 3.67
+            }
+        }
+    
+    def clasificar_estrato_vcs(self, ndvi):
+        """Clasificar el área en estratos según estándar VCS"""
+        for estrato, info in self.estratos_vcs.items():
+            min_ndvi, max_ndvi = info['ndvi_range']
+            if min_ndvi <= ndvi < max_ndvi:
+                return {
+                    'estrato': estrato,
+                    'densidad': info['density'],
+                    'factor_carbono': info['carbon_factor'],
+                    'rango_ndvi': info['ndvi_range']
+                }
+        return {
+            'estrato': 'E',
+            'densidad': 'Muy Baja',
+            'factor_carbono': 0.1,
+            'rango_ndvi': (-1.0, 0.1)
+        }
+    
+    def calcular_incertidumbre(self, carbono_total, tipo_bosque, estado):
+        """Calcular incertidumbre según metodología VCS"""
+        # Incertidumbres combinadas (método de propagación de errores)
+        incertidumbre_agb = self.factores_vcs['AGB']['ecuaciones_alometricas'][tipo_bosque]['incertidumbre']
+        incertidumbre_bgb = self.factores_vcs['BGB']['incertidumbre']
+        incertidumbre_dw = self.factores_vcs['DW']['incertidumbre']
+        incertidumbre_li = self.factores_vcs['LI']['incertidumbre']
+        incertidumbre_soc = self.factores_vcs['SOC']['incertidumbre']
+        
+        # Incertidumbre combinada (raíz cuadrada de la suma de cuadrados)
+        incertidumbre_combinada = math.sqrt(
+            incertidumbre_agb**2 + 
+            incertidumbre_bgb**2 + 
+            incertidumbre_dw**2 + 
+            incertidumbre_li**2 + 
+            incertidumbre_soc**2
+        )
+        
+        # Intervalo de confianza al 90%
+        intervalo_confianza = carbono_total * incertidumbre_combinada * self.factores_vcs['AGB']['factor_incertidumbre']
+        
+        return {
+            'incertidumbre_relativa': round(incertidumbre_combinada * 100, 1),  # Porcentaje
+            'intervalo_confianza_90': round(intervalo_confianza, 2),
+            'limite_inferior': round(carbono_total - intervalo_confianza, 2),
+            'limite_superior': round(carbono_total + intervalo_confianza, 2),
+            'factores': {
+                'AGB': f"{incertidumbre_agb*100:.1f}%",
+                'BGB': f"{incertidumbre_bgb*100:.1f}%",
+                'DW': f"{incertidumbre_dw*100:.1f}%",
+                'LI': f"{incertidumbre_li*100:.1f}%",
+                'SOC': f"{incertidumbre_soc*100:.1f}%"
+            }
+        }
+    
+    def generar_reporte_vcs(self, resultados_carbono, area_total_ha, coordenadas):
+        """Generar reporte según estándar VCS"""
+        fecha = datetime.now().strftime('%Y-%m-%d')
+        
+        reporte = f"""
+        ======================================================
+        REPORTE DE CARBONO FORESTAL - ESTÁNDAR VERR A VCS
+        ======================================================
+        
+        INFORMACIÓN DEL PROYECTO:
+        -------------------------
+        Fecha de análisis: {fecha}
+        Área total del proyecto: {area_total_ha:,.2f} ha
+        Coordenadas de referencia: {coordenadas}
+        Metodología aplicada: VCS VM0007 (REDD+)
+        
+        RESULTADOS DE CARBONO:
+        ----------------------
+        Carbono total estimado: {resultados_carbono['carbono_total_ton_ha']:,.2f} ton C/ha
+        CO₂ equivalente total: {resultados_carbono['co2_equivalente_ton_ha']:,.2f} ton CO₂e/ha
+        
+        DESGLOSE POR POOLS DE CARBONO (ton C/ha):
+        -----------------------------------------
+        • Biomasa Aérea viva (AGB): {resultados_carbono['desglose']['AGB']:,.2f}
+        • Biomasa Subterránea (BGB): {resultados_carbono['desglose']['BGB']:,.2f}
+        • Madera Muerta (DW): {resultados_carbono['desglose']['DW']:,.2f}
+        • Hojarasca (LI): {resultados_carbono['desglose']['LI']:,.2f}
+        • Carbono Orgánico del Suelo (SOC): {resultados_carbono['desglose']['SOC']:,.2f}
+        
+        FACTORES APLICADOS:
+        -------------------
+        • Tipo de bosque: {resultados_carbono['factores_aplicados']['tipo_bosque']}
+        • Estado del bosque: {resultados_carbono['factores_aplicados']['estado']}
+        • Factor de conservatividad: {resultados_carbono['factores_aplicados']['factor_conservatividad']}
+        • Ratio CO₂/Carbono: {resultados_carbono['factores_aplicados']['ratio_co2_carbono']}
+        
+        ANÁLISIS DE INCERTIDUMBRE:
+        --------------------------
+        Se recomienda realizar mediciones de campo para reducir la incertidumbre
+        y validar las estimaciones satelitales.
+        
+        ELEGIBILIDAD PARA CRÉDITOS DE CARBONO:
+        --------------------------------------
+        ✓ Cumple con principios VCS: Sí
+        ✓ Adicionalidad demostrable: Requiere análisis de línea base
+        ✓ Permanencia: Requiere plan de manejo a largo plazo
+        ✓ Evitación de fuga: Requiere análisis de actividades circundantes
+        
+        RECOMENDACIONES PARA VALIDACIÓN VCS:
+        ------------------------------------
+        1. Establecer parcelas de muestreo permanentes
+        2. Realizar inventarios forestales cada 2-5 años
+        3. Documentar factores de emisión específicos del sitio
+        4. Implementar sistema MRV (Monitoreo, Reporte y Verificación)
+        5. Contratar validador VCS acreditado
+        
+        ======================================================
+        FIN DEL REPORTE VCS
+        ======================================================
+        """
+        
+        return reporte
+
+# ===============================
+# 🌳 SISTEMA DE ANÁLISIS DE CARBONO VERR A
+# ===============================
+
+class AnalisisCarbonoVerra:
+    """Sistema completo de análisis de carbono con metodología Verra"""
+    
+    def __init__(self):
+        self.metodologia = MetodologiaVerra()
+        
+    def analizar_carbono_area(self, gdf, tipo_ecosistema, nivel_detalle=8):
+        """Analizar carbono en toda el área usando metodología Verra"""
+        try:
+            poligono_principal = gdf.geometry.iloc[0]
+            bounds = poligono_principal.bounds
+            
+            # Mapear tipo de ecosistema a parámetros VCS
+            mapeo_ecosistema_vcs = {
+                'Bosque Tropical Húmedo': ('tropical_humedo', 'bosque_secundario'),
+                'Bosque Seco Tropical': ('tropical_seco', 'bosque_secundario'),
+                'Bosque Montano': ('tropical_humedo', 'bosque_primario'),
+                'Sabana Arborizada': ('tropical_seco', 'bosque_degradado'),
+                'Humeral': ('subtropical', 'pastizal'),
+                'Agricultura': ('subtropical', 'agricultura'),
+                'Zona Urbana': ('subtropical', 'agricultura')
+            }
+            
+            tipo_vcs, estado_vcs = mapeo_ecosistema_vcs.get(
+                tipo_ecosistema, 
+                ('tropical_humedo', 'bosque_secundario')
+            )
+            
+            resultados = {
+                'analisis_carbono': [],
+                'resumen_carbono': {},
+                'estratos_vcs': {},
+                'pools_carbono': {},
+                'metadata_vcs': {
+                    'metodologia': 'VCS VM0007',
+                    'tipo_bosque_vcs': tipo_vcs,
+                    'estado_bosque_vcs': estado_vcs,
+                    'fecha_analisis': datetime.now().strftime('%Y-%m-%d')
+                }
+            }
+            
+            id_area = 1
+            
+            # Dividir en grilla para análisis detallado
+            for i in range(nivel_detalle):
+                for j in range(nivel_detalle):
+                    xmin = bounds[0] + (i * (bounds[2]-bounds[0])/nivel_detalle)
+                    xmax = xmin + (bounds[2]-bounds[0])/nivel_detalle
+                    ymin = bounds[1] + (j * (bounds[3]-bounds[1])/nivel_detalle)
+                    ymax = ymin + (bounds[3]-bounds[1])/nivel_detalle
+                    
+                    celda = Polygon([
+                        (xmin, ymin), (xmax, ymin),
+                        (xmax, ymax), (xmin, ymax), (xmin, ymin)
+                    ])
+                    
+                    interseccion = poligono_principal.intersection(celda)
+                    if not interseccion.is_empty:
+                        # Calcular área en hectáreas
+                        area_m2 = interseccion.area * 111000 * 111000 * math.cos(math.radians((ymin+ymax)/2))
+                        area_ha = area_m2 / 10000
+                        
+                        if area_ha > 0.01:
+                            # Simular NDVI para esta celda
+                            # En un sistema real, esto vendría del análisis satelital
+                            ndvi = 0.5 + random.uniform(-0.2, 0.3)
+                            
+                            # Clasificar estrato VCS
+                            estrato_info = self.metodologia.clasificar_estrato_vcs(ndvi)
+                            
+                            # Calcular carbono según metodología Verra
+                            carbono_info = self.metodologia.calcular_carbono_hectarea(
+                                ndvi=ndvi,
+                                tipo_bosque=tipo_vcs,
+                                estado=estado_vcs,
+                                area_ha=area_ha
+                            )
+                            
+                            # Calcular incertidumbre
+                            incertidumbre_info = self.metodologia.calcular_incertidumbre(
+                                carbono_info['carbono_total_ton_ha'],
+                                tipo_vcs,
+                                estado_vcs
+                            )
+                            
+                            area_data = {
+                                'id': id_area,
+                                'area': f"Carbono-{id_area:03d}",
+                                'geometry': interseccion,
+                                'area_ha': round(area_ha, 2),
+                                'ndvi': round(ndvi, 3),
+                                'estrato_vcs': estrato_info['estrato'],
+                                'densidad_vcs': estrato_info['densidad'],
+                                'carbono_total_ton': round(carbono_info['carbono_total_ton_ha'] * area_ha, 2),
+                                'co2_equivalente_ton': round(carbono_info['co2_equivalente_ton_ha'] * area_ha, 2),
+                                'carbono_por_ha': carbono_info['carbono_total_ton_ha'],
+                                'co2_por_ha': carbono_info['co2_equivalente_ton_ha'],
+                                'desglose_carbono': carbono_info['desglose'],
+                                'incertidumbre': incertidumbre_info,
+                                'factores_aplicados': carbono_info['factores_aplicados']
+                            }
+                            
+                            resultados['analisis_carbono'].append(area_data)
+                            id_area += 1
+            
+            # Calcular resumen estadístico
+            if resultados['analisis_carbono']:
+                self._calcular_resumen_carbono(resultados)
+            
+            return resultados
+            
+        except Exception as e:
+            st.error(f"Error en análisis de carbono Verra: {str(e)}")
+            return None
+    
+    def _calcular_resumen_carbono(self, resultados):
+        """Calcular estadísticas resumen del análisis de carbono"""
+        areas_carbono = resultados['analisis_carbono']
+        
+        if not areas_carbono:
+            return
+        
+        # Calcular totales
+        carbono_total = sum(a['carbono_total_ton'] for a in areas_carbono)
+        co2_total = sum(a['co2_equivalente_ton'] for a in areas_carbono)
+        area_total = sum(a['area_ha'] for a in areas_carbono)
+        
+        # Promedios por hectárea
+        carbono_promedio_ha = np.mean([a['carbono_por_ha'] for a in areas_carbono])
+        co2_promedio_ha = np.mean([a['co2_por_ha'] for a in areas_carbono])
+        
+        # Distribución por estratos VCS
+        estratos = {}
+        for area in areas_carbono:
+            estrato = area['estrato_vcs']
+            if estrato not in estratos:
+                estratos[estrato] = {
+                    'cantidad': 0,
+                    'area_total': 0,
+                    'carbono_total': 0
+                }
+            estratos[estrato]['cantidad'] += 1
+            estratos[estrato]['area_total'] += area['area_ha']
+            estratos[estrato]['carbono_total'] += area['carbono_total_ton']
+        
+        # Distribución por pools de carbono
+        pools = {'AGB': 0, 'BGB': 0, 'DW': 0, 'LI': 0, 'SOC': 0}
+        for area in areas_carbono:
+            for pool, valor in area['desglose_carbono'].items():
+                pools[pool] += valor * area['area_ha']
+        
+        # Calcular incertidumbre promedio
+        incertidumbre_promedio = np.mean([a['incertidumbre']['incertidumbre_relativa'] 
+                                         for a in areas_carbono])
+        
+        resultados['resumen_carbono'] = {
+            'carbono_total_ton': round(carbono_total, 2),
+            'co2_total_ton': round(co2_total, 2),
+            'area_total_ha': round(area_total, 2),
+            'carbono_promedio_ton_ha': round(carbono_promedio_ha, 2),
+            'co2_promedio_ton_ha': round(co2_promedio_ha, 2),
+            'potencial_creditos': round(co2_total / 1000, 1),  # En miles de créditos (1 crédito = 1 ton CO₂)
+            'incertidumbre_promedio': round(incertidumbre_promedio, 1),
+            'estratos_distribucion': estratos,
+            'pools_distribucion': pools
+        }
+        
+        # Evaluar elegibilidad VCS
+        elegibilidad = self._evaluar_elegibilidad_vcs(resultados)
+        resultados['resumen_carbono']['elegibilidad_vcs'] = elegibilidad
+    
+    def _evaluar_elegibilidad_vcs(self, resultados):
+        """Evaluar elegibilidad del proyecto según criterios VCS"""
+        resumen = resultados['resumen_carbono']
+        
+        criterios = {
+            'carbono_minimo': resumen['co2_total_ton'] > 10000,  # Mínimo 10,000 ton CO₂
+            'area_minima': resumen['area_total_ha'] > 100,  # Mínimo 100 ha
+            'permanencia_potencial': True,  # Asumir sí por ahora
+            'adicionalidad_potencial': True  # Asumir sí por ahora
+        }
+        
+        criterios_cumplidos = sum(criterios.values())
+        total_criterios = len(criterios)
+        
+        elegibilidad = {
+            'cumple_minimos': all([criterios['carbono_minimo'], criterios['area_minima']]),
+            'porcentaje_cumplimiento': (criterios_cumplidos / total_criterios) * 100,
+            'criterios_detalle': criterios,
+            'recomendaciones': []
+        }
+        
+        if not criterios['carbono_minimo']:
+            elegibilidad['recomendaciones'].append(
+                "Incrementar área del proyecto para alcanzar mínimo de 10,000 ton CO₂"
+            )
+        
+        if not criterios['area_minima']:
+            elegibilidad['recomendaciones'].append(
+                "Combinar con otros proyectos para alcanzar mínimo de 100 ha"
+            )
+        
+        return elegibilidad
+
+# ===============================
 # 🛰️ ENUMERACIONES Y CLASES DE DATOS SATELITALES
 # ===============================
 
@@ -77,242 +597,6 @@ class ImagenSatelital:
     indice_calidad: float  # 0-1
     bandas_disponibles: List[str]
     url_visualizacion: Optional[str] = None
-
-# ===============================
-# 🌳 NUEVA CLASE: CALCULADORA DE CARBONO VERRA
-# ===============================
-
-class CalculadoraCarbonoVerra:
-    """Calculadora de carbono según metodología Verra para proyectos REDD+"""
-    
-    def __init__(self):
-        # Factores de emisión por defecto según Verra
-        self.factores_verra = {
-            'bosque_tropical_humedo': {
-                'carbon_densidad_ton_ha': 150.0,
-                'factor_biomasa_aerea': 0.47,
-                'factor_biomasa_raiz': 0.24,
-                'factor_madera_muerta': 0.10,
-                'factor_materia_organica': 0.01,
-                'tiempo_crecimiento': 30,
-                'color': '#065f46'
-            },
-            'bosque_seco_tropical': {
-                'carbon_densidad_ton_ha': 80.0,
-                'factor_biomasa_aerea': 0.45,
-                'factor_biomasa_raiz': 0.22,
-                'factor_madera_muerta': 0.08,
-                'factor_materia_organica': 0.01,
-                'tiempo_crecimiento': 25,
-                'color': '#10b981'
-            },
-            'bosque_montano': {
-                'carbon_densidad_ton_ha': 120.0,
-                'factor_biomasa_aerea': 0.48,
-                'factor_biomasa_raiz': 0.25,
-                'factor_madera_muerta': 0.12,
-                'factor_materia_organica': 0.02,
-                'tiempo_crecimiento': 35,
-                'color': '#0ea5e9'
-            },
-            'sabana_arborizada': {
-                'carbon_densidad_ton_ha': 40.0,
-                'factor_biomasa_aerea': 0.42,
-                'factor_biomasa_raiz': 0.20,
-                'factor_madera_muerta': 0.05,
-                'factor_materia_organica': 0.005,
-                'tiempo_crecimiento': 20,
-                'color': '#f59e0b'
-            },
-            'manglar': {
-                'carbon_densidad_ton_ha': 180.0,
-                'factor_biomasa_aerea': 0.50,
-                'factor_biomasa_raiz': 0.30,
-                'factor_madera_muerta': 0.15,
-                'factor_materia_organica': 0.10,
-                'tiempo_crecimiento': 40,
-                'color': '#8b5cf6'
-            },
-            'plantacion_forestal': {
-                'carbon_densidad_ton_ha': 100.0,
-                'factor_biomasa_aerea': 0.46,
-                'factor_biomasa_raiz': 0.23,
-                'factor_madera_muerta': 0.09,
-                'factor_materia_organica': 0.015,
-                'tiempo_crecimiento': 15,
-                'color': '#84cc16'
-            }
-        }
-        
-        # Factores de conversión estándar
-        self.CONVERSION_CO2_CARBONO = 3.67  # 1 ton C = 3.67 ton CO2
-        self.CONVERSION_CARBONO_BIOMASA = 0.47  # 47% carbono en biomasa
-        
-        # Metodologías Verra disponibles
-        self.metodologias_verra = {
-            'REDD+': {
-                'codigo': 'VM0007',
-                'nombre': 'REDD+ Methodology Framework (REDD-MF)',
-                'descripcion': 'Reducción de Emisiones por Deforestación y Degradación Forestal',
-                'aplicable': ['bosque_tropical_humedo', 'bosque_seco_tropical', 'bosque_montano']
-            },
-            'AR-AM0001': {
-                'codigo': 'AR-AM0001',
-                'nombre': 'Afforestation and Reforestation of Degraded Land',
-                'descripcion': 'Reforestación y Aforestación en Tierras Degradadas',
-                'aplicable': ['sabana_arborizada', 'plantacion_forestal']
-            },
-            'ACM0001': {
-                'codigo': 'ACM0001',
-                'nombre': 'Consolidated Baseline Methodology for GHG Reduction',
-                'descripcion': 'Metodología Consolidada para Reducción de GEI',
-                'aplicable': ['bosque_tropical_humedo', 'bosque_seco_tropical', 'bosque_montano']
-            }
-        }
-    
-    def calcular_carbono_verra(self, tipo_ecosistema, area_ha, ndvi, 
-                               tipo_proyecto="REDD+", periodo_anos=30, 
-                               factor_incertidumbre=0.9):
-        """Calcular carbono potencial según metodología Verra"""
-        
-        # Obtener factores según ecosistema
-        if tipo_ecosistema not in self.factores_verra:
-            tipo_ecosistema = 'bosque_tropical_humedo'
-        
-        factores = self.factores_verra[tipo_ecosistema]
-        
-        # 1. Cálculo de biomasa aérea (AGB)
-        densidad_base = factores['carbon_densidad_ton_ha']
-        factor_ndvi = 0.8 + (ndvi * 0.4)  # Ajuste por NDVI (0.8-1.2)
-        carbono_agb = densidad_base * factor_ndvi * factores['factor_biomasa_aerea']
-        
-        # 2. Biomasa subterránea (BGB)
-        carbono_bgb = carbono_agb * factores['factor_biomasa_raiz']
-        
-        # 3. Madera muerta y desechos
-        carbono_madera_muerta = carbono_agb * factores['factor_madera_muerta']
-        
-        # 4. Materia orgánica del suelo
-        carbono_suelo = carbono_agb * factores['factor_materia_organica']
-        
-        # 5. Carbono total por hectárea
-        carbono_total_ha = (carbono_agb + carbono_bgb + 
-                           carbono_madera_muerta + carbono_suelo)
-        
-        # 6. Ajustes por tipo de proyecto
-        if tipo_proyecto == "AR-AM0001":  # Afforestation/Reforestation
-            carbono_total_ha *= 1.1  # Mayor captura en proyectos AR
-        elif tipo_proyecto == "ACM0001":
-            carbono_total_ha *= 0.95  # Factor conservador para ACM
-        
-        # 7. Aplicar factor de incertidumbre (default 90% - conservador)
-        carbono_total_ha *= factor_incertidumbre
-        
-        # 8. Cálculo total para el área
-        carbono_total = carbono_total_ha * area_ha
-        co2_equivalente = carbono_total * self.CONVERSION_CO2_CARBONO
-        
-        # 9. Carbono potencial anualizado
-        carbono_anual = carbono_total / factores['tiempo_crecimiento']
-        co2_anual = co2_equivalente / factores['tiempo_crecimiento']
-        
-        # 10. Cálculo de créditos potenciales (1 crédito = 1 ton CO2e)
-        creditos_totales = co2_equivalente
-        creditos_anuales = co2_anual
-        
-        return {
-            'carbono_agb_ton_ha': round(carbono_agb, 2),
-            'carbono_bgb_ton_ha': round(carbono_bgb, 2),
-            'carbono_madera_muerta_ton_ha': round(carbono_madera_muerta, 2),
-            'carbono_suelo_ton_ha': round(carbono_suelo, 2),
-            'carbono_total_ton_ha': round(carbono_total_ha, 2),
-            'carbono_total_ton': round(carbono_total, 2),
-            'co2_equivalente_ton': round(co2_equivalente, 2),
-            'carbono_anual_ton': round(carbono_anual, 2),
-            'co2_anual_ton': round(co2_anual, 2),
-            'creditos_totales': round(creditos_totales, 2),
-            'creditos_anuales': round(creditos_anuales, 2),
-            'tipo_proyecto': tipo_proyecto,
-            'metodologia_codigo': self.metodologias_verra.get(tipo_proyecto, {}).get('codigo', 'N/A'),
-            'metodologia_nombre': self.metodologias_verra.get(tipo_proyecto, {}).get('nombre', 'N/A'),
-            'periodo_anos': periodo_anos,
-            'factor_incertidumbre': factor_incertidumbre,
-            'color_ecosistema': factores.get('color', '#065f46')
-        }
-    
-    def calcular_linea_base(self, tipo_ecosistema, escenario="business_as_usual"):
-        """Calcular línea base de emisiones según escenario"""
-        
-        # Factores de deforestación por escenario (ton CO2/ha/año)
-        factores_escenario = {
-            'business_as_usual': {
-                'bosque_tropical_humedo': 250,
-                'bosque_seco_tropical': 150,
-                'bosque_montano': 180,
-                'sabana_arborizada': 80,
-                'manglar': 300,
-                'plantacion_forestal': 100
-            },
-            'conservador': {
-                'bosque_tropical_humedo': 200,
-                'bosque_seco_tropical': 120,
-                'bosque_montano': 150,
-                'sabana_arborizada': 60,
-                'manglar': 250,
-                'plantacion_forestal': 80
-            },
-            'optimista': {
-                'bosque_tropical_humedo': 300,
-                'bosque_seco_tropical': 180,
-                'bosque_montano': 220,
-                'sabana_arborizada': 100,
-                'manglar': 350,
-                'plantacion_forestal': 120
-            }
-        }
-        
-        factor = factores_escenario.get(escenario, factores_escenario['business_as_usual'])
-        return factor.get(tipo_ecosistema, 200)
-    
-    def generar_reporte_verra(self, resultado_carbono, area_ha, tipo_ecosistema):
-        """Generar reporte estructurado para Verra"""
-        
-        reporte = {
-            'informacion_general': {
-                'fecha_generacion': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'version_metodologia': 'v2.0',
-                'tipo_proyecto': resultado_carbono['tipo_proyecto'],
-                'metodologia': resultado_carbono['metodologia_nombre']
-            },
-            'informacion_geografica': {
-                'area_total_ha': area_ha,
-                'tipo_ecosistema': tipo_ecosistema,
-                'unidad_analisis': 'hectárea'
-            },
-            'parametros_calculo': {
-                'factor_incertidumbre': resultado_carbono['factor_incertidumbre'],
-                'conversion_co2_carbono': self.CONVERSION_CO2_CARBONO,
-                'fraccion_carbono_biomasa': self.CONVERSION_CARBONO_BIOMASA,
-                'periodo_creditos': resultado_carbono['periodo_anos']
-            },
-            'resultados_carbono': {
-                'biomasa_aerea_ton_c_ha': resultado_carbono['carbono_agb_ton_ha'],
-                'biomasa_subterranea_ton_c_ha': resultado_carbono['carbono_bgb_ton_ha'],
-                'madera_muerta_ton_c_ha': resultado_carbono['carbono_madera_muerta_ton_ha'],
-                'materia_organica_suelo_ton_c_ha': resultado_carbono['carbono_suelo_ton_ha'],
-                'carbono_total_ton_c_ha': resultado_carbono['carbono_total_ton_ha'],
-                'carbono_total_ton_c': resultado_carbono['carbono_total_ton'],
-                'co2_equivalente_ton': resultado_carbono['co2_equivalente_ton']
-            },
-            'creditos_carbono': {
-                'creditos_totales': resultado_carbono['creditos_totales'],
-                'creditos_anuales': resultado_carbono['creditos_anuales'],
-                'periodo_generacion': resultado_carbono['periodo_anos']
-            },
-            'factores_aplicados': self.factores_verra.get(tipo_ecosistema, {})
-        }
-        
-        return reporte
 
 # ===============================
 # 🛰️ SIMULADOR DE DATOS SATELITALES
@@ -354,7 +638,7 @@ class SimuladorSatelital:
                 'nir': (0.30, 0.45),
                 'swir': (0.10, 0.20)
             },
-            'bosque_secondario': {
+            'bosque_secundario': {
                 'blue': (0.03, 0.06),
                 'green': (0.05, 0.10),
                 'red': (0.04, 0.07),
@@ -800,6 +1084,100 @@ class SistemaMapasAvanzado:
         
         return m
     
+    def crear_mapa_carbono(self, gdf, datos_carbono, titulo="Mapa de Carbono"):
+        """Crear mapa temático para carbono según metodología Verra"""
+        centro, zoom = self.calcular_zoom_automatico(gdf)
+        
+        m = folium.Map(
+            location=centro,
+            zoom_start=zoom,
+            tiles=self.capas_base['ESRI World Imagery']['tiles'],
+            attr=self.capas_base['ESRI World Imagery']['attr'],
+            control_scale=True
+        )
+        
+        # Paleta de colores para carbono (verde oscuro a claro)
+        colores_carbono = ['#00441b', '#238b45', '#41ab5d', '#74c476', '#a1d99b', '#d9f0a3']
+        
+        # Encontrar rango de valores de carbono
+        valores_carbono = [d.get('carbono_por_ha', 0) for d in datos_carbono]
+        if valores_carbono:
+            min_carbono = min(valores_carbono)
+            max_carbono = max(valores_carbono)
+        else:
+            min_carbono, max_carbono = 0, 100
+        
+        # Crear capa de calor y polígonos coloreados
+        heatmap_data = []
+        
+        for area_data in datos_carbono:
+            try:
+                carbono_ha = area_data.get('carbono_por_ha', 0)
+                co2_ha = area_data.get('co2_por_ha', 0)
+                geometry = area_data.get('geometry')
+                estrato = area_data.get('estrato_vcs', 'E')
+                
+                if geometry and hasattr(geometry, 'centroid'):
+                    centroid = geometry.centroid
+                    heatmap_data.append([centroid.y, centroid.x, carbono_ha])
+                    
+                    # Calcular índice de color
+                    if max_carbono > min_carbono:
+                        normalized = (carbono_ha - min_carbono) / (max_carbono - min_carbono)
+                    else:
+                        normalized = 0.5
+                    
+                    color_idx = min(int(normalized * (len(colores_carbono) - 1)), len(colores_carbono) - 1)
+                    color = colores_carbono[color_idx]
+                    
+                    # Tooltip con información de carbono
+                    tooltip = f"""
+                    <div style="font-family: Arial; font-size: 12px;">
+                        <b>Carbono según Verra VCS</b><br>
+                        <hr style="margin: 3px 0;">
+                        <b>Estrato:</b> {estrato}<br>
+                        <b>Carbono:</b> {carbono_ha:.1f} ton C/ha<br>
+                        <b>CO₂ equivalente:</b> {co2_ha:.1f} ton CO₂e/ha<br>
+                        <b>Área:</b> {area_data.get('area_ha', 0):.1f} ha
+                    </div>
+                    """
+                    
+                    folium.GeoJson(
+                        geometry,
+                        style_function=lambda x, color=color: {
+                            'fillColor': color,
+                            'color': color,
+                            'weight': 1,
+                            'fillOpacity': 0.6,
+                            'opacity': 0.8
+                        },
+                        tooltip=folium.Tooltip(tooltip, sticky=True)
+                    ).add_to(m)
+                    
+            except Exception as e:
+                continue
+        
+        # Agregar heatmap
+        if len(heatmap_data) > 3:
+            HeatMap(
+                heatmap_data,
+                name='Carbono (ton C/ha)',
+                min_opacity=0.4,
+                max_zoom=15,
+                radius=25,
+                blur=20,
+                gradient={0.0: 'blue', 0.3: 'lime', 0.6: 'yellow', 0.8: 'orange', 1.0: 'red'}
+            ).add_to(m)
+        
+        # Agregar leyenda de carbono
+        self._agregar_leyenda_carbono(m, min_carbono, max_carbono, colores_carbono)
+        
+        # Controles
+        Fullscreen().add_to(m)
+        folium.LayerControl().add_to(m)
+        
+        return m
+    
     def _agregar_leyenda(self, mapa, indice, colores):
         """Agregar leyenda al mapa"""
         leyenda_html = f'''
@@ -836,133 +1214,40 @@ class SistemaMapasAvanzado:
         
         mapa.get_root().html.add_child(folium.Element(leyenda_html))
     
-    def crear_mapa_carbono(self, gdf, resultado_carbono):
-        """Crear mapa específico para visualización de carbono"""
-        centro, zoom = self.calcular_zoom_automatico(gdf)
-        
-        # Mapa base
-        m = folium.Map(
-            location=centro,
-            zoom_start=zoom,
-            tiles=self.capas_base['ESRI World Imagery']['tiles'],
-            attr=self.capas_base['ESRI World Imagery']['attr'],
-            control_scale=True
-        )
-        
-        if gdf is not None and not gdf.empty:
-            # Obtener densidad de carbono
-            densidad = resultado_carbono.get('carbono_total_ton_ha', 0)
-            
-            # Determinar color basado en densidad
-            if densidad > 100:
-                color = '#065f46'  # Verde oscuro - alta densidad
-                categoria = "Muy Alta"
-            elif densidad > 50:
-                color = '#10b981'  # Verde - alta densidad
-                categoria = "Alta"
-            elif densidad > 20:
-                color = '#f59e0b'  # Amarillo/naranja - media densidad
-                categoria = "Media"
-            else:
-                color = '#ef4444'  # Rojo - baja densidad
-                categoria = "Baja"
-            
-            # Calcular área en hectáreas
-            poligono = gdf.geometry.iloc[0]
-            area_m2 = poligono.area * 111000 * 111000 * math.cos(math.radians(centro[0]))
-            area_ha = area_m2 / 10000
-            
-            # Tooltip informativo
-            tooltip_html = f"""
-            <div style="font-family: Arial; font-size: 12px; padding: 5px;">
-                <b>🌳 Potencial de Carbono</b><br>
-                <hr style="margin: 5px 0;">
-                <b>Densidad:</b> {densidad:.1f} ton C/ha<br>
-                <b>Categoría:</b> {categoria}<br>
-                <b>Área:</b> {area_ha:,.1f} ha<br>
-                <b>Carbono total:</b> {resultado_carbono.get('carbono_total_ton', 0):,.0f} ton C<br>
-                <b>CO₂ equivalente:</b> {resultado_carbono.get('co2_equivalente_ton', 0):,.0f} ton
-            </div>
-            """
-            
-            # Estilo del polígono
-            folium.GeoJson(
-                poligono,
-                style_function=lambda x: {
-                    'fillColor': color,
-                    'color': color,
-                    'weight': 3,
-                    'fillOpacity': 0.4,
-                    'opacity': 0.8,
-                    'dashArray': '10, 5'
-                },
-                name='Área de Carbono Potencial',
-                tooltip=folium.Tooltip(tooltip_html, sticky=True)
-            ).add_to(m)
-            
-            # Agregar marcador en el centro con información
-            popup_html = f"""
-            <div style="font-family: Arial;">
-                <h4>🌍 Proyecto de Carbono</h4>
-                <b>Metodología:</b> {resultado_carbono.get('metodologia_nombre', 'N/A')}<br>
-                <b>Densidad de carbono:</b> {densidad:.1f} ton C/ha<br>
-                <b>Carbono total:</b> {resultado_carbono.get('carbono_total_ton', 0):,.0f} ton C<br>
-                <b>Créditos potenciales:</b> {resultado_carbono.get('creditos_totales', 0):,.0f} ton CO₂e
-            </div>
-            """
-            
-            folium.Marker(
-                location=centro,
-                popup=folium.Popup(popup_html, max_width=300),
-                icon=folium.Icon(color='green', icon='tree', prefix='fa')
-            ).add_to(m)
-        
-        # Agregar leyenda de carbono
-        self._agregar_leyenda_carbono(m)
-        
-        # Controles
-        Fullscreen().add_to(m)
-        folium.LayerControl().add_to(m)
-        
-        return m
-    
-    def _agregar_leyenda_carbono(self, mapa):
-        """Agregar leyenda específica para carbono"""
-        leyenda_html = '''
+    def _agregar_leyenda_carbono(self, mapa, min_val, max_val, colores):
+        """Agregar leyenda de carbono al mapa"""
+        leyenda_html = f'''
         <div style="position: fixed; 
                     bottom: 50px; 
                     left: 50px; 
                     width: 280px;
                     background-color: white; 
-                    border: 2px solid grey; 
+                    border: 2px solid #065f46; 
                     z-index: 9999; 
                     padding: 10px;
                     border-radius: 5px;
                     box-shadow: 0 0 10px rgba(0,0,0,0.2);
                     font-family: Arial;">
-            <h4 style="margin-top: 0; color: #1e3a8a; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
-                🌳 Densidad de Carbono (ton C/ha)
+            <h4 style="margin-top: 0; color: #065f46; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
+                🌳 Carbono (Verra VCS)
             </h4>
             <div style="margin: 10px 0;">
-                <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                    <div style="width: 20px; height: 20px; background-color: #065f46; margin-right: 10px; border: 1px solid #666;"></div>
-                    <span>> 100 ton C/ha (Muy Alta)</span>
-                </div>
-                <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                    <div style="width: 20px; height: 20px; background-color: #10b981; margin-right: 10px; border: 1px solid #666;"></div>
-                    <span>50 - 100 ton C/ha (Alta)</span>
-                </div>
-                <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                    <div style="width: 20px; height: 20px; background-color: #f59e0b; margin-right: 10px; border: 1px solid #666;"></div>
-                    <span>20 - 50 ton C/ha (Media)</span>
-                </div>
-                <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                    <div style="width: 20px; height: 20px; background-color: #ef4444; margin-right: 10px; border: 1px solid #666;"></div>
-                    <span>< 20 ton C/ha (Baja)</span>
+                <div style="height: 20px; background: linear-gradient(90deg, {', '.join(colores)}); border: 1px solid #666;"></div>
+                <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px;">
+                    <span>{min_val:.0f} tC/ha</span>
+                    <span>{(min_val+max_val)/2:.0f} tC/ha</span>
+                    <span>{max_val:.0f} tC/ha</span>
                 </div>
             </div>
-            <div style="font-size: 11px; color: #666; margin-top: 10px;">
-                <i>Calculado según metodología Verra</i>
+            <div style="font-size: 12px; color: #666;">
+                <div><span style="color: #00441b; font-weight: bold;">■</span> Alto: >{(min_val+max_val)*0.8:.0f} tC/ha</div>
+                <div><span style="color: #41ab5d; font-weight: bold;">■</span> Medio: {(min_val+max_val)*0.4:.0f}-{(min_val+max_val)*0.8:.0f} tC/ha</div>
+                <div><span style="color: #a1d99b; font-weight: bold;">■</span> Bajo: <{(min_val+max_val)*0.4:.0f} tC/ha</div>
+                <hr style="margin: 8px 0;">
+                <div style="font-size: 11px; color: #444;">
+                    <i>Metodología: Verra VCS VM0007</i><br>
+                    <i>CO₂ equivalente = Carbono × 3.67</i>
+                </div>
             </div>
         </div>
         '''
@@ -1006,6 +1291,27 @@ class DashboardResumen:
         </div>
         """
     
+    def crear_kpi_carbono(self, titulo, valor, icono, color, unidad="", subtitulo=""):
+        """Crear tarjeta KPI especializada para carbono"""
+        return f"""
+        <div style="background: linear-gradient(135deg, {color}15 0%, {color}05 100%); 
+                    padding: 1.5rem; 
+                    border-radius: 10px; 
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.06); 
+                    border: 1px solid {color}30;
+                    margin-bottom: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: start;">
+                <div>
+                    <div style="font-size: 0.9rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px;">{titulo}</div>
+                    <div style="font-size: 2rem; font-weight: 700; margin: 0.5rem 0; color: {color};">{valor}</div>
+                    <div style="font-size: 0.9rem; color: {color}; font-weight: 500;">{unidad}</div>
+                    {f'<div style="font-size: 0.8rem; color: #6b7280; margin-top: 5px;">{subtitulo}</div>' if subtitulo else ''}
+                </div>
+                <div style="font-size: 2rem; color: {color};">{icono}</div>
+            </div>
+        </div>
+        """
+    
     def crear_dashboard_ejecutivo(self, resultados):
         """Crear dashboard ejecutivo completo"""
         if not resultados:
@@ -1037,27 +1343,34 @@ class DashboardResumen:
         
         return dashboard_html
     
-    def crear_dashboard_carbono(self, resultado_carbono):
-        """Crear dashboard específico para carbono"""
-        if not resultado_carbono:
+    def crear_dashboard_carbono(self, resultados_carbono):
+        """Crear dashboard especializado para análisis de carbono"""
+        if not resultados_carbono:
             return None
         
+        resumen = resultados_carbono.get('resumen_carbono', {})
+        
+        # Calcular valor económico aproximado (US$15/ton CO₂)
+        valor_economico = resumen.get('co2_total_ton', 0) * 15
+        
         dashboard_html = f"""
-        <div style="background: linear-gradient(135deg, #065f46 0%, #10b981 100%); padding: 2rem; border-radius: 15px; margin-bottom: 2rem; color: white;">
-            <h2 style="margin: 0; font-size: 2rem;">🌳 Dashboard de Carbono Verra</h2>
-            <p style="margin: 0.5rem 0 0 0; opacity: 0.9;">Análisis según metodología {resultado_carbono.get('metodologia_codigo', 'Verra')}</p>
+        <div style="background: linear-gradient(135deg, #065f46 0%, #0a7e5a 100%); padding: 2rem; border-radius: 15px; margin-bottom: 2rem; color: white;">
+            <h2 style="margin: 0; font-size: 2rem;">🌳 Análisis de Carbono - Verra VCS</h2>
+            <p style="margin: 0.5rem 0 0 0; opacity: 0.9;">Metodología VCS VM0007 para proyectos REDD+</p>
         </div>
         
-        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 2rem;">
-            {self.crear_kpi_card('Carbono Total', f"{resultado_carbono.get('carbono_total_ton', 0):,.0f}", '🌳', '#065f46', 'ton C')}
-            {self.crear_kpi_card('CO₂ Equivalente', f"{resultado_carbono.get('co2_equivalente_ton', 0):,.0f}", '♻️', '#10b981', 'ton CO₂e')}
-            {self.crear_kpi_card('Créditos Totales', f"{resultado_carbono.get('creditos_totales', 0):,.0f}", '💰', '#f59e0b', 'créditos')}
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 2rem;">
+            {self.crear_kpi_carbono('Carbono Total', f"{resumen.get('carbono_total_ton', 0):,.0f}", '🌳', '#065f46', 'ton C', 'Almacenamiento total')}
+            {self.crear_kpi_carbono('CO₂ Equivalente', f"{resumen.get('co2_total_ton', 0):,.0f}", '🏭', '#0a7e5a', 'ton CO₂e', 'Potencial de créditos')}
+            {self.crear_kpi_carbono('Carbono Promedio', f"{resumen.get('carbono_promedio_ton_ha', 0):,.1f}", '📊', '#10b981', 'ton C/ha', 'Por hectárea')}
+            {self.crear_kpi_carbono('Área Total', f"{resumen.get('area_total_ha', 0):,.1f}", '🗺️', '#3b82f6', 'hectáreas', 'Área del proyecto')}
         </div>
         
-        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 2rem;">
-            {self.crear_kpi_card('Densidad Carbono', f"{resultado_carbono.get('carbono_total_ton_ha', 0):.1f}", '📊', '#0ea5e9', 'ton C/ha')}
-            {self.crear_kpi_card('Créditos Anuales', f"{resultado_carbono.get('creditos_anuales', 0):,.0f}", '📅', '#8b5cf6', 'créditos/año')}
-            {self.crear_kpi_card('Período Proyecto', f"{resultado_carbono.get('periodo_anos', 0)}", '⏱️', '#ec4899', 'años')}
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 2rem;">
+            {self.crear_kpi_carbono('Potencial Créditos', f"{resumen.get('potencial_creditos', 0):,.1f}", '💰', '#f59e0b', 'miles', '1 crédito = 1 ton CO₂')}
+            {self.crear_kpi_carbono('Valor Económico', f"${valor_economico:,.0f}", '💵', '#8b5cf6', 'USD', 'Aprox. @ US$15/ton')}
+            {self.crear_kpi_carbono('Incertidumbre', f"{resumen.get('incertidumbre_promedio', 0):.1f}", '📉', '#ef4444', '%', 'Nivel de confianza 90%')}
+            {self.crear_kpi_carbono('Elegibilidad VCS', f"{'✅' if resumen.get('elegibilidad_vcs', {}).get('cumple_minimos', False) else '❌'}", '📋', '#10b981' if resumen.get('elegibilidad_vcs', {}).get('cumple_minimos', False) else '#ef4444', '', 'Cumple criterios mínimos')}
         </div>
         """
         
@@ -1104,6 +1417,120 @@ class DashboardResumen:
         
         return fig
     
+    def crear_grafico_pools_carbono(self, resultados_carbono):
+        """Crear gráfico de torta para pools de carbono"""
+        if not resultados_carbono:
+            return None
+        
+        pools = resultados_carbono.get('resumen_carbono', {}).get('pools_distribucion', {})
+        
+        if not pools:
+            return None
+        
+        labels = list(pools.keys())
+        values = list(pools.values())
+        
+        # Colores específicos para pools VCS
+        colores_pools = {
+            'AGB': '#238b45',  # Verde oscuro - Biomasa aérea
+            'BGB': '#41ab5d',  # Verde medio - Raíces
+            'DW': '#74c476',   # Verde claro - Madera muerta
+            'LI': '#a1d99b',   # Verde muy claro - Hojarasca
+            'SOC': '#d9f0a3'   # Verde amarillento - Suelo
+        }
+        
+        colors = [colores_pools.get(label, '#808080') for label in labels]
+        
+        fig = go.Figure(data=[go.Pie(
+            labels=labels,
+            values=values,
+            hole=0.4,
+            marker_colors=colors,
+            textinfo='percent+label',
+            textposition='outside',
+            hoverinfo='label+value+percent'
+        )])
+        
+        fig.update_layout(
+            title='Distribución de Carbono por Pools (VCS)',
+            height=400,
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=-0.2,
+                xanchor="center",
+                x=0.5
+            )
+        )
+        
+        return fig
+    
+    def crear_grafico_estratos_vcs(self, resultados_carbono):
+        """Crear gráfico de barras para estratos VCS"""
+        if not resultados_carbono:
+            return None
+        
+        estratos = resultados_carbono.get('resumen_carbono', {}).get('estratos_distribucion', {})
+        
+        if not estratos:
+            return None
+        
+        # Ordenar estratos de A (alto) a E (bajo)
+        orden_estratos = ['A', 'B', 'C', 'D', 'E']
+        labels = []
+        areas = []
+        carbono = []
+        
+        for estrato in orden_estratos:
+            if estrato in estratos:
+                labels.append(f"Estrato {estrato}")
+                areas.append(estratos[estrato]['area_total'])
+                carbono.append(estratos[estrato]['carbono_total'])
+        
+        # Colores para estratos
+        colores_estratos = ['#00441b', '#238b45', '#41ab5d', '#74c476', '#a1d99b']
+        
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        
+        # Barras para área
+        fig.add_trace(
+            go.Bar(
+                x=labels,
+                y=areas,
+                name='Área (ha)',
+                marker_color=colores_estratos,
+                text=[f"{a:.1f} ha" for a in areas],
+                textposition='auto'
+            ),
+            secondary_y=False
+        )
+        
+        # Línea para carbono
+        fig.add_trace(
+            go.Scatter(
+                x=labels,
+                y=carbono,
+                name='Carbono (ton)',
+                mode='lines+markers',
+                line=dict(color='#065f46', width=3),
+                marker=dict(size=10, color='#0a7e5a')
+            ),
+            secondary_y=True
+        )
+        
+        fig.update_layout(
+            title='Distribución por Estratos VCS',
+            height=400,
+            xaxis_title='Estratos de Carbono',
+            barmode='group'
+        )
+        
+        fig.update_yaxes(title_text="Área (ha)", secondary_y=False)
+        fig.update_yaxes(title_text="Carbono Total (ton)", secondary_y=True)
+        
+        return fig
+    
     def crear_grafico_barras_apiladas(self, resultados):
         """Crear gráfico de barras apiladas para distribución de áreas"""
         if not resultados:
@@ -1143,84 +1570,6 @@ class DashboardResumen:
         )
         
         return fig
-    
-    def crear_grafico_componentes_carbono(self, resultado_carbono):
-        """Crear gráfico de componentes de carbono"""
-        if not resultado_carbono:
-            return None
-        
-        # Datos de componentes
-        componentes = {
-            'Biomasa Aérea': resultado_carbono.get('carbono_agb_ton_ha', 0),
-            'Biomasa Subterránea': resultado_carbono.get('carbono_bgb_ton_ha', 0),
-            'Madera Muerta': resultado_carbono.get('carbono_madera_muerta_ton_ha', 0),
-            'Suelo': resultado_carbono.get('carbono_suelo_ton_ha', 0)
-        }
-        
-        fig = go.Figure(data=[
-            go.Bar(
-                x=list(componentes.keys()),
-                y=list(componentes.values()),
-                marker_color=['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6'],
-                text=[f"{v:.1f}" for v in componentes.values()],
-                textposition='auto',
-            )
-        ])
-        
-        fig.update_layout(
-            title='Distribución de Carbono por Componente (ton C/ha)',
-            xaxis_title='Componente',
-            yaxis_title='Toneladas de Carbono por Hectárea',
-            height=400
-        )
-        
-        return fig
-    
-    def crear_grafico_linea_tiempo_carbono(self, resultado_carbono):
-        """Crear gráfico de línea de tiempo para créditos de carbono"""
-        if not resultado_carbono:
-            return None
-        
-        periodo = resultado_carbono.get('periodo_anos', 30)
-        creditos_anuales = resultado_carbono.get('creditos_anuales', 0)
-        
-        # Generar datos para cada año
-        años = list(range(1, periodo + 1))
-        creditos_acumulados = [creditos_anuales * año for año in años]
-        creditos_anuales_lista = [creditos_anuales] * periodo
-        
-        fig = go.Figure()
-        
-        # Línea de créditos acumulados
-        fig.add_trace(go.Scatter(
-            x=años,
-            y=creditos_acumulados,
-            mode='lines+markers',
-            name='Créditos Acumulados',
-            line=dict(color='#10b981', width=3),
-            fill='tozeroy',
-            fillcolor='rgba(16, 185, 129, 0.1)'
-        ))
-        
-        # Barras de créditos anuales
-        fig.add_trace(go.Bar(
-            x=años,
-            y=creditos_anuales_lista,
-            name='Créditos Anuales',
-            marker_color='#3b82f6',
-            opacity=0.6
-        ))
-        
-        fig.update_layout(
-            title=f'Generación de Créditos de Carbono ({periodo} años)',
-            xaxis_title='Año del Proyecto',
-            yaxis_title='Créditos de Carbono (ton CO₂e)',
-            barmode='overlay',
-            height=400,
-            showlegend=True
-        )
-        
-        return fig
 
 # ===============================
 # 🌿 SISTEMA DE ANÁLISIS AMBIENTAL COMPLETO
@@ -1233,7 +1582,7 @@ class SistemaAnalisisAmbiental:
         self.simulador = SimuladorSatelital()
         self.sistema_mapas = SistemaMapasAvanzado()
         self.dashboard = DashboardResumen()
-        self.calculadora_carbono = CalculadoraCarbonoVerra()  # NUEVO: Calculadora Verra
+        self.analisis_carbono = AnalisisCarbonoVerra()
         
         # Tipos de cobertura vegetal
         self.tipos_cobertura = {
@@ -1245,19 +1594,6 @@ class SistemaAnalisisAmbiental:
             'Agricultura': 'pastizal',
             'Zona Urbana': 'suelo_desnudo',
             'Cuerpo de Agua': 'agua'
-        }
-        
-        # Mapeo a tipos Verra
-        self.mapeo_verra = {
-            'Bosque Tropical Húmedo': 'bosque_tropical_humedo',
-            'Bosque Seco Tropical': 'bosque_seco_tropical',
-            'Bosque Montano': 'bosque_montano',
-            'Sabana Arborizada': 'sabana_arborizada',
-            'Humeral': 'sabana_arborizada',
-            'Agricultura': 'sabana_arborizada',
-            'Zona Urbana': 'sabana_arborizada',
-            'Manglar': 'manglar',
-            'Plantación Forestal': 'plantacion_forestal'
         }
     
     def analizar_area_completa(self, gdf, tipo_ecosistema, satelite_seleccionado, n_divisiones=8):
@@ -1326,7 +1662,7 @@ class SistemaAnalisisAmbiental:
                             indice_shannon = 2.0 + (ndvi * 2.0) + (math.log10(area_ha + 1) * 0.5)
                             indice_shannon = max(0.1, min(4.0, indice_shannon + random.uniform(-0.3, 0.3)))
                             
-                            # Calcular carbono basado en NDVI y área
+                            # Calcular carbono basado en NDVI y área (método simplificado)
                             carbono_ton_ha = 50 + (ndvi * 200) + (area_ha * 0.1)
                             carbono_total = carbono_ton_ha * area_ha
                             co2_total = carbono_total * 3.67
@@ -1422,492 +1758,152 @@ class SistemaAnalisisAmbiental:
             resumen['color_estado'] = '#ef4444'
         
         resultados['resumen'] = resumen
-    
-    def analizar_carbono_potencial(self, gdf, tipo_ecosistema, tipo_proyecto="REDD+", 
-                                   periodo_anos=30, factor_incertidumbre=0.9):
-        """Analizar carbono potencial según metodología Verra"""
-        try:
-            if gdf is None or gdf.empty:
-                return None
-            
-            poligono_principal = gdf.geometry.iloc[0]
-            
-            # Calcular área total en hectáreas
-            bounds = gdf.total_bounds
-            lat_centro = (bounds[1] + bounds[3]) / 2
-            cos_lat = math.cos(math.radians(lat_centro))
-            
-            area_m2 = poligono_principal.area * 111000 * 111000 * cos_lat
-            area_ha = area_m2 / 10000
-            
-            # Obtener tipo de ecosistema para Verra
-            tipo_verra = self.mapeo_verra.get(tipo_ecosistema, 'bosque_tropical_humedo')
-            
-            # Simular NDVI promedio (en una implementación real esto vendría del análisis satelital)
-            ndvi_promedio = 0.65 + random.uniform(-0.1, 0.1)  # Valor aleatorio entre 0.55-0.75
-            
-            # Calcular carbono potencial usando la calculadora Verra
-            carbono = self.calculadora_carbono.calcular_carbono_verra(
-                tipo_verra, area_ha, ndvi_promedio, tipo_proyecto, periodo_anos, factor_incertidumbre
-            )
-            
-            # Calcular línea base de emisiones
-            linea_base = self.calculadora_carbono.calcular_linea_base(tipo_verra)
-            
-            # Calcular emisiones evitadas (si aplica)
-            if tipo_proyecto == "REDD+":
-                emisiones_evitadas = linea_base * area_ha * periodo_anos
-            else:
-                emisiones_evitadas = 0
-            
-            # Agregar información adicional
-            carbono.update({
-                'area_total_ha': round(area_ha, 2),
-                'tipo_ecosistema': tipo_ecosistema,
-                'tipo_verra': tipo_verra,
-                'geometry': poligono_principal,
-                'centroide': [poligono_principal.centroid.y, poligono_principal.centroid.x],
-                'linea_base_ton_co2_ha_ano': linea_base,
-                'emisiones_evitadas_ton': round(emisiones_evitadas, 2),
-                'fecha_calculo': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'parametros': {
-                    'periodo_anos': periodo_anos,
-                    'factor_incertidumbre': factor_incertidumbre,
-                    'ndvi_promedio': round(ndvi_promedio, 3)
-                }
-            })
-            
-            return carbono
-            
-        except Exception as e:
-            st.error(f"Error en análisis de carbono: {str(e)}")
-            return None
 
 # ===============================
-# 🎨 FUNCIONES DE INTERFAZ PARA CARBONO VERRA
+# 🎨 INTERFAZ PRINCIPAL DE LA APLICACIÓN
 # ===============================
 
-def mostrar_analisis_carbono():
-    """Mostrar análisis de carbono según metodología Verra"""
-    st.markdown("## 🌍 Análisis de Carbono Potencial - Metodología Verra")
-    
-    if st.session_state.poligono_data is None:
-        st.warning("👈 Carga un polígono en el panel lateral para comenzar")
-        
-        # Mostrar información educativa sobre Verra
-        with st.expander("📚 ¿Qué es la metodología Verra?", expanded=False):
-            st.markdown("""
-            **Verra** es una organización sin fines de lucro que administra estándares ambientales y sociales, 
-            incluido el **Verified Carbon Standard (VCS)**, el programa de créditos de carbono más utilizado a nivel mundial.
-            
-            ### Metodologías Principales:
-            1. **VM0007 - REDD+ Methodology Framework**: Para proyectos de Reducción de Emisiones por Deforestación y Degradación Forestal
-            2. **AR-AM0001 - Afforestation and Reforestation**: Para proyectos de reforestación y aforestación
-            3. **ACM0001 - Consolidated Baseline Methodology**: Metodología consolidada para reducción de GEI
-            
-            ### Factores Clave Considerados:
-            - Biomasa aérea y subterránea
-            - Madera muerta y desechos
-            - Materia orgánica del suelo
-            - Factores de conversión C a CO₂ (3.67)
-            - Incertidumbre y adicionalidad
-            """)
-        
-        return
-    
-    # Configuración del análisis de carbono
-    with st.expander("⚙️ Configuración del Proyecto de Carbono", expanded=True):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Seleccionar tipo de proyecto Verra
-            tipo_proyecto = st.selectbox(
-                "Tipo de Proyecto Verra",
-                ["REDD+", "AR-AM0001", "ACM0001"],
-                help="Selecciona la metodología Verra aplicable",
-                index=0
-            )
-            
-            # Seleccionar período
-            periodo_anos = st.slider(
-                "Período de créditos (años)",
-                10, 50, 30,
-                help="Duración del proyecto para cálculo de créditos",
-                key="periodo_carbono"
-            )
-        
-        with col2:
-            # Factor de incertidumbre
-            factor_incertidumbre = st.slider(
-                "Factor de incertidumbre",
-                0.7, 1.0, 0.9,
-                help="Factor conservador para considerar incertidumbre en cálculos (90% por defecto)",
-                key="factor_incertidumbre"
-            )
-            
-            # Escenario de línea base
-            escenario_linea_base = st.selectbox(
-                "Escenario de línea base",
-                ["business_as_usual", "conservador", "optimista"],
-                help="Escenario para calcular emisiones de línea base",
-                format_func=lambda x: x.replace('_', ' ').title()
-            )
-        
-        # Mostrar descripción de la metodología seleccionada
-        metodologias_info = {
-            "REDD+": "Reducción de Emisiones por Deforestación y Degradación Forestal",
-            "AR-AM0001": "Reforestación y Aforestación en Tierras Degradadas",
-            "ACM0001": "Metodología Consolidada para Reducción de Gases de Efecto Invernadero"
-        }
-        
-        st.info(f"**Metodología seleccionada:** {metodologias_info.get(tipo_proyecto, 'N/A')}")
-    
-    # Botón para calcular carbono
-    col1, col2, col3 = st.columns([2, 1, 2])
-    
-    with col2:
-        if st.button("🌳 Calcular Carbono Potencial", type="primary", use_container_width=True):
-            with st.spinner("Calculando carbono según metodología Verra..."):
-                # Obtener tipo de ecosistema (usar el seleccionado anteriormente o pedirlo)
-                tipo_ecosistema = st.session_state.get('tipo_ecosistema', 'Bosque Tropical Húmedo')
-                
-                # Calcular carbono potencial
-                resultado_carbono = st.session_state.sistema_analisis.analizar_carbono_potencial(
-                    st.session_state.poligono_data,
-                    tipo_ecosistema,
-                    tipo_proyecto,
-                    periodo_anos,
-                    factor_incertidumbre
-                )
-                
-                if resultado_carbono:
-                    st.session_state.resultado_carbono = resultado_carbono
-                    st.session_state.escenario_linea_base = escenario_linea_base
-                    st.success("✅ Cálculo de carbono completado según metodología Verra!")
-                else:
-                    st.error("❌ Error en el cálculo de carbono")
-    
-    # Mostrar resultados si existen
-    if hasattr(st.session_state, 'resultado_carbono') and st.session_state.resultado_carbono:
-        mostrar_resultados_carbono(st.session_state.resultado_carbono)
-
-def mostrar_resultados_carbono(resultado_carbono):
-    """Mostrar resultados del análisis de carbono"""
-    
-    # Dashboard de carbono
-    st.markdown("### 📊 Dashboard de Carbono Verra")
-    
-    dashboard_html = st.session_state.sistema_analisis.dashboard.crear_dashboard_carbono(resultado_carbono)
-    st.markdown(dashboard_html, unsafe_allow_html=True)
-    
-    # Mapa de densidad de carbono
-    st.markdown("### 🗺️ Mapa de Densidad de Carbono")
-    
-    mapa_carbono = st.session_state.sistema_analisis.sistema_mapas.crear_mapa_carbono(
-        st.session_state.poligono_data,
-        resultado_carbono
+def main():
+    # Configurar título y estilos
+    st.set_page_config(
+        page_title="Sistema Satelital de Análisis Ambiental con Verra VCS",
+        page_icon="🛰️",
+        layout="wide"
     )
     
-    folium_static(mapa_carbono, width=1000, height=500)
+    # Título principal
+    st.title("🛰️ Sistema Satelital de Análisis Ambiental")
+    st.markdown("### Análisis con PlanetScope & Sentinel-2 | Dashboard Ejecutivo | Verra VCS para Carbono")
     
-    # Gráficos de análisis
-    col1, col2 = st.columns(2)
+    # Inicializar sistemas
+    if 'sistema_analisis' not in st.session_state:
+        st.session_state.sistema_analisis = SistemaAnalisisAmbiental()
+    if 'resultados' not in st.session_state:
+        st.session_state.resultados = None
+    if 'poligono_data' not in st.session_state:
+        st.session_state.poligono_data = None
+    if 'resultados_carbono' not in st.session_state:
+        st.session_state.resultados_carbono = None
+    if 'analisis_carbono_realizado' not in st.session_state:
+        st.session_state.analisis_carbono_realizado = False
     
-    with col1:
-        st.markdown("### 📈 Componentes de Carbono")
-        fig_componentes = st.session_state.sistema_analisis.dashboard.crear_grafico_componentes_carbono(resultado_carbono)
-        if fig_componentes:
-            st.plotly_chart(fig_componentes, use_container_width=True)
-    
-    with col2:
-        st.markdown("### 📅 Generación de Créditos")
-        fig_tiempo = st.session_state.sistema_analisis.dashboard.crear_grafico_linea_tiempo_carbono(resultado_carbono)
-        if fig_tiempo:
-            st.plotly_chart(fig_tiempo, use_container_width=True)
-    
-    # Análisis detallado
-    st.markdown("### 📋 Análisis Detallado")
-    
-    with st.expander("🔍 Ver Detalles del Cálculo", expanded=False):
-        col1, col2, col3 = st.columns(3)
+    # Sidebar
+    with st.sidebar:
+        st.header("⚙️ Configuración del Análisis")
         
-        with col1:
-            st.metric("Biomasa Aérea (AGB)", f"{resultado_carbono.get('carbono_agb_ton_ha', 0):.1f} ton C/ha")
-            st.metric("Biomasa Subterránea (BGB)", f"{resultado_carbono.get('carbono_bgb_ton_ha', 0):.1f} ton C/ha")
+        # Carga de archivo
+        uploaded_file = st.file_uploader(
+            "📁 Cargar polígono de estudio",
+            type=['kml', 'geojson', 'zip'],
+            help="Formatos: KML, GeoJSON, Shapefile (ZIP)"
+        )
         
-        with col2:
-            st.metric("Madera Muerta", f"{resultado_carbono.get('carbono_madera_muerta_ton_ha', 0):.1f} ton C/ha")
-            st.metric("Materia Orgánica Suelo", f"{resultado_carbono.get('carbono_suelo_ton_ha', 0):.1f} ton C/ha")
+        if uploaded_file is not None:
+            with st.spinner("Procesando archivo..."):
+                try:
+                    if uploaded_file.name.endswith('.kml'):
+                        gdf = gpd.read_file(uploaded_file, driver='KML')
+                    elif uploaded_file.name.endswith('.geojson'):
+                        gdf = gpd.read_file(uploaded_file)
+                    elif uploaded_file.name.endswith('.zip'):
+                        with tempfile.TemporaryDirectory() as tmpdir:
+                            with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
+                                zip_ref.extractall(tmpdir)
+                            shp_files = [f for f in os.listdir(tmpdir) if f.endswith('.shp')]
+                            if shp_files:
+                                gdf = gpd.read_file(os.path.join(tmpdir, shp_files[0]))
+                    
+                    if gdf is not None and not gdf.empty:
+                        st.session_state.poligono_data = gdf
+                        st.success("✅ Polígono cargado exitosamente")
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
         
-        with col3:
-            st.metric("Factor Incertidumbre", f"{resultado_carbono.get('factor_incertidumbre', 0.9)*100:.0f}%")
-            st.metric("Línea Base", f"{resultado_carbono.get('linea_base_ton_co2_ha_ano', 0):.0f} ton CO₂/ha/año")
-    
-    # Valoración económica (opcional)
-    with st.expander("💰 Valoración Económica Potencial", expanded=False):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            precio_credito = st.slider(
-                "Precio por crédito de carbono (USD)",
-                5.0, 50.0, 15.0,
-                help="Precio estimado por tonelada de CO₂ equivalente"
+        # Configuración del análisis
+        if st.session_state.poligono_data is not None and not st.session_state.poligono_data.empty:
+            st.markdown("---")
+            st.subheader("🛰️ Configuración Satelital")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                satelite = st.selectbox(
+                    "Satélite",
+                    ["PlanetScope", "Sentinel-2"],
+                    help="PlanetScope: 3m resolución | Sentinel-2: 10-20m resolución"
+                )
+            with col2:
+                capa_base = st.selectbox(
+                    "Capa base del mapa",
+                    ["ESRI World Imagery", "PlanetScope", "Sentinel-2", "OpenTopoMap"]
+                )
+            
+            st.subheader("🌿 Parámetros Ambientales")
+            
+            tipo_ecosistema = st.selectbox(
+                "Tipo de ecosistema predominante",
+                ['Bosque Tropical Húmedo', 'Bosque Seco Tropical', 'Bosque Montano', 
+                 'Sabana Arborizada', 'Humeral', 'Agricultura', 'Zona Urbana']
             )
-        
-        with col2:
-            creditos_totales = resultado_carbono.get('creditos_totales', 0)
-            valor_total = creditos_totales * precio_credito
-            valor_anual = resultado_carbono.get('creditos_anuales', 0) * precio_credito
             
-            st.metric("Valor Total Potencial", f"${valor_total:,.0f} USD")
-            st.metric("Valor Anual", f"${valor_anual:,.0f} USD/año")
-    
-    # Reporte y exportación
-    st.markdown("### 📄 Reporte y Exportación")
-    
-    # Generar reporte Verra
-    reporte_verra = generar_reporte_verra_completo(resultado_carbono, st.session_state.poligono_data)
-    reporte_txt = generar_reporte_texto_verra(resultado_carbono)
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        # Descargar reporte en texto
-        st.download_button(
-            label="⬇️ Descargar Reporte Verra (.txt)",
-            data=reporte_txt,
-            file_name=f"reporte_verra_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-            mime="text/plain",
-            use_container_width=True
-        )
-    
-    with col2:
-        # Descargar datos en JSON
-        json_data = json.dumps(reporte_verra, indent=2, default=str)
-        st.download_button(
-            label="⬇️ Descargar Datos para API (.json)",
-            data=json_data,
-            file_name=f"datos_verra_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-            mime="application/json",
-            use_container_width=True
-        )
-    
-    with col3:
-        # Generar PDF (simulado)
-        if st.button("🖨️ Generar PDF para Certificación", use_container_width=True):
-            st.info("""
-            **Función de generación de PDF (simulada)**
+            nivel_detalle = st.slider("Nivel de detalle (divisiones)", 4, 12, 8)
             
-            En una implementación completa, esta función generaría:
-            1. Reporte formateado en PDF
-            2. Gráficos y mapas incluidos
-            3. Firmas digitales
-            4. Formato listo para enviar a Verra
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🚀 Ejecutar Análisis Completo", use_container_width=True):
+                    with st.spinner("Procesando datos satelitales..."):
+                        resultados = st.session_state.sistema_analisis.analizar_area_completa(
+                            st.session_state.poligono_data,
+                            tipo_ecosistema,
+                            satelite,
+                            nivel_detalle
+                        )
+                        
+                        if resultados:
+                            st.session_state.resultados = resultados
+                            st.session_state.analisis_carbono_realizado = False
+                            st.success("✅ Análisis ambiental completado!")
             
-            Para implementar: usar librerías como ReportLab o WeasyPrint
-            """)
+            with col2:
+                if st.button("🌳 Análisis Carbono Verra", type="primary", use_container_width=True):
+                    with st.spinner("Calculando carbono según metodología Verra VCS..."):
+                        resultados_carbono = st.session_state.sistema_analisis.analisis_carbono.analizar_carbono_area(
+                            st.session_state.poligono_data,
+                            tipo_ecosistema,
+                            nivel_detalle
+                        )
+                        
+                        if resultados_carbono:
+                            st.session_state.resultados_carbono = resultados_carbono
+                            st.session_state.analisis_carbono_realizado = True
+                            st.success("✅ Análisis de carbono Verra completado!")
     
-    # Mostrar vista previa del reporte
-    with st.expander("👁️ Vista Previa del Reporte Verra", expanded=False):
-        st.text(reporte_txt[:2000] + "..." if len(reporte_txt) > 2000 else reporte_txt)
-
-def generar_reporte_verra_completo(resultado_carbono, gdf):
-    """Generar reporte estructurado completo para Verra"""
+    # Pestañas principales
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "🗺️ Mapa Satelital", 
+        "📊 Dashboard Ejecutivo",
+        "🌿 Índices de Vegetación",
+        "🌳 Análisis de Carbono",
+        "📋 Reporte Verra",
+        "📈 Datos Completos"
+    ])
     
-    # Calcular área
-    if gdf is not None and not gdf.empty:
-        poligono = gdf.geometry.iloc[0]
-        bounds = gdf.total_bounds
-        lat_centro = (bounds[1] + bounds[3]) / 2
-        cos_lat = math.cos(math.radians(lat_centro))
-        area_m2 = poligono.area * 111000 * 111000 * cos_lat
-        area_ha = area_m2 / 10000
-    else:
-        area_ha = resultado_carbono.get('area_total_ha', 0)
+    with tab1:
+        mostrar_mapa_satelital(capa_base if 'capa_base' in locals() else "ESRI World Imagery")
     
-    reporte = {
-        'encabezado': {
-            'titulo': 'REPORTE DE CARBONO POTENCIAL - METODOLOGÍA VERRA',
-            'version': '1.0',
-            'fecha_generacion': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'sistema': 'Sistema Satelital de Análisis Ambiental'
-        },
-        'informacion_proyecto': {
-            'nombre_proyecto': 'Análisis de Carbono Potencial',
-            'tipo_proyecto': resultado_carbono.get('tipo_proyecto', 'N/A'),
-            'metodologia': {
-                'codigo': resultado_carbono.get('metodologia_codigo', 'N/A'),
-                'nombre': resultado_carbono.get('metodologia_nombre', 'N/A')
-            },
-            'periodo_anos': resultado_carbono.get('periodo_anos', 30),
-            'factor_incertidumbre': resultado_carbono.get('factor_incertidumbre', 0.9)
-        },
-        'informacion_geografica': {
-            'area_total_ha': round(area_ha, 2),
-            'tipo_ecosistema': resultado_carbono.get('tipo_ecosistema', 'N/A'),
-            'tipo_verra': resultado_carbono.get('tipo_verra', 'N/A'),
-            'coordenadas_centro': resultado_carbono.get('centroide', [0, 0])
-        },
-        'parametros_calculo': {
-            'conversion_co2_carbono': 3.67,
-            'fraccion_carbono_biomasa': 0.47,
-            'factor_incertidumbre_aplicado': resultado_carbono.get('factor_incertidumbre', 0.9),
-            'ndvi_promedio': resultado_carbono.get('parametros', {}).get('ndvi_promedio', 0.65)
-        },
-        'resultados_carbono': {
-            'biomasa_aerea': {
-                'valor': resultado_carbono.get('carbono_agb_ton_ha', 0),
-                'unidad': 'ton C/ha'
-            },
-            'biomasa_subterranea': {
-                'valor': resultado_carbono.get('carbono_bgb_ton_ha', 0),
-                'unidad': 'ton C/ha'
-            },
-            'madera_muerta': {
-                'valor': resultado_carbono.get('carbono_madera_muerta_ton_ha', 0),
-                'unidad': 'ton C/ha'
-            },
-            'materia_organica_suelo': {
-                'valor': resultado_carbono.get('carbono_suelo_ton_ha', 0),
-                'unidad': 'ton C/ha'
-            },
-            'total_por_hectarea': {
-                'valor': resultado_carbono.get('carbono_total_ton_ha', 0),
-                'unidad': 'ton C/ha'
-            },
-            'total_area': {
-                'valor': resultado_carbono.get('carbono_total_ton', 0),
-                'unidad': 'ton C'
-            }
-        },
-        'resultados_co2': {
-            'equivalente_total': {
-                'valor': resultado_carbono.get('co2_equivalente_ton', 0),
-                'unidad': 'ton CO₂e'
-            },
-            'anual': {
-                'valor': resultado_carbono.get('co2_anual_ton', 0),
-                'unidad': 'ton CO₂e/año'
-            }
-        },
-        'creditos_carbono': {
-            'totales': {
-                'valor': resultado_carbono.get('creditos_totales', 0),
-                'unidad': 'créditos'
-            },
-            'anuales': {
-                'valor': resultado_carbono.get('creditos_anuales', 0),
-                'unidad': 'créditos/año'
-            }
-        },
-        'linea_base': {
-            'emisiones_ha_ano': resultado_carbono.get('linea_base_ton_co2_ha_ano', 0),
-            'emisiones_evitadas': resultado_carbono.get('emisiones_evitadas_ton', 0),
-            'unidad': 'ton CO₂'
-        },
-        'consideraciones': {
-            'adicionalidad': 'Se asume que el proyecto cumple con criterios de adicionalidad',
-            'permanencia': f"Período de compromiso: {resultado_carbono.get('periodo_anos', 30)} años",
-            'fugas': 'No se han considerado fugas en este cálculo preliminar',
-            'validacion': 'Requiere validación por tercero independiente para certificación Verra'
-        },
-        'metadata': {
-            'version_calculadora': '1.0',
-            'fecha_calculo': resultado_carbono.get('fecha_calculo', 'N/A'),
-            'parametros_utilizados': resultado_carbono.get('parametros', {})
-        }
-    }
+    with tab2:
+        mostrar_dashboard_ejecutivo()
     
-    return reporte
-
-def generar_reporte_texto_verra(resultado_carbono):
-    """Generar reporte en texto plano para Verra"""
+    with tab3:
+        mostrar_indices_vegetacion()
     
-    reporte = f"""
-{'='*80}
-REPORTE DE CARBONO POTENCIAL - METODOLOGÍA VERRA
-{'='*80}
-
-INFORMACIÓN DEL PROYECTO:
-{'─'*40}
-• Fecha de cálculo: {resultado_carbono.get('fecha_calculo', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}
-• Tipo de proyecto: {resultado_carbono.get('tipo_proyecto', 'N/A')}
-• Metodología aplicada: {resultado_carbono.get('metodologia_nombre', 'N/A')} ({resultado_carbono.get('metodologia_codigo', 'N/A')})
-• Período del proyecto: {resultado_carbono.get('periodo_anos', 30)} años
-• Factor de incertidumbre: {resultado_carbono.get('factor_incertidumbre', 0.9)*100:.0f}%
-
-INFORMACIÓN GEOGRÁFICA:
-{'─'*40}
-• Área total: {resultado_carbono.get('area_total_ha', 0):,.2f} ha
-• Tipo de ecosistema: {resultado_carbono.get('tipo_ecosistema', 'N/A')}
-• Clasificación Verra: {resultado_carbono.get('tipo_verra', 'N/A')}
-
-RESULTADOS DEL CÁLCULO DE CARBONO:
-{'─'*40}
-1. BIOMASA AÉREA (AGB):
-   • Carbono en biomasa aérea: {resultado_carbono.get('carbono_agb_ton_ha', 0):.2f} ton C/ha
-
-2. BIOMASA SUBTERRÁNEA (BGB):
-   • Carbono en raíces: {resultado_carbono.get('carbono_bgb_ton_ha', 0):.2f} ton C/ha
-
-3. MADERA MUERTA Y DESECHOS:
-   • Carbono en madera muerta: {resultado_carbono.get('carbono_madera_muerta_ton_ha', 0):.2f} ton C/ha
-
-4. MATERIA ORGÁNICA DEL SUELO:
-   • Carbono en suelo: {resultado_carbono.get('carbono_suelo_ton_ha', 0):.2f} ton C/ha
-
-TOTALES POR COMPONENTE:
-{'─'*40}
-• Carbono total por hectárea: {resultado_carbono.get('carbono_total_ton_ha', 0):.2f} ton C/ha
-• Carbono total en el área: {resultado_carbono.get('carbono_total_ton', 0):,.2f} ton C
-• CO₂ equivalente total: {resultado_carbono.get('co2_equivalente_ton', 0):,.2f} ton CO₂e
-
-GENERACIÓN DE CRÉDITOS DE CARBONO:
-{'─'*40}
-• Carbono anualizado: {resultado_carbono.get('carbono_anual_ton', 0):,.2f} ton C/año
-• Créditos anuales potenciales: {resultado_carbono.get('creditos_anuales', 0):,.2f} créditos/año
-• Créditos totales en {resultado_carbono.get('periodo_anos', 30)} años: {resultado_carbono.get('creditos_totales', 0):,.2f} créditos
-
-LÍNEA BASE Y EMISIONES EVITADAS:
-{'─'*40}
-• Línea base de emisiones: {resultado_carbono.get('linea_base_ton_co2_ha_ano', 0):.0f} ton CO₂/ha/año
-• Emisiones evitadas totales: {resultado_carbono.get('emisiones_evitadas_ton', 0):,.0f} ton CO₂
-
-FACTORES APLICADOS:
-{'─'*40}
-• Conversión C a CO₂: 3.67
-• Fracción de carbono en biomasa: 47%
-• Factores específicos según metodología {resultado_carbono.get('metodologia_codigo', 'VM0007')}
-
-CONSIDERACIONES Y LIMITACIONES:
-{'─'*40}
-1. Este cálculo sigue la metodología {resultado_carbono.get('metodologia_codigo', 'VM0007')} de Verra
-2. Los valores son estimaciones potenciales basadas en parámetros estándar
-3. Para certificación oficial se requieren mediciones in situ y validación por tercero independiente
-4. Se deben considerar factores de fugas y adicionalidad en una evaluación completa
-5. El factor de incertidumbre aplicado es del {resultado_carbono.get('factor_incertidumbre', 0.9)*100:.0f}%
-
-RECOMENDACIONES:
-{'─'*40}
-1. Realizar inventario forestal in situ para validar estimaciones
-2. Evaluar adicionalidad del proyecto según criterios Verra
-3. Considerar posibles fugas de emisiones
-4. Desarrollar plan de monitoreo, reporte y verificación (MRV)
-5. Consultar con entidades validadoras acreditadas por Verra
-
-{'='*80}
-FIN DEL REPORTE
-{'='*80}
-
-Generado por: Sistema Satelital de Análisis Ambiental con Módulo Verra
-Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-"""
+    with tab4:
+        mostrar_analisis_carbono()
     
-    return reporte
-
-# ===============================
-# 🎨 FUNCIONES ORIGINALES DE LA INTERFAZ
-# ===============================
+    with tab5:
+        mostrar_reporte_verra()
+    
+    with tab6:
+        mostrar_datos_completos()
 
 def mostrar_mapa_satelital(capa_base="ESRI World Imagery"):
     """Mostrar mapa satelital con el área de estudio"""
@@ -2015,10 +2011,8 @@ def mostrar_dashboard_ejecutivo():
             'areas' in st.session_state.resultados and 
             len(st.session_state.resultados['areas']) > 0):
             
-            # Preparar datos para el mapa
             datos_areas = st.session_state.resultados['areas']
             
-            # Crear mapa de calor
             mapa_calor = st.session_state.sistema_analisis.sistema_mapas.crear_mapa_indices(
                 st.session_state.poligono_data,
                 datos_areas,
@@ -2176,46 +2170,259 @@ def mostrar_indices_vegetacion():
     df_tabla = pd.DataFrame(datos_tabla)
     st.dataframe(df_tabla, use_container_width=True)
 
+def mostrar_analisis_carbono():
+    """Mostrar análisis detallado de carbono según metodología Verra"""
+    st.markdown("## 🌳 Análisis de Carbono Forestal - Metodología Verra VCS")
+    
+    if not st.session_state.analisis_carbono_realizado:
+        st.warning("Ejecuta el análisis de carbono Verra desde el panel lateral")
+        return
+    
+    if st.session_state.resultados_carbono is None:
+        st.error("No hay datos de carbono para mostrar")
+        return
+    
+    resultados = st.session_state.resultados_carbono
+    
+    # Dashboard de carbono
+    st.markdown("### 📊 Dashboard de Carbono Verra")
+    
+    dashboard_carbono_html = st.session_state.sistema_analisis.dashboard.crear_dashboard_carbono(resultados)
+    st.markdown(dashboard_carbono_html, unsafe_allow_html=True)
+    
+    # Mapa de carbono
+    st.markdown("### 🗺️ Mapa de Distribución de Carbono")
+    
+    if (st.session_state.poligono_data is not None and 
+        'analisis_carbono' in resultados and 
+        len(resultados['analisis_carbono']) > 0):
+        
+        mapa_carbono = st.session_state.sistema_analisis.sistema_mapas.crear_mapa_carbono(
+            st.session_state.poligono_data,
+            resultados['analisis_carbono'],
+            "Mapa de Carbono según Verra VCS"
+        )
+        
+        folium_static(mapa_carbono, width=1000, height=500)
+    
+    # Gráficos de carbono
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### 📊 Distribución por Pools de Carbono")
+        fig_pools = st.session_state.sistema_analisis.dashboard.crear_grafico_pools_carbono(resultados)
+        if fig_pools:
+            st.plotly_chart(fig_pools, use_container_width=True)
+        
+        # Explicación de pools
+        with st.expander("ℹ️ Explicación de los Pools de Carbono VCS"):
+            st.markdown("""
+            **Pools de Carbono según Verra VCS:**
+            
+            1. **AGB (Above Ground Biomass)**: Biomasa aérea viva (troncos, ramas, hojas)
+            2. **BGB (Below Ground Biomass)**: Biomasa subterránea (raíces)
+            3. **DW (Dead Wood)**: Madera muerta en pie o en el suelo
+            4. **LI (Litter)**: Hojarasca y materia orgánica superficial
+            5. **SOC (Soil Organic Carbon)**: Carbono orgánico del suelo (primeros 30cm)
+            
+            **Metodología**: VCS VM0007 - REDD+ Methodological Framework
+            """)
+    
+    with col2:
+        st.markdown("### 📈 Distribución por Estratos VCS")
+        fig_estratos = st.session_state.sistema_analisis.dashboard.crear_grafico_estratos_vcs(resultados)
+        if fig_estratos:
+            st.plotly_chart(fig_estratos, use_container_width=True)
+        
+        # Explicación de estratos
+        with st.expander("ℹ️ Explicación de los Estratos VCS"):
+            st.markdown("""
+            **Clasificación por Estratos de Carbono:**
+            
+            - **Estrato A**: Alta densidad (>0.7 NDVI) - Carbono alto
+            - **Estrato B**: Media-alta densidad (0.5-0.7 NDVI) - Carbono medio-alto
+            - **Estrato C**: Media densidad (0.3-0.5 NDVI) - Carbono medio
+            - **Estrato D**: Baja densidad (0.1-0.3 NDVI) - Carbono bajo
+            - **Estrato E**: Muy baja densidad (<0.1 NDVI) - Carbono muy bajo
+            
+            **Propósito**: Permite análisis diferenciado y cálculo de líneas base.
+            """)
+    
+    # Tabla detallada de carbono
+    st.markdown("### 📋 Datos Detallados de Carbono por Área")
+    
+    if 'analisis_carbono' in resultados and len(resultados['analisis_carbono']) > 0:
+        datos_carbono = []
+        for area in resultados['analisis_carbono'][:20]:  # Mostrar primeras 20
+            datos_carbono.append({
+                'Área': area['area'],
+                'Área (ha)': area['area_ha'],
+                'NDVI': area['ndvi'],
+                'Estrato VCS': area['estrato_vcs'],
+                'Densidad': area['densidad_vcs'],
+                'Carbono (ton C)': area['carbono_total_ton'],
+                'CO₂e (ton)': area['co2_equivalente_ton'],
+                'Carbono/ha (ton)': area['carbono_por_ha'],
+                'Incertidumbre (%)': area['incertidumbre']['incertidumbre_relativa']
+            })
+        
+        df_carbono = pd.DataFrame(datos_carbono)
+        st.dataframe(df_carbono, use_container_width=True)
+        
+        # Opciones de descarga
+        st.markdown("### 📥 Exportar Datos de Carbono")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            csv = df_carbono.to_csv(index=False)
+            st.download_button(
+                label="⬇️ Descargar CSV",
+                data=csv,
+                file_name="datos_carbono_verra.csv",
+                mime="text/csv"
+            )
+        
+        with col2:
+            if st.button("📊 Generar Reporte Completo"):
+                st.info("El reporte completo se genera en la pestaña 'Reporte Verra'")
+
+def mostrar_reporte_verra():
+    """Mostrar reporte completo según estándar Verra VCS"""
+    st.markdown("## 📋 Reporte de Carbono - Estándar Verra VCS")
+    
+    if not st.session_state.analisis_carbono_realizado:
+        st.warning("Ejecuta el análisis de carbono Verra desde el panel lateral")
+        return
+    
+    if st.session_state.resultados_carbono is None:
+        st.error("No hay datos de carbono para mostrar")
+        return
+    
+    resultados = st.session_state.resultados_carbono
+    resumen = resultados.get('resumen_carbono', {})
+    
+    # Generar reporte VCS
+    if st.session_state.poligono_data is not None:
+        gdf = st.session_state.poligono_data
+        bounds = gdf.total_bounds
+        centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
+        coordenadas = f"{centro[0]:.6f}°, {centro[1]:.6f}°"
+        
+        reporte_vcs = st.session_state.sistema_analisis.analisis_carbono.metodologia.generar_reporte_vcs(
+            {
+                'carbono_total_ton_ha': resumen.get('carbono_promedio_ton_ha', 0),
+                'co2_equivalente_ton_ha': resumen.get('co2_promedio_ton_ha', 0),
+                'desglose': resumen.get('pools_distribucion', {}),
+                'factores_aplicados': resultados.get('metadata_vcs', {})
+            },
+            resumen.get('area_total_ha', 0),
+            coordenadas
+        )
+        
+        # Mostrar reporte en formato de texto
+        st.text_area("Reporte Verra VCS", reporte_vcs, height=800)
+        
+        # Botón para descargar reporte
+        st.download_button(
+            label="📄 Descargar Reporte Verra",
+            data=reporte_vcs,
+            file_name=f"reporte_verra_vcs_{datetime.now().strftime('%Y%m%d')}.txt",
+            mime="text/plain"
+        )
+    
+    # Sección de elegibilidad VCS
+    st.markdown("### 🎯 Evaluación de Elegibilidad VCS")
+    
+    elegibilidad = resumen.get('elegibilidad_vcs', {})
+    
+    if elegibilidad:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### Criterios Cumplidos")
+            criterios = elegibilidad.get('criterios_detalle', {})
+            
+            for criterio, cumplido in criterios.items():
+                if cumplido:
+                    st.success(f"✅ {criterio.replace('_', ' ').title()}")
+                else:
+                    st.error(f"❌ {criterio.replace('_', ' ').title()}")
+        
+        with col2:
+            st.markdown("#### Porcentaje de Cumplimiento")
+            cumplimiento = elegibilidad.get('porcentaje_cumplimiento', 0)
+            
+            # Barra de progreso
+            st.progress(cumplimiento / 100)
+            st.metric("Cumplimiento Total", f"{cumplimiento:.1f}%")
+            
+            if cumplimiento >= 80:
+                st.success("🎉 Alto potencial para certificación VCS")
+            elif cumplimiento >= 60:
+                st.warning("⚠️ Potencial moderado - requiere ajustes")
+            else:
+                st.error("❌ Bajo potencial - requiere mejoras significativas")
+    
+    # Recomendaciones para validación VCS
+    st.markdown("### 🛠️ Recomendaciones para Validación VCS")
+    
+    recomendaciones = [
+        "1. **Establecer parcelas permanentes de monitoreo** (mínimo 20 parcelas por estrato)",
+        "2. **Realizar inventarios forestales completos** cada 2-5 años",
+        "3. **Documentar factores de emisión específicos** del sitio",
+        "4. **Implementar sistema MRV** (Monitoreo, Reporte y Verificación)",
+        "5. **Contratar validador acreditado** por Verra",
+        "6. **Desarrollar plan de manejo forestal** a largo plazo",
+        "7. **Establecer línea base de referencia** para adicionalidad",
+        "8. **Analizar riesgos de fuga** (leakage) y permanencia",
+        "9. **Participar en consulta con partes interesadas**",
+        "10. **Preparar documentación del proyecto** según template VCS"
+    ]
+    
+    for rec in recomendaciones:
+        st.markdown(rec)
+    
+    # Cronograma sugerido para certificación
+    st.markdown("### 📅 Cronograma Sugerido para Certificación VCS")
+    
+    cronograma = {
+        "Mes 1-3": "Preparación inicial y estudios de línea base",
+        "Mes 4-6": "Diseño del proyecto y documentación VCS",
+        "Mes 7-9": "Validación por tercero acreditado",
+        "Mes 10-12": "Registro en Verra Registry",
+        "Mes 13-24": "Implementación y monitoreo continuo",
+        "Mes 25-36": "Verificación y emisión de créditos"
+    }
+    
+    for mes, actividad in cronograma.items():
+        st.markdown(f"**{mes}**: {actividad}")
+
 def mostrar_datos_completos():
     """Mostrar todos los datos completos del análisis"""
     st.markdown("## 📈 Datos Completos del Análisis Ambiental")
     
-    if st.session_state.resultados is None:
-        st.warning("Ejecuta el análisis ambiental primero")
-        return
+    # Selector de tipo de datos
+    tipo_datos = st.radio(
+        "Seleccionar tipo de datos a visualizar",
+        ["Datos Ambientales", "Datos de Carbono Verra"],
+        horizontal=True
+    )
     
-    resultados = st.session_state.resultados
-    
-    # Información general
-    st.markdown("### 📊 Información General del Análisis")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Satélite utilizado", resultados.get('satelite_usado', 'N/A'))
-    with col2:
-        st.metric("Tipo de ecosistema", resultados.get('tipo_ecosistema', 'N/A'))
-    with col3:
-        st.metric("Número de áreas", resultados.get('resumen', {}).get('total_areas', 0))
-    with col4:
-        st.metric("Área total", f"{resultados.get('resumen', {}).get('area_total_ha', 0):,.1f} ha")
-    
-    # Metadatos de la imagen satelital
-    st.markdown("### 🛰️ Metadatos de la Imagen Satelital")
-    
-    metadatos = resultados.get('metadatos_imagen', {})
-    if metadatos:
-        df_metadatos = pd.DataFrame([metadatos])
-        st.dataframe(df_metadatos.T.rename(columns={0: 'Valor'}), use_container_width=True)
-    
-    # Datos detallados por área
-    st.markdown("### 📋 Datos Detallados por Área")
-    
-    areas = resultados.get('areas', [])
-    if areas:
+    if tipo_datos == "Datos Ambientales":
+        if st.session_state.resultados is None:
+            st.warning("Ejecuta el análisis ambiental primero")
+            return
+        
+        resultados = st.session_state.resultados
+        areas = resultados.get('areas', [])
+        
+        if not areas:
+            st.error("No hay datos de áreas para mostrar")
+            return
+        
         # Preparar datos para la tabla
         datos_completos = []
         for area in areas:
-            # Extraer datos principales
             fila = {
                 'ID': area['id'],
                 'Área': area['area'],
@@ -2235,57 +2442,64 @@ def mostrar_datos_completos():
         
         df_completo = pd.DataFrame(datos_completos)
         
-        # Mostrar tabla con filtros
-        st.dataframe(df_completo, use_container_width=True)
+    else:  # Datos de Carbono Verra
+        if not st.session_state.analisis_carbono_realizado:
+            st.warning("Ejecuta el análisis de carbono Verra primero")
+            return
         
-        # Opciones de descarga
-        st.markdown("### 📥 Exportar Datos")
+        if st.session_state.resultados_carbono is None:
+            st.error("No hay datos de carbono para mostrar")
+            return
         
-        col1, col2 = st.columns(2)
+        resultados = st.session_state.resultados_carbono
+        areas_carbono = resultados.get('analisis_carbono', [])
         
-        with col1:
-            # Convertir a CSV
-            csv = df_completo.to_csv(index=False)
-            st.download_button(
-                label="⬇️ Descargar CSV",
-                data=csv,
-                file_name="datos_analisis_ambiental.csv",
-                mime="text/csv"
-            )
+        if not areas_carbono:
+            st.error("No hay datos de carbono para mostrar")
+            return
         
-        with col2:
-            # Generar reporte ejecutivo
-            if st.button("📄 Generar Reporte Ejecutivo"):
-                reporte = generar_reporte_ejecutivo(resultados)
-                st.download_button(
-                    label="⬇️ Descargar Reporte",
-                    data=reporte,
-                    file_name="reporte_ejecutivo.txt",
-                    mime="text/plain"
-                )
+        # Preparar datos de carbono para la tabla
+        datos_completos = []
+        for area in areas_carbono:
+            fila = {
+                'ID': area['id'],
+                'Área': area['area'],
+                'Área (ha)': area['area_ha'],
+                'NDVI': area['ndvi'],
+                'Estrato VCS': area['estrato_vcs'],
+                'Densidad': area['densidad_vcs'],
+                'Carbono Total (ton C)': area['carbono_total_ton'],
+                'CO₂ Equivalente (ton)': area['co2_equivalente_ton'],
+                'Carbono/ha (ton C)': area['carbono_por_ha'],
+                'Incertidumbre (%)': area['incertidumbre']['incertidumbre_relativa'],
+                'AGB (ton C)': area['desglose_carbono'].get('AGB', 0),
+                'BGB (ton C)': area['desglose_carbono'].get('BGB', 0),
+                'DW (ton C)': area['desglose_carbono'].get('DW', 0),
+                'LI (ton C)': area['desglose_carbono'].get('LI', 0),
+                'SOC (ton C)': area['desglose_carbono'].get('SOC', 0)
+            }
+            datos_completos.append(fila)
+        
+        df_completo = pd.DataFrame(datos_completos)
+    
+    # Mostrar tabla con filtros
+    st.dataframe(df_completo, use_container_width=True)
     
     # Estadísticas avanzadas
     st.markdown("### 📊 Estadísticas Avanzadas")
     
-    if areas:
-        # Seleccionar variable para histograma
-        variables = ['NDVI', 'SAVI', 'EVI', 'Shannon', 'Carbono (ton/ha)']
-        variable_seleccionada = st.selectbox("Seleccionar variable para histograma", variables)
-        
-        # Extraer valores
-        if variable_seleccionada == 'Shannon':
-            valores = [area['indice_shannon'] for area in areas]
-        elif variable_seleccionada == 'Carbono (ton/ha)':
-            valores = [area['carbono']['ton_ha'] for area in areas]
-        else:
-            valores = [area['indices'].get(variable_seleccionada, 0) for area in areas]
+    # Seleccionar variable para histograma
+    variables_numericas = [col for col in df_completo.columns if df_completo[col].dtype in ['int64', 'float64']]
+    
+    if variables_numericas:
+        variable_seleccionada = st.selectbox("Seleccionar variable para histograma", variables_numericas)
         
         # Crear histograma
         fig = px.histogram(
-            x=valores,
+            df_completo,
+            x=variable_seleccionada,
             nbins=20,
             title=f'Distribución de {variable_seleccionada}',
-            labels={'x': variable_seleccionada, 'y': 'Frecuencia'},
             color_discrete_sequence=['#3b82f6']
         )
         
@@ -2296,6 +2510,51 @@ def mostrar_datos_completos():
         )
         
         st.plotly_chart(fig, use_container_width=True)
+    
+    # Opciones de descarga
+    st.markdown("### 📥 Exportar Datos")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        # Convertir a CSV
+        csv = df_completo.to_csv(index=False)
+        st.download_button(
+            label="⬇️ Descargar CSV",
+            data=csv,
+            file_name="datos_analisis_completos.csv",
+            mime="text/csv"
+        )
+    
+    with col2:
+        # Convertir a Excel
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df_completo.to_excel(writer, index=False, sheet_name='Datos')
+            writer.save()
+        excel_data = output.getvalue()
+        
+        st.download_button(
+            label="⬇️ Descargar Excel",
+            data=excel_data,
+            file_name="datos_analisis_completos.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    
+    with col3:
+        # Generar reporte ejecutivo
+        if st.button("📄 Generar Reporte Ejecutivo"):
+            if tipo_datos == "Datos Ambientales":
+                reporte = generar_reporte_ejecutivo(st.session_state.resultados)
+            else:
+                reporte = generar_reporte_carbono(st.session_state.resultados_carbono)
+            
+            st.download_button(
+                label="⬇️ Descargar Reporte",
+                data=reporte,
+                file_name="reporte_ejecutivo.txt",
+                mime="text/plain"
+            )
 
 def generar_reporte_ejecutivo(resultados):
     """Generar reporte ejecutivo en texto"""
@@ -2362,174 +2621,92 @@ def generar_reporte_ejecutivo(resultados):
     
     return reporte
 
-# ===============================
-# 🎨 INTERFAZ PRINCIPAL DE LA APLICACIÓN
-# ===============================
-
-def main():
-    # Título principal - SIN st.set_page_config() aquí
-    st.title("🌍 Sistema Satelital de Análisis Ambiental con Carbono Verra")
-    st.markdown("### 🛰️ Análisis con PlanetScope & Sentinel-2 | 🌳 Módulo Verra para Proyectos de Carbono")
+def generar_reporte_carbono(resultados_carbono):
+    """Generar reporte de carbono en texto"""
+    resumen = resultados_carbono.get('resumen_carbono', {})
+    metadata = resultados_carbono.get('metadata_vcs', {})
     
-    # Inicializar sistemas
-    if 'sistema_analisis' not in st.session_state:
-        st.session_state.sistema_analisis = SistemaAnalisisAmbiental()
-    if 'resultados' not in st.session_state:
-        st.session_state.resultados = None
-    if 'poligono_data' not in st.session_state:
-        st.session_state.poligono_data = None
-    if 'resultado_carbono' not in st.session_state:
-        st.session_state.resultado_carbono = None
-    if 'tipo_ecosistema' not in st.session_state:
-        st.session_state.tipo_ecosistema = 'Bosque Tropical Húmedo'
+    # Calcular valor económico
+    valor_economico = resumen.get('co2_total_ton', 0) * 15
     
-    # Sidebar
-    with st.sidebar:
-        st.header("⚙️ Configuración del Análisis")
+    reporte = f"""
+    ===========================================
+    REPORTE DE ANÁLISIS DE CARBONO - VERR A VCS
+    ===========================================
+    
+    Fecha de generación: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+    Metodología aplicada: {metadata.get('metodologia', 'N/A')}
+    Tipo de bosque VCS: {metadata.get('tipo_bosque_vcs', 'N/A')}
+    Estado del bosque: {metadata.get('estado_bosque_vcs', 'N/A')}
+    
+    RESULTADOS PRINCIPALES:
+    ----------------------
+    • Carbono total almacenado: {resumen.get('carbono_total_ton', 0):,.0f} ton C
+    • CO₂ equivalente total: {resumen.get('co2_total_ton', 0):,.0f} ton CO₂e
+    • Área total del proyecto: {resumen.get('area_total_ha', 0):,.1f} ha
+    • Carbono promedio por hectárea: {resumen.get('carbono_promedio_ton_ha', 0):,.1f} ton C/ha
+    
+    DISTRIBUCIÓN POR POOLS DE CARBONO:
+    ---------------------------------
+    • Biomasa Aérea (AGB): {resumen.get('pools_distribucion', {}).get('AGB', 0):,.0f} ton C
+    • Biomasa Subterránea (BGB): {resumen.get('pools_distribucion', {}).get('BGB', 0):,.0f} ton C
+    • Madera Muerta (DW): {resumen.get('pools_distribucion', {}).get('DW', 0):,.0f} ton C
+    • Hojarasca (LI): {resumen.get('pools_distribucion', {}).get('LI', 0):,.0f} ton C
+    • Carbono del Suelo (SOC): {resumen.get('pools_distribucion', {}).get('SOC', 0):,.0f} ton C
+    
+    DISTRIBUCIÓN POR ESTRATOS VCS:
+    -----------------------------
+    """
+    
+    # Agregar información por estratos
+    estratos = resumen.get('estratos_distribucion', {})
+    for estrato, datos in estratos.items():
+        reporte += f"    • Estrato {estrato}: {datos.get('area_total', 0):,.1f} ha, {datos.get('carbono_total', 0):,.0f} ton C\n"
+    
+    reporte += f"""
+    ANÁLISIS DE INCERTIDUMBRE:
+    -------------------------
+    • Incertidumbre promedio: {resumen.get('incertidumbre_promedio', 0):.1f}%
+    • Nivel de confianza: 90%
+    
+    POTENCIAL DE MERCADO DE CARBONO:
+    --------------------------------
+    • Créditos potenciales: {resumen.get('potencial_creditos', 0):,.1f} miles
+    • Valor económico aproximado: ${valor_economico:,.0f} USD
+    • Precio supuesto: US$15 por tonelada de CO₂
+    
+    EVALUACIÓN DE ELEGIBILIDAD VCS:
+    -------------------------------
+    """
+    
+    # Agregar evaluación de elegibilidad
+    elegibilidad = resumen.get('elegibilidad_vcs', {})
+    if elegibilidad:
+        reporte += f"    • Cumple criterios mínimos: {'Sí' if elegibilidad.get('cumple_minimos', False) else 'No'}\n"
+        reporte += f"    • Porcentaje de cumplimiento: {elegibilidad.get('porcentaje_cumplimiento', 0):.1f}%\n"
         
-        # Carga de archivo
-        uploaded_file = st.file_uploader(
-            "📁 Cargar polígono de estudio",
-            type=['kml', 'geojson', 'zip'],
-            help="Formatos: KML, GeoJSON, Shapefile (ZIP)"
-        )
-        
-        if uploaded_file is not None:
-            with st.spinner("Procesando archivo..."):
-                try:
-                    if uploaded_file.name.endswith('.kml'):
-                        gdf = gpd.read_file(uploaded_file, driver='KML')
-                    elif uploaded_file.name.endswith('.geojson'):
-                        gdf = gpd.read_file(uploaded_file)
-                    elif uploaded_file.name.endswith('.zip'):
-                        with tempfile.TemporaryDirectory() as tmpdir:
-                            with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
-                                zip_ref.extractall(tmpdir)
-                            shp_files = [f for f in os.listdir(tmpdir) if f.endswith('.shp')]
-                            if shp_files:
-                                gdf = gpd.read_file(os.path.join(tmpdir, shp_files[0]))
-                    
-                    if gdf is not None and not gdf.empty:
-                        st.session_state.poligono_data = gdf
-                        st.success("✅ Polígono cargado exitosamente")
-                        
-                        # Mostrar información del polígono
-                        bounds = gdf.total_bounds
-                        area_m2 = gdf.geometry.area.iloc[0] * 111000 * 111000 * math.cos(math.radians((bounds[1] + bounds[3])/2))
-                        area_ha = area_m2 / 10000
-                        
-                        st.info(f"""
-                        **Información del área:**
-                        - Área: {area_ha:,.1f} ha
-                        - Centro: {((bounds[1] + bounds[3])/2):.4f}°, {((bounds[0] + bounds[2])/2):.4f}°
-                        - Tipo: {gdf.geometry.iloc[0].geom_type}
-                        """)
-                        
-                except Exception as e:
-                    st.error(f"Error al cargar archivo: {str(e)}")
-        
-        # Configuración del análisis
-        if st.session_state.poligono_data is not None and not st.session_state.poligono_data.empty:
-            st.markdown("---")
-            st.subheader("🛰️ Configuración Satelital")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                satelite = st.selectbox(
-                    "Satélite",
-                    ["PlanetScope", "Sentinel-2"],
-                    help="PlanetScope: 3m resolución | Sentinel-2: 10-20m resolución"
-                )
-            with col2:
-                capa_base = st.selectbox(
-                    "Capa base del mapa",
-                    ["ESRI World Imagery", "PlanetScope", "Sentinel-2", "OpenTopoMap"]
-                )
-            
-            st.subheader("🌿 Parámetros Ambientales")
-            
-            tipo_ecosistema = st.selectbox(
-                "Tipo de ecosistema predominante",
-                ['Bosque Tropical Húmedo', 'Bosque Seco Tropical', 'Bosque Montano', 
-                 'Sabana Arborizada', 'Humeral', 'Agricultura', 'Zona Urbana', 'Manglar', 'Plantación Forestal'],
-                key="tipo_ecosistema_selector"
-            )
-            
-            # Guardar tipo de ecosistema en session state
-            st.session_state.tipo_ecosistema = tipo_ecosistema
-            
-            nivel_detalle = st.slider("Nivel de detalle (divisiones)", 4, 12, 8)
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("🚀 Ejecutar Análisis Completo", type="primary", use_container_width=True):
-                    with st.spinner("Procesando datos satelitales..."):
-                        resultados = st.session_state.sistema_analisis.analizar_area_completa(
-                            st.session_state.poligono_data,
-                            tipo_ecosistema,
-                            satelite,
-                            nivel_detalle
-                        )
-                        
-                        if resultados:
-                            st.session_state.resultados = resultados
-                            st.success("✅ Análisis completado exitosamente!")
-            
-            with col2:
-                if st.button("🔄 Limpiar Resultados", use_container_width=True):
-                    st.session_state.resultados = None
-                    st.session_state.resultado_carbono = None
-                    st.success("Resultados limpiados")
-        
-        # Información sobre Verra
-        st.markdown("---")
-        with st.expander("ℹ️ Sobre la Metodología Verra", expanded=False):
-            st.markdown("""
-            **Verified Carbon Standard (VCS) de Verra**
-            
-            Es el estándar de créditos de carbono más utilizado a nivel mundial para proyectos voluntarios.
-            
-            **Metodologías implementadas:**
-            - **VM0007**: REDD+ (Reducción de Emisiones por Deforestación)
-            - **AR-AM0001**: Reforestación y Aforestación
-            - **ACM0001**: Metodología Consolidada
-            
-            **Factores considerados:**
-            - Biomasa aérea y subterránea
-            - Madera muerta y desechos
-            - Materia orgánica del suelo
-            - Conversión C a CO₂ (3.67)
-            - Incertidumbre (factor conservador)
-            """)
+        if elegibilidad.get('recomendaciones'):
+            reporte += "    • Recomendaciones para cumplimiento:\n"
+            for rec in elegibilidad.get('recomendaciones', []):
+                reporte += f"      - {rec}\n"
     
-    # Pestañas principales
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "🗺️ Mapa Satelital", 
-        "📊 Dashboard Ejecutivo",
-        "🌿 Índices de Vegetación",
-        "🌍 Carbono Verra",  # NUEVA PESTAÑA
-        "📈 Datos Completos"
-    ])
+    reporte += """
+    RECOMENDACIONES PARA CERTIFICACIÓN VCS:
+    --------------------------------------
+    1. Establecer sistema MRV (Monitoreo, Reporte y Verificación)
+    2. Realizar inventarios forestales de campo
+    3. Contratar validador acreditado por Verra
+    4. Desarrollar documentación del proyecto según template VCS
+    5. Establecer línea base y demostrar adicionalidad
+    6. Implementar plan de manejo forestal sostenible
+    7. Analizar y mitigar riesgos de fuga y permanencia
     
-    with tab1:
-        # Usar la capa base seleccionada si existe, de lo contrario usar la predeterminada
-        if 'capa_base' in locals():
-            capa = capa_base
-        else:
-            capa = "ESRI World Imagery"
-        mostrar_mapa_satelital(capa)
+    ===========================================
+    FIN DEL REPORTE DE CARBONO
+    ===========================================
+    """
     
-    with tab2:
-        mostrar_dashboard_ejecutivo()
-    
-    with tab3:
-        mostrar_indices_vegetacion()
-    
-    with tab4:
-        mostrar_analisis_carbono()
-    
-    with tab5:
-        mostrar_datos_completos()
+    return reporte
 
 # ===============================
 # 🚀 EJECUCIÓN PRINCIPAL
