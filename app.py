@@ -2272,8 +2272,7 @@ def generar_reporte_carbono(resultados_carbono):
     # Agregar información por estratos
     estratos = resumen.get('estratos_distribucion', {})
     for estrato, datos in estratos.items():
-        reporte += f"    • Estrato {estrato}: {datos.get('area_total', 0):,.1f} ha, {datos.get('carbono_total', 0):,.0f} ton C
-"
+        reporte += f"    • Estrato {estrato}: {datos.get('area_total', 0):,.1f} ha, {datos.get('carbono_total', 0):,.0f} ton C\n"
     reporte += f"""
     ANÁLISIS DE INCERTIDUMBRE:
     -------------------------
@@ -2290,16 +2289,12 @@ def generar_reporte_carbono(resultados_carbono):
     # Agregar evaluación de elegibilidad
     elegibilidad = resumen.get('elegibilidad_vcs', {})
     if elegibilidad:
-        reporte += f"    • Cumple criterios mínimos: {'Sí' if elegibilidad.get('cumple_minimos', False) else 'No'}
-"
-        reporte += f"    • Porcentaje de cumplimiento: {elegibilidad.get('porcentaje_cumplimiento', 0):.1f}%
-"
+        reporte += f"    • Cumple criterios mínimos: {'Sí' if elegibilidad.get('cumple_minimos', False) else 'No'}\n"
+        reporte += f"    • Porcentaje de cumplimiento: {elegibilidad.get('porcentaje_cumplimiento', 0):.1f}%\n"
         if elegibilidad.get('recomendaciones'):
-            reporte += "    • Recomendaciones para cumplimiento:
-"
+            reporte += "    • Recomendaciones para cumplimiento:\n"
             for rec in elegibilidad.get('recomendaciones', []):
-                reporte += f"      - {rec}
-"
+                reporte += f"      - {rec}\n"
     reporte += """
     RECOMENDACIONES PARA CERTIFICACIÓN VCS:
     --------------------------------------
