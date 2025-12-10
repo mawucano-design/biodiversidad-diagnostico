@@ -1,7 +1,7 @@
 # ✅ ABSOLUTAMENTE PRIMERO: Importar streamlit
 import streamlit as st
 
-# ✅ LUEGO: Configurar la página
+# ✅ SEGUNDO: Configurar la página (DEBE SER LO PRIMERO)
 st.set_page_config(
     page_title="Sistema Satelital de Análisis Ambiental + Carbono Verra",
     page_icon="🌍",
@@ -9,7 +9,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Ahora sí, el resto de los imports
+# ===============================
+# 📦 IMPORTS DE BIBLIOTECAS (DESPUÉS DE set_page_config)
+# ===============================
+
 import pandas as pd
 import numpy as np
 import tempfile
@@ -2364,14 +2367,7 @@ def generar_reporte_ejecutivo(resultados):
 # ===============================
 
 def main():
-    # Configurar título y estilos
-    st.set_page_config(
-        page_title="Sistema Satelital de Análisis Ambiental + Carbono Verra",
-        page_icon="🌍",
-        layout="wide"
-    )
-    
-    # Título principal
+    # Título principal - SIN st.set_page_config() aquí
     st.title("🌍 Sistema Satelital de Análisis Ambiental con Carbono Verra")
     st.markdown("### 🛰️ Análisis con PlanetScope & Sentinel-2 | 🌳 Módulo Verra para Proyectos de Carbono")
     
@@ -2517,7 +2513,10 @@ def main():
     
     with tab1:
         # Usar la capa base seleccionada si existe, de lo contrario usar la predeterminada
-        capa = capa_base if 'capa_base' in locals() else "ESRI World Imagery"
+        if 'capa_base' in locals():
+            capa = capa_base
+        else:
+            capa = "ESRI World Imagery"
         mostrar_mapa_satelital(capa)
     
     with tab2:
