@@ -1,17 +1,15 @@
-streamlit==1.38.0
-pandas>=2.2.0
-numpy>=2.1.0
-folium>=0.15.1
-streamlit-folium>=0.19.0
-pydeck>=0.9.0
-matplotlib
-seaborn
-plotly
-scikit-learn
-pillow
-openpyxl
-xlsxwriter
-rasterio
-geopandas
-shapely
-python-docx
+streamlit==1.40.0
+pandas==2.2.2
+numpy==1.26.4
+matplotlib==3.9.0
+seaborn==0.13.2
+plotly==5.24.1
+geopandas==1.0.1
+folium==0.17.0
+streamlit-folium==0.20.0
+shapely==2.0.4
+pyproj==3.6.1
+branca==0.7.2
+scipy==1.13.1
+scikit-learn==1.5.1  # opcional, pero común si se amplía el análisis
+requests==2.32.3     # útil para APIs satelitales reales (aunque en simulador no se usa)
