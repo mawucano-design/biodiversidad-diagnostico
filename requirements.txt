@@ -11,6 +11,6 @@ shapely==2.0.4
 pyproj==3.6.1
 branca==0.7.2
 scipy==1.13.1
-scikit-learn==1.5.1  # opcional, pero común si se amplía el análisis
-requests==2.32.3     # útil para APIs satelitales reales (aunque en simulador no se usa)
-xlsxwriter==3.2.0 
+scikit-learn==1.5.1
+requests==2.32.3
+xlsxwriter==3.2.0  # NECESARIO para exportar a Excel
