@@ -1,12 +1,26 @@
-streamlit==1.28.0
-pandas==2.0.0
-numpy==1.24.0
-matplotlib==3.7.0
-seaborn==0.12.2
-plotly==5.17.0
-folium==0.14.0
-streamlit-folium==0.15.0
-geopandas==0.14.0
-shapely==2.0.0
-pyproj==3.6.0
-branca==0.6.0
+# Core
+streamlit==1.38.0
+
+# Datos y cálculo numérico
+pandas==2.2.2
+numpy==2.1.1
+
+# Visualización
+matplotlib==3.9.2
+seaborn==0.13.2
+plotly==5.24.1
+
+# Geoprocesamiento y mapas
+geopandas==1.0.1
+shapely==2.0.6
+folium==0.17.0
+streamlit-folium==0.22.0
+branca==0.7.2
+pyproj==3.6.1
+
+# Utilidades
+dataclasses-json==0.6.7  # por @dataclass (opcional si usas Python <3.10
+
+# Opcional pero recomendado para mejor rendimiento y compatibilidad
+pyarrow==17.0.0          # acelera lectura de GeoParquet/Feather si lo usas en el futuro
+openpyxl==3.1.5          # por si alguien sube Excel con coordenadas
