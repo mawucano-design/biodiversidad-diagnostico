@@ -27,11 +27,11 @@ import json
 import base64
 import warnings
 import requests  # ✅ Añadido para APIs
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 warnings.filterwarnings('ignore')
 # Librerías geoespaciales
 import folium
-from streamlit_folium import st_folium
+from streamlit_folium import st_folium, folium_static
 from folium.plugins import Fullscreen, MousePosition, HeatMap
 import geopandas as gpd
 from shapely.geometry import Polygon, Point, shape, MultiPolygon
@@ -42,7 +42,6 @@ import matplotlib.cm as cm
 # Para simulación de datos satelitales
 import random
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
 from enum import Enum
 
 # ===============================
@@ -831,206 +830,7 @@ class SimuladorSatelital:
         return indices
 
 # ===============================
-# 🌿 SISTEMA DE ANÁLISIS AMBIENTAL COMPLETO (ACTUALIZADO)
-# ===============================
-class SistemaAnalisisAmbiental:
-    def __init__(self):
-        self.simulador = SimuladorSatelital()
-        self.sistema_mapas = SistemaMapasAvanzado()
-        self.dashboard = DashboardResumen()
-        self.analisis_carbono = AnalisisCarbonoVerra()
-        self.conector_clima = ConectorClimaticoTropical()
-        
-        self.tipos_cobertura = {
-            # Argentina
-            'Bosque Andino Patagónico': 'bosque_templado',
-            'Bosque de Araucaria': 'bosque_templado',
-            'Bosque de Caldén': 'bosque_secundario',
-            'Bosque de Quebracho': 'bosque_secundario',
-            'Bosque de Algarrobo': 'bosque_secundario',
-            'Bosque de Yungas': 'bosque_denso',
-            'Bosque de Selva Misionera': 'bosque_denso',
-            'Bosque de Chaco Serrano': 'bosque_secundario',
-            'Pastizal Pampeano': 'pastizal_pampeano',
-            'Pastizal Mesopotámico': 'pastizal',
-            'Humedales del Iberá': 'humedal',
-            # Trópicos
-            'Selva Amazónica (bosque húmedo tropical)': 'bosque_denso',
-            'Bosque del Chocó Biogeográfico': 'bosque_denso',
-            'Bosque del Escudo Guayanés': 'bosque_denso',
-            'Páramo andino': 'pastizal',
-            'Manglar costero': 'humedal',
-            'Sabana de Llanos (Orinoquía)': 'pastizal',
-            'Bosque seco tropical (Caribe colombiano)': 'bosque_secundario',
-            'Cerrado brasileño': 'pastizal',
-            'Caatinga (Brasil NE)': 'bosque_secundario',
-            'Bosque de galería': 'bosque_denso',
-            # Genéricos
-            'Agricultura intensiva': 'pastizal',
-            'Zona urbana consolidada': 'suelo_desnudo'
-        }
-
-    def analizar_area_completa(self, gdf, tipo_ecosistema, satelite_seleccionado, n_divisiones=8):
-        try:
-            if len(gdf) > 1:
-                poligono_principal = self._unificar_poligonos(gdf)
-                gdf = gpd.GeoDataFrame({'geometry': [poligono_principal]}, crs=gdf.crs)
-            else:
-                poligono_principal = gdf.geometry.iloc[0]
-            bounds = poligono_principal.bounds
-            satelite = Satelite.PLANETSCOPE if satelite_seleccionado == "PlanetScope" else Satelite.SENTINEL2
-            imagen = self.simulador.generar_imagen_satelital(satelite)
-            resultados = {
-                'metadatos_imagen': {
-                    'satelite': imagen.satelite.value,
-                    'fecha': imagen.fecha_adquisicion.strftime('%Y-%m-%d'),
-                    'nubosidad': f"{imagen.nubosidad:.1%}",
-                    'calidad': f"{imagen.indice_calidad:.1%}",
-                    'bandas_disponibles': len(imagen.bandas_disponibles)
-                },
-                'areas': [],
-                'resumen': {},
-                'tipo_ecosistema': tipo_ecosistema,
-                'satelite_usado': satelite_seleccionado,
-                'poligonos_unificados': True if len(gdf) > 1 else False
-            }
-            tipo_cobertura = self.tipos_cobertura.get(tipo_ecosistema, 'bosque_secundario')
-            id_area = 1
-
-            for i in range(n_divisiones):
-                for j in range(n_divisiones):
-                    xmin = bounds[0] + (i * (bounds[2]-bounds[0])/n_divisiones)
-                    xmax = xmin + (bounds[2]-bounds[0])/n_divisiones
-                    ymin = bounds[1] + (j * (bounds[3]-bounds[1])/n_divisiones)
-                    ymax = ymin + (bounds[3]-bounds[1])/n_divisiones
-                    celda = Polygon([
-                        (xmin, ymin), (xmax, ymin),
-                        (xmax, ymax), (xmin, ymax), (xmin, ymin)
-                    ])
-                    interseccion = poligono_principal.intersection(celda)
-                    if not interseccion.is_empty:
-                        area_m2 = interseccion.area * 111000 * 111000 * math.cos(math.radians((ymin+ymax)/2))
-                        area_ha = area_m2 / 10000
-                        if area_ha > 0.01:
-                            centroide = interseccion.centroid
-                            lat_centro = centroide.y
-                            lon_centro = centroide.x
-                            precipitacion_anual, fuente_clima = self.conector_clima.obtener_precipitacion_anual(lat_centro, lon_centro)
-                            temperatura, fuente_temp = self.conector_clima.obtener_temperatura_promedio(lat_centro, lon_centro)
-                            reflectancias = {}
-                            for banda in imagen.bandas_disponibles[:5]:
-                                reflectancias[banda] = self.simulador.simular_reflectancia(tipo_cobertura, banda, satelite)
-                            indices = self.simulador.calcular_indices(reflectancias, satelite)
-                            ndvi = indices.get('NDVI', 0.5)
-                            indice_shannon = 2.0 + (ndvi * 2.0) + (math.log10(area_ha + 1) * 0.5)
-                            indice_shannon = max(0.1, min(4.0, indice_shannon + random.uniform(-0.3, 0.3)))
-                            factor_precip = min(2.0, max(0.5, precipitacion_anual / 1500))
-                            carbono_ton_ha = (50 + (ndvi * 200) + (area_ha * 0.1)) * factor_precip
-                            carbono_total = carbono_ton_ha * area_ha
-                            co2_total = carbono_total * 3.67
-                            area_data = {
-                                'id': id_area,
-                                'area': f"Celda-{id_area:03d}",
-                                'geometry': interseccion,
-                                'area_ha': round(area_ha, 2),
-                                'reflectancias': {k: round(v, 4) for k, v in reflectancias.items()},
-                                'indices': {k: round(v, 4) if isinstance(v, (int, float)) else v for k, v in indices.items()},
-                                'indice_shannon': round(indice_shannon, 3),
-                                'carbono': {
-                                    'ton_ha': round(carbono_ton_ha, 2),
-                                    'total': round(carbono_total, 2),
-                                    'co2_total': round(co2_total, 2),
-                                    'factor_precipitacion': round(factor_precip, 2)
-                                },
-                                'temperatura': round(temperatura, 1),
-                                'precipitacion': round(precipitacion_anual, 0),
-                                'humedad_suelo': 0.5 + random.uniform(-0.2, 0.2),
-                                'presion_antropica': random.uniform(0.1, 0.6),
-                                'cobertura_vegetal': tipo_cobertura,
-                                'fuente_clima': fuente_clima,
-                                'centroide': (lat_centro, lon_centro)
-                            }
-                            resultados['areas'].append(area_data)
-                            id_area += 1
-            if resultados['areas']:
-                self._calcular_resumen_estadistico(resultados)
-            return resultados
-        except Exception as e:
-            st.error(f"Error en análisis ambiental: {str(e)}")
-            import traceback
-            st.error(traceback.format_exc())
-            return None
-
-    def _unificar_poligonos(self, gdf):
-        try:
-            poligono_unificado = unary_union(gdf.geometry.tolist())
-            if poligono_unificado.geom_type == 'MultiPolygon':
-                poligono_unificado = poligono_unificado.convex_hull
-                st.info(f"⚠️ {len(gdf)} polígonos unificados en 1 área de análisis (convex hull)")
-            else:
-                st.info(f"✅ {len(gdf)} polígonos unificados en 1 área de análisis")
-            return poligono_unificado
-        except Exception as e:
-            st.error(f"Error al unificar polígonos: {str(e)}")
-            return gdf.geometry.iloc[0]
-
-    def _calcular_resumen_estadistico(self, resultados):
-        areas = resultados['areas']
-        resumen = {
-            'total_areas': len(areas),
-            'area_total_ha': sum(a['area_ha'] for a in areas),
-            'ndvi_promedio': np.mean([a['indices'].get('NDVI', 0) for a in areas]),
-            'savi_promedio': np.mean([a['indices'].get('SAVI', 0) for a in areas]),
-            'evi_promedio': np.mean([a['indices'].get('EVI', 0) for a in areas]),
-            'ndwi_promedio': np.mean([a['indices'].get('NDWI', 0) for a in areas]),
-            'msavi_promedio': np.mean([a['indices'].get('MSAVI', 0) for a in areas]),
-            'shannon_promedio': np.mean([a['indice_shannon'] for a in areas]),
-            'carbono_promedio_ha': np.mean([a['carbono']['ton_ha'] for a in areas]),
-            'carbono_total_co2': sum(a['carbono']['co2_total'] for a in areas),
-            'temperatura_promedio': np.mean([a['temperatura'] for a in areas]),
-            'precipitacion_promedio': np.mean([a['precipitacion'] for a in areas]),
-            'humedad_suelo_promedio': np.mean([a['humedad_suelo'] for a in areas]),
-            'presion_antropica_promedio': np.mean([a['presion_antropica'] for a in areas]),
-            'areas_excelente': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Excelente']),
-            'areas_buena': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Buena']),
-            'areas_moderada': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Moderada']),
-            'areas_pobre': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Pobre']),
-            'areas_degradada': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Degradada']),
-            'poligonos_unificados': resultados.get('poligonos_unificados', False)
-        }
-        resumen['areas_optimas'] = len([
-            a for a in areas
-            if a['indices'].get('NDVI', 0) > 0.7 and
-            a['indice_shannon'] > 2.5 and
-            a['precipitacion'] > 600
-        ])
-        ndvi_avg = resumen['ndvi_promedio']
-        shannon_avg = resumen['shannon_promedio']
-        precip_avg = resumen['precipitacion_promedio']
-        if (ndvi_avg > 0.7 and shannon_avg > 2.5 and precip_avg > 800 and
-            resumen['areas_optimas'] > len(areas) * 0.3):
-            resumen['estado_general'] = 'Excelente'
-            resumen['color_estado'] = '#10b981'
-            resumen['recomendacion_climatica'] = 'Condiciones climáticas óptimas para crecimiento forestal'
-        elif (ndvi_avg > 0.5 and shannon_avg > 1.8 and precip_avg > 400):
-            resumen['estado_general'] = 'Bueno'
-            resumen['color_estado'] = '#3b82f6'
-            resumen['recomendacion_climatica'] = 'Condiciones climáticas adecuadas'
-        elif (ndvi_avg > 0.3 and precip_avg > 200):
-            resumen['estado_general'] = 'Moderado'
-            resumen['color_estado'] = '#f59e0b'
-            resumen['recomendacion_climatica'] = 'Condiciones climáticas limitantes'
-        else:
-            resumen['estado_general'] = 'Preocupante'
-            resumen['color_estado'] = '#ef4444'
-            if precip_avg < 200:
-                resumen['recomendacion_climatica'] = 'Precipitación muy baja para desarrollo forestal'
-            else:
-                resumen['recomendacion_climatica'] = 'Múltiples factores limitantes'
-        resultados['resumen'] = resumen
-
-# ===============================
-# 🗺️ SISTEMA DE MAPAS AVANZADO
+# 🗺️ SISTEMA DE MAPAS AVANZADO (FALTA EN EL CÓDIGO ORIGINAL - AHORA DEFINIDO)
 # ===============================
 class SistemaMapasAvanzado:
     def __init__(self):
@@ -1708,6 +1508,205 @@ class DashboardResumen:
         return fig
 
 # ===============================
+# 🌿 SISTEMA DE ANÁLISIS AMBIENTAL COMPLETO (ACTUALIZADO)
+# ===============================
+class SistemaAnalisisAmbiental:
+    def __init__(self):
+        self.simulador = SimuladorSatelital()
+        self.sistema_mapas = SistemaMapasAvanzado()
+        self.dashboard = DashboardResumen()
+        self.analisis_carbono = AnalisisCarbonoVerra()
+        self.conector_clima = ConectorClimaticoTropical()
+        
+        self.tipos_cobertura = {
+            # Argentina
+            'Bosque Andino Patagónico': 'bosque_templado',
+            'Bosque de Araucaria': 'bosque_templado',
+            'Bosque de Caldén': 'bosque_secundario',
+            'Bosque de Quebracho': 'bosque_secundario',
+            'Bosque de Algarrobo': 'bosque_secundario',
+            'Bosque de Yungas': 'bosque_denso',
+            'Bosque de Selva Misionera': 'bosque_denso',
+            'Bosque de Chaco Serrano': 'bosque_secundario',
+            'Pastizal Pampeano': 'pastizal_pampeano',
+            'Pastizal Mesopotámico': 'pastizal',
+            'Humedales del Iberá': 'humedal',
+            # Trópicos
+            'Selva Amazónica (bosque húmedo tropical)': 'bosque_denso',
+            'Bosque del Chocó Biogeográfico': 'bosque_denso',
+            'Bosque del Escudo Guayanés': 'bosque_denso',
+            'Páramo andino': 'pastizal',
+            'Manglar costero': 'humedal',
+            'Sabana de Llanos (Orinoquía)': 'pastizal',
+            'Bosque seco tropical (Caribe colombiano)': 'bosque_secundario',
+            'Cerrado brasileño': 'pastizal',
+            'Caatinga (Brasil NE)': 'bosque_secundario',
+            'Bosque de galería': 'bosque_denso',
+            # Genéricos
+            'Agricultura intensiva': 'pastizal',
+            'Zona urbana consolidada': 'suelo_desnudo'
+        }
+
+    def analizar_area_completa(self, gdf, tipo_ecosistema, satelite_seleccionado, n_divisiones=8):
+        try:
+            if len(gdf) > 1:
+                poligono_principal = self._unificar_poligonos(gdf)
+                gdf = gpd.GeoDataFrame({'geometry': [poligono_principal]}, crs=gdf.crs)
+            else:
+                poligono_principal = gdf.geometry.iloc[0]
+            bounds = poligono_principal.bounds
+            satelite = Satelite.PLANETSCOPE if satelite_seleccionado == "PlanetScope" else Satelite.SENTINEL2
+            imagen = self.simulador.generar_imagen_satelital(satelite)
+            resultados = {
+                'metadatos_imagen': {
+                    'satelite': imagen.satelite.value,
+                    'fecha': imagen.fecha_adquisicion.strftime('%Y-%m-%d'),
+                    'nubosidad': f"{imagen.nubosidad:.1%}",
+                    'calidad': f"{imagen.indice_calidad:.1%}",
+                    'bandas_disponibles': len(imagen.bandas_disponibles)
+                },
+                'areas': [],
+                'resumen': {},
+                'tipo_ecosistema': tipo_ecosistema,
+                'satelite_usado': satelite_seleccionado,
+                'poligonos_unificados': True if len(gdf) > 1 else False
+            }
+            tipo_cobertura = self.tipos_cobertura.get(tipo_ecosistema, 'bosque_secundario')
+            id_area = 1
+
+            for i in range(n_divisiones):
+                for j in range(n_divisiones):
+                    xmin = bounds[0] + (i * (bounds[2]-bounds[0])/n_divisiones)
+                    xmax = xmin + (bounds[2]-bounds[0])/n_divisiones
+                    ymin = bounds[1] + (j * (bounds[3]-bounds[1])/n_divisiones)
+                    ymax = ymin + (bounds[3]-bounds[1])/n_divisiones
+                    celda = Polygon([
+                        (xmin, ymin), (xmax, ymin),
+                        (xmax, ymax), (xmin, ymax), (xmin, ymin)
+                    ])
+                    interseccion = poligono_principal.intersection(celda)
+                    if not interseccion.is_empty:
+                        area_m2 = interseccion.area * 111000 * 111000 * math.cos(math.radians((ymin+ymax)/2))
+                        area_ha = area_m2 / 10000
+                        if area_ha > 0.01:
+                            centroide = interseccion.centroid
+                            lat_centro = centroide.y
+                            lon_centro = centroide.x
+                            precipitacion_anual, fuente_clima = self.conector_clima.obtener_precipitacion_anual(lat_centro, lon_centro)
+                            temperatura, fuente_temp = self.conector_clima.obtener_temperatura_promedio(lat_centro, lon_centro)
+                            reflectancias = {}
+                            for banda in imagen.bandas_disponibles[:5]:
+                                reflectancias[banda] = self.simulador.simular_reflectancia(tipo_cobertura, banda, satelite)
+                            indices = self.simulador.calcular_indices(reflectancias, satelite)
+                            ndvi = indices.get('NDVI', 0.5)
+                            indice_shannon = 2.0 + (ndvi * 2.0) + (math.log10(area_ha + 1) * 0.5)
+                            indice_shannon = max(0.1, min(4.0, indice_shannon + random.uniform(-0.3, 0.3)))
+                            factor_precip = min(2.0, max(0.5, precipitacion_anual / 1500))
+                            carbono_ton_ha = (50 + (ndvi * 200) + (area_ha * 0.1)) * factor_precip
+                            carbono_total = carbono_ton_ha * area_ha
+                            co2_total = carbono_total * 3.67
+                            area_data = {
+                                'id': id_area,
+                                'area': f"Celda-{id_area:03d}",
+                                'geometry': interseccion,
+                                'area_ha': round(area_ha, 2),
+                                'reflectancias': {k: round(v, 4) for k, v in reflectancias.items()},
+                                'indices': {k: round(v, 4) if isinstance(v, (int, float)) else v for k, v in indices.items()},
+                                'indice_shannon': round(indice_shannon, 3),
+                                'carbono': {
+                                    'ton_ha': round(carbono_ton_ha, 2),
+                                    'total': round(carbono_total, 2),
+                                    'co2_total': round(co2_total, 2),
+                                    'factor_precipitacion': round(factor_precip, 2)
+                                },
+                                'temperatura': round(temperatura, 1),
+                                'precipitacion': round(precipitacion_anual, 0),
+                                'humedad_suelo': 0.5 + random.uniform(-0.2, 0.2),
+                                'presion_antropica': random.uniform(0.1, 0.6),
+                                'cobertura_vegetal': tipo_cobertura,
+                                'fuente_clima': fuente_clima,
+                                'centroide': (lat_centro, lon_centro)
+                            }
+                            resultados['areas'].append(area_data)
+                            id_area += 1
+            if resultados['areas']:
+                self._calcular_resumen_estadistico(resultados)
+            return resultados
+        except Exception as e:
+            st.error(f"Error en análisis ambiental: {str(e)}")
+            import traceback
+            st.error(traceback.format_exc())
+            return None
+
+    def _unificar_poligonos(self, gdf):
+        try:
+            poligono_unificado = unary_union(gdf.geometry.tolist())
+            if poligono_unificado.geom_type == 'MultiPolygon':
+                poligono_unificado = poligono_unificado.convex_hull
+                st.info(f"⚠️ {len(gdf)} polígonos unificados en 1 área de análisis (convex hull)")
+            else:
+                st.info(f"✅ {len(gdf)} polígonos unificados en 1 área de análisis")
+            return poligono_unificado
+        except Exception as e:
+            st.error(f"Error al unificar polígonos: {str(e)}")
+            return gdf.geometry.iloc[0]
+
+    def _calcular_resumen_estadistico(self, resultados):
+        areas = resultados['areas']
+        resumen = {
+            'total_areas': len(areas),
+            'area_total_ha': sum(a['area_ha'] for a in areas),
+            'ndvi_promedio': np.mean([a['indices'].get('NDVI', 0) for a in areas]),
+            'savi_promedio': np.mean([a['indices'].get('SAVI', 0) for a in areas]),
+            'evi_promedio': np.mean([a['indices'].get('EVI', 0) for a in areas]),
+            'ndwi_promedio': np.mean([a['indices'].get('NDWI', 0) for a in areas]),
+            'msavi_promedio': np.mean([a['indices'].get('MSAVI', 0) for a in areas]),
+            'shannon_promedio': np.mean([a['indice_shannon'] for a in areas]),
+            'carbono_promedio_ha': np.mean([a['carbono']['ton_ha'] for a in areas]),
+            'carbono_total_co2': sum(a['carbono']['co2_total'] for a in areas),
+            'temperatura_promedio': np.mean([a['temperatura'] for a in areas]),
+            'precipitacion_promedio': np.mean([a['precipitacion'] for a in areas]),
+            'humedad_suelo_promedio': np.mean([a['humedad_suelo'] for a in areas]),
+            'presion_antropica_promedio': np.mean([a['presion_antropica'] for a in areas]),
+            'areas_excelente': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Excelente']),
+            'areas_buena': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Buena']),
+            'areas_moderada': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Moderada']),
+            'areas_pobre': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Pobre']),
+            'areas_degradada': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Degradada']),
+            'poligonos_unificados': resultados.get('poligonos_unificados', False)
+        }
+        resumen['areas_optimas'] = len([
+            a for a in areas
+            if a['indices'].get('NDVI', 0) > 0.7 and
+            a['indice_shannon'] > 2.5 and
+            a['precipitacion'] > 600
+        ])
+        ndvi_avg = resumen['ndvi_promedio']
+        shannon_avg = resumen['shannon_promedio']
+        precip_avg = resumen['precipitacion_promedio']
+        if (ndvi_avg > 0.7 and shannon_avg > 2.5 and precip_avg > 800 and
+            resumen['areas_optimas'] > len(areas) * 0.3):
+            resumen['estado_general'] = 'Excelente'
+            resumen['color_estado'] = '#10b981'
+            resumen['recomendacion_climatica'] = 'Condiciones climáticas óptimas para crecimiento forestal'
+        elif (ndvi_avg > 0.5 and shannon_avg > 1.8 and precip_avg > 400):
+            resumen['estado_general'] = 'Bueno'
+            resumen['color_estado'] = '#3b82f6'
+            resumen['recomendacion_climatica'] = 'Condiciones climáticas adecuadas'
+        elif (ndvi_avg > 0.3 and precip_avg > 200):
+            resumen['estado_general'] = 'Moderado'
+            resumen['color_estado'] = '#f59e0b'
+            resumen['recomendacion_climatica'] = 'Condiciones climáticas limitantes'
+        else:
+            resumen['estado_general'] = 'Preocupante'
+            resumen['color_estado'] = '#ef4444'
+            if precip_avg < 200:
+                resumen['recomendacion_climatica'] = 'Precipitación muy baja para desarrollo forestal'
+            else:
+                resumen['recomendacion_climatica'] = 'Múltiples factores limitantes'
+        resultados['resumen'] = resumen
+
+# ===============================
 # 🎨 INTERFAZ PRINCIPAL DE LA APLICACIÓN
 # ===============================
 def main():
@@ -1886,14 +1885,17 @@ def main():
                             st.session_state.analisis_carbono_realizado = True
                             st.success("✅ Análisis de carbono Verra completado!")
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    # Crear pestañas
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "🗺️ Mapa Satelital",
         "📊 Dashboard Ejecutivo",
         "🌿 Índices de Vegetación",
         "🌳 Análisis de Carbono",
         "📋 Reporte Verra",
-        "📈 Datos Completos"
+        "📈 Datos Completos",
+        "🌍 Ecosistemas SIB"
     ])
+    
     with tab1:
         mostrar_mapa_satelital(capa_base if 'capa_base' in locals() else "ESRI World Imagery")
     with tab2:
@@ -1906,6 +1908,8 @@ def main():
         mostrar_reporte_verra()
     with tab6:
         mostrar_datos_completos()
+    with tab7:
+        mostrar_ecosistemas_sib()
 
 # --- FUNCIONES AUXILIARES ---
 def mostrar_mapa_satelital(capa_base="ESRI World Imagery"):
@@ -2620,6 +2624,190 @@ FIN DEL REPORTE DE CARBONO
 ===========================================
 """
     return reporte
+
+def mostrar_ecosistemas_sib():
+    st.markdown("## 🌍 Ecosistemas de Argentina - Sistema de Información de Biodiversidad (SIB)")
+    st.markdown("Información detallada de los principales ecosistemas argentinos según el Sistema de Información de Biodiversidad.")
+    
+    # Lista de ecosistemas argentinos
+    ecosistemas_argentinos = [
+        'Bosque Andino Patagónico',
+        'Bosque de Araucaria',
+        'Bosque de Caldén',
+        'Bosque de Quebracho',
+        'Bosque de Algarrobo',
+        'Bosque de Yungas',
+        'Bosque de Selva Misionera',
+        'Bosque de Chaco Serrano',
+        'Pastizal Pampeano',
+        'Pastizal Mesopotámico',
+        'Estepa Patagónica',
+        'Humedales del Iberá',
+        'Delta e Islas del Paraná',
+        'Monte de Sierras y Bolsones',
+        'Espinal',
+        'Puna'
+    ]
+    
+    # Selección de ecosistema
+    ecosistema_seleccionado = st.selectbox("Selecciona un ecosistema", ecosistemas_argentinos)
+    
+    # Información detallada
+    info = mostrar_info_sib_argentina(ecosistema_seleccionado)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown(f"### {ecosistema_seleccionado}")
+        st.markdown(f"**Región:** {info['region']}")
+        st.markdown(f"**Provincias:** {info['provincias']}")
+        st.markdown(f"**Superficie aproximada:** {info['superficie']}")
+        st.markdown(f"**Estado de conservación:** {info['conservacion']}")
+        st.markdown(f"**Carbono promedio estimado:** {info['carbono_promedio']}")
+        
+    with col2:
+        st.markdown("### 🌿 Características")
+        st.markdown(f"**Clima predominante:** {info['clima']}")
+        st.markdown(f"**Precipitación anual:** {info['precipitacion']}")
+        st.markdown(f"**Temperatura media:** {info['temperatura']}")
+        st.markdown(f"**Altitud:** {info['altitud']}")
+        st.markdown(f"**Suelos predominantes:** {info['suelos']}")
+    
+    st.markdown("### 🐾 Biodiversidad")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**Flora representativa:**")
+        for especie in info['flora']:
+            st.markdown(f"- {especie}")
+    with col2:
+        st.markdown("**Fauna representativa:**")
+        for especie in info['fauna']:
+            st.markdown(f"- {especie}")
+    
+    st.markdown("### ⚠️ Amenazas Principales")
+    for amenaza in info['amenazas']:
+        st.markdown(f"- {amenaza}")
+    
+    st.markdown("### 🛡️ Medidas de Conservación")
+    for medida in info['conservacion_medidas']:
+        st.markdown(f"- {medida}")
+    
+    st.markdown("### 📊 Datos de Carbono (Estimaciones VCS)")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Carbono Aéreo (AGB)", f"{info['carbono_agb']}")
+    with col2:
+        st.metric("Carbono Suelo (SOC)", f"{info['carbono_soc']}")
+    with col3:
+        st.metric("CO₂ Equivalente", f"{info['co2_equivalente']}")
+    
+    st.markdown("*Fuente: Sistema de Información de Biodiversidad (SIB) Argentina, adaptado para análisis VCS*")
+
+def mostrar_info_sib_argentina(ecosistema):
+    """Información detallada de ecosistemas argentinos según SIB"""
+    
+    info_base = {
+        'Bosque Andino Patagónico': {
+            'region': 'Patagonia Argentina',
+            'provincias': 'Neuquén, Río Negro, Chubut, Santa Cruz, Tierra del Fuego',
+            'superficie': '~5.4 millones de ha',
+            'conservacion': 'Vulnerable',
+            'carbono_promedio': '150-300 ton C/ha',
+            'clima': 'Templado frío húmedo',
+            'precipitacion': '600-4000 mm/año',
+            'temperatura': '3-12°C',
+            'altitud': '500-2000 msnm',
+            'suelos': 'Volcánicos, delgados, ácidos',
+            'flora': ['Lenga', 'Ñire', 'Coihue', 'Ciprés de la cordillera', 'Alerce'],
+            'fauna': ['Huemul', 'Pudú', 'Cóndor andino', 'Carpintero negro', 'Monito del monte'],
+            'amenazas': ['Incendios forestales', 'Especies exóticas', 'Cambio climático', 'Actividad turística no regulada'],
+            'conservacion_medidas': ['Parques Nacionales', 'Manejo forestal sostenible', 'Control de especies exóticas'],
+            'carbono_agb': '80-180 ton C/ha',
+            'carbono_soc': '70-120 ton C/ha',
+            'co2_equivalente': '550-1100 ton CO₂e/ha'
+        },
+        'Bosque de Yungas': {
+            'region': 'Noroeste Argentino',
+            'provincias': 'Jujuy, Salta, Tucumán, Catamarca',
+            'superficie': '~4.5 millones de ha',
+            'conservacion': 'Amenazado',
+            'carbono_promedio': '200-400 ton C/ha',
+            'clima': 'Subtropical húmedo',
+            'precipitacion': '1000-3000 mm/año',
+            'temperatura': '14-26°C',
+            'altitud': '400-3000 msnm',
+            'suelos': 'Arcillosos, fértiles, bien drenados',
+            'flora': ['Laurel', 'Cedro', 'Tipa', 'Palo blanco', 'Horco molle'],
+            'fauna': ['Yaguareté', 'Tapir', 'Oso hormiguero', 'Tucán', 'Pava de monte'],
+            'amenazas': ['Deforestación', 'Avance agrícola', 'Fragmentación', 'Caza furtiva'],
+            'conservacion_medidas': ['Reservas de biosfera', 'Corredores biológicos', 'Manejo comunitario'],
+            'carbono_agb': '120-250 ton C/ha',
+            'carbono_soc': '80-150 ton C/ha',
+            'co2_equivalente': '730-1470 ton CO₂e/ha'
+        },
+        'Pastizal Pampeano': {
+            'region': 'Región Pampeana',
+            'provincias': 'Buenos Aires, Córdoba, Santa Fe, Entre Ríos, La Pampa',
+            'superficie': '~60 millones de ha',
+            'conservacion': 'Críticamente amenazado',
+            'carbono_promedio': '80-150 ton C/ha',
+            'clima': 'Templado húmedo',
+            'precipitacion': '600-1200 mm/año',
+            'temperatura': '14-20°C',
+            'altitud': '0-500 msnm',
+            'suelos': 'Mollisoles, profundos, fértiles',
+            'flora': ['Flechillas', 'Paja colorada', 'Pastos nativos', 'Leguminosas'],
+            'fauna': ['Ñandú', 'Vizcacha', 'Peludos', 'Aves migratorias', 'Mara'],
+            'amenazas': ['Agricultura intensiva', 'Sobrepastoreo', 'Urbanización', 'Especies exóticas'],
+            'conservacion_medidas': ['Reservas privadas', 'Agricultura de conservación', 'Pastoreo racional'],
+            'carbono_agb': '5-20 ton C/ha',
+            'carbono_soc': '75-130 ton C/ha',
+            'co2_equivalente': '290-550 ton CO₂e/ha'
+        },
+        'Humedales del Iberá': {
+            'region': 'Corrientes',
+            'provincias': 'Corrientes',
+            'superficie': '~1.3 millones de ha',
+            'conservacion': 'Relativamente bien conservado',
+            'carbono_promedio': '300-600 ton C/ha',
+            'clima': 'Subtropical húmedo',
+            'precipitacion': '1200-1800 mm/año',
+            'temperatura': '18-26°C',
+            'altitud': '50-80 msnm',
+            'suelos': 'Hidromórficos, orgánicos',
+            'flora': ['Camalotes', 'Paja brava', 'Irupés', 'Juncos', 'Camelias'],
+            'fauna': ['Ciervo de los pantanos', 'Carayá', 'Yacaré', 'Lobito de río', 'Garzas'],
+            'amenazas': ['Drenaje', 'Contaminación', 'Especies exóticas', 'Cambio climático'],
+            'conservacion_medidas': ['Parque Nacional', 'Reservas naturales', 'Turismo sostenible'],
+            'carbono_agb': '50-100 ton C/ha',
+            'carbono_soc': '250-500 ton C/ha',
+            'co2_equivalente': '1100-2200 ton CO₂e/ha'
+        }
+    }
+    
+    # Si el ecosistema no está en la base, devolver información genérica
+    if ecosistema not in info_base:
+        return {
+            'region': 'Argentina',
+            'provincias': 'Variadas según ecosistema',
+            'superficie': 'Variable',
+            'conservacion': 'Información no disponible',
+            'carbono_promedio': '100-200 ton C/ha',
+            'clima': 'Variable según región',
+            'precipitacion': '500-1500 mm/año',
+            'temperatura': '10-25°C',
+            'altitud': 'Variable',
+            'suelos': 'Variados',
+            'flora': ['Especies nativas características'],
+            'fauna': ['Fauna autóctona'],
+            'amenazas': ['Cambio de uso del suelo', 'Cambio climático'],
+            'conservacion_medidas': ['Áreas protegidas', 'Manejo sostenible'],
+            'carbono_agb': '50-150 ton C/ha',
+            'carbono_soc': '50-100 ton C/ha',
+            'co2_equivalente': '367-917 ton CO₂e/ha'
+        }
+    
+    return info_base.get(ecosistema)
 
 def mostrar_info_sib(tipo_ecosistema):
     info_sib = {
