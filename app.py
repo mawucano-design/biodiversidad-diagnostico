@@ -48,6 +48,48 @@ from typing import Dict, List, Tuple, Optional
 from enum import Enum
 
 # ===============================
+# 🛠️ FUNCIONES AUXILIARES PARA PROCESAMIENTO DE POLÍGONOS
+# ===============================
+def unir_poligonos_gdf(gdf):
+    """Une todos los polígonos de un GeoDataFrame en un solo polígono o multipolígono."""
+    try:
+        if len(gdf) <= 1:
+            return gdf
+        
+        geometria_unida = unary_union(gdf.geometry)
+        
+        if isinstance(geometria_unida, (Polygon, MultiPolygon)):
+            nuevo_gdf = gpd.GeoDataFrame(geometry=[geometria_unida], crs=gdf.crs)
+            return nuevo_gdf
+        else:
+            st.warning("⚠️ La unión de polígonos no produjo una geometría válida.")
+            return gdf
+            
+    except Exception as e:
+        st.error(f"❌ Error uniendo polígonos: {e}")
+        return gdf
+
+def procesar_y_unir_poligonos(gdf, unir=True):
+    """Procesa el GeoDataFrame: si unir=True, une todos los polígonos."""
+    if gdf is None or gdf.empty:
+        return gdf
+    
+    n_poligonos_original = len(gdf)
+    
+    if not unir:
+        return gdf
+    
+    gdf_unido = unir_poligonos_gdf(gdf)
+    n_poligonos_final = len(gdf_unido)
+    
+    if n_poligonos_final == 1:
+        st.success(f"✅ {n_poligonos_original} polígonos unidos en 1 área de análisis")
+    elif n_poligonos_final < n_poligonos_original:
+        st.info(f"ℹ️ {n_poligonos_original} polígonos reducidos a {n_poligonos_final} áreas")
+    
+    return gdf_unido
+
+# ===============================
 # 🌦️ CONECTOR DE DATOS METEOROLÓGICOS REALES PARA ARGENTINA
 # ===============================
 class ConectorMeteorologicoArgentina:
@@ -235,7 +277,6 @@ def mostrar_mapa_seguro(mapa, width=1000, height=600):
     """
     try:
         # Usar folium_static que es más estable en Streamlit
-        from streamlit_folium import folium_static
         folium_static(mapa, width=width, height=height)
     except Exception as e:
         st.warning(f"Error al renderizar el mapa: {str(e)}")
@@ -599,12 +640,9 @@ class AnalisisCarbonoVerra:
                 st.error("No hay datos geoespaciales para analizar")
                 return None
             
-            # UNIFICAR POLÍGONOS SI HAY MÚLTIPLES
-            if len(gdf) > 1:
-                poligono_principal = self._unificar_poligonos(gdf)
-                gdf = gpd.GeoDataFrame({'geometry': [poligono_principal]}, crs=gdf.crs)
-            else:
-                poligono_principal = gdf.geometry.iloc[0]
+            # UNIFICAR POLÍGONOS SI HAY MÚLTIPLES usando la nueva función
+            gdf_unificado = procesar_y_unir_poligonos(gdf, unir=True)
+            poligono_principal = gdf_unificado.geometry.iloc[0]
             
             # Verificar que el polígono sea válido
             if poligono_principal.is_empty:
@@ -773,26 +811,6 @@ class AnalisisCarbonoVerra:
             st.error(traceback.format_exc())
             return None
     
-    def _unificar_poligonos(self, gdf):
-        """Unificar múltiples polígonos en uno solo"""
-        try:
-            # Unir todos los polígonos usando unary_union
-            poligono_unificado = unary_union(gdf.geometry.tolist())
-            
-            # Si el resultado es MultiPolygon, tomar el convex hull para tener un solo polígono
-            if poligono_unificado.geom_type == 'MultiPolygon':
-                st.info(f"⚠️ {len(poligono_unificado.geoms)} polígonos unificados en 1 área de análisis")
-                # Tomar el convex hull para un solo polígono
-                poligono_unificado = poligono_unificado.convex_hull
-            else:
-                st.info(f"✅ {len(gdf)} polígonos unificados en 1 área de análisis")
-            
-            return poligono_unificado
-        except Exception as e:
-            st.error(f"Error al unificar polígonos: {str(e)}")
-            # En caso de error, devolver el primer polígono
-            return gdf.geometry.iloc[0]
-    
     def _calcular_resumen_carbono(self, resultados):
         """Calcular estadísticas resumen del análisis de carbono"""
         areas_carbono = resultados['analisis_carbono']
@@ -806,8 +824,8 @@ class AnalisisCarbonoVerra:
         
         # Promedios por hectárea
         carbono_promedio_ha = np.mean([a['carbono_por_ha'] for a in areas_carbono])
-        co2_promedio_ha = np.mean([a['co2_por_ha'] for a in areas_carbono)
-        precipitacion_promedio = np.mean([a['precipitacion_anual_mm'] for a in areas_carbono)
+        co2_promedio_ha = np.mean([a['co2_por_ha'] for a in areas_carbono])
+        precipitacion_promedio = np.mean([a['precipitacion_anual_mm'] for a in areas_carbono])
         
         # Distribución por estratos VCS
         estratos = {}
@@ -1211,12 +1229,9 @@ class SistemaAnalisisAmbiental:
                 st.error("No hay datos geoespaciales para analizar")
                 return None
             
-            # UNIFICAR POLÍGONOS SI HAY MÚLTIPLES
-            if len(gdf) > 1:
-                poligono_principal = self._unificar_poligonos(gdf)
-                gdf = gpd.GeoDataFrame({'geometry': [poligono_principal]}, crs=gdf.crs)
-            else:
-                poligono_principal = gdf.geometry.iloc[0]
+            # UNIFICAR POLÍGONOS SI HAY MÚLTIPLES usando la nueva función
+            gdf_unificado = procesar_y_unir_poligonos(gdf, unir=True)
+            poligono_principal = gdf_unificado.geometry.iloc[0]
             
             # Verificar que el polígono sea válido
             if poligono_principal.is_empty:
@@ -1243,7 +1258,9 @@ class SistemaAnalisisAmbiental:
                 'resumen': {},
                 'tipo_ecosistema': tipo_ecosistema,
                 'satelite_usado': satelite_seleccionado,
-                'poligonos_unificados': True if len(gdf) > 1 else False
+                'poligonos_unificados': True if len(gdf) > 1 else False,
+                'poligonos_originales': len(gdf),
+                'poligonos_finales': len(gdf_unificado)
             }
             
             # Determinar tipo de cobertura para simulación
@@ -1346,26 +1363,6 @@ class SistemaAnalisisAmbiental:
             st.error(traceback.format_exc())
             return None
     
-    def _unificar_poligonos(self, gdf):
-        """Unificar múltiples polígonos en uno solo"""
-        try:
-            # Unir todos los polígonos usando unary_union
-            poligono_unificado = unary_union(gdf.geometry.tolist())
-            
-            # Si el resultado es MultiPolygon, tomar el convex hull para tener un solo polígono
-            if poligono_unificado.geom_type == 'MultiPolygon':
-                # Tomar el convex hull para un solo polígono
-                poligono_unificado = poligono_unificado.convex_hull
-                st.info(f"⚠️ {len(gdf)} polígonos unificados en 1 área de análisis (convex hull)")
-            else:
-                st.info(f"✅ {len(gdf)} polígonos unificados en 1 área de análisis")
-            
-            return poligono_unificado
-        except Exception as e:
-            st.error(f"Error al unificar polígonos: {str(e)}")
-            # En caso de error, devolver el primer polígono
-            return gdf.geometry.iloc[0]
-    
     def _calcular_resumen_estadistico(self, resultados):
         """Calcular estadísticas resumen del análisis"""
         areas = resultados['areas']
@@ -1394,7 +1391,9 @@ class SistemaAnalisisAmbiental:
             'areas_pobre': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Pobre']),
             'areas_degradada': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Degradada']),
             # Información de unificación
-            'poligonos_unificados': resultados.get('poligonos_unificados', False)
+            'poligonos_unificados': resultados.get('poligonos_unificados', False),
+            'poligonos_originales': resultados.get('poligonos_originales', 1),
+            'poligonos_finales': resultados.get('poligonos_finales', 1)
         }
         
         # ✅ Calcular áreas óptimas considerando precipitación real
@@ -1488,13 +1487,14 @@ class SistemaMapasAvanzado:
             bounds = gdf.total_bounds
             centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
             
-            # Calcular área en km²
-            area_total = gdf.geometry.unary_union.area
+            # Calcular área en km² usando unary_union para obtener geometría unificada
+            geometria_unificada = gdf.geometry.unary_union
+            area_grados = geometria_unificada.area
             
             # Conversión aproximada de grados a km²
             lat_centro = centro[0]
             cos_lat = math.cos(math.radians(lat_centro))
-            area_km2 = area_total * 111 * 111 * cos_lat
+            area_km2 = area_grados * 111 * 111 * cos_lat
             
             # Algoritmo de zoom basado en área (optimizado)
             if area_km2 < 0.1:      # Muy pequeño (< 0.1 km²)
@@ -1570,8 +1570,8 @@ class SistemaMapasAvanzado:
         # Agregar polígono si existe
         if gdf is not None and not gdf.empty:
             try:
-                # Usar unary_union para manejar múltiples polígonos
-                poligono_unificado = gdf.geometry.unary_union
+                # Obtener geometría unificada para calcular área
+                geometria_unificada = gdf.geometry.unary_union
                 
                 # Calcular área total
                 bounds = gdf.total_bounds
@@ -1579,16 +1579,38 @@ class SistemaMapasAvanzado:
                 cos_lat = math.cos(math.radians(lat_centro))
                 
                 # Calcular área correctamente
-                area_grados = poligono_unificado.area
+                area_grados = geometria_unificada.area
                 area_km2 = area_grados * 111 * 111 * cos_lat
                 area_ha = area_km2 * 100
                 
-                # Determinar si es MultiPolygon
-                if poligono_unificado.geom_type == 'MultiPolygon':
-                    num_poligonos = len(poligono_unificado.geoms)
+                # Contar polígonos individuales
+                def contar_poligonos_individuales(geometria):
+                    if geometria.geom_type == 'MultiPolygon':
+                        return len(geometria.geoms)
+                    elif geometria.geom_type == 'Polygon':
+                        return 1
+                    else:
+                        return 0
+                
+                num_poligonos = contar_poligonos_individuales(geometria_unificada)
+                
+                # Manejar diferentes tipos de geometría
+                if geometria_unificada.geom_type == 'MultiPolygon':
+                    # Crear tooltip para MultiPolygon
+                    tooltip_html = f"""
+                    <div style="font-family: Arial; font-size: 12px; padding: 5px;">
+                        <b>{titulo}</b><br>
+                        <hr style="margin: 5px 0;">
+                        <b>Área total:</b> {area_ha:,.1f} ha<br>
+                        <b>Polígonos:</b> {num_poligonos}<br>
+                        <b>Coordenadas centro:</b><br>
+                        {centro[0]:.6f}°, {centro[1]:.6f}°<br>
+                        <b>Zoom recomendado:</b> {zoom}
+                    </div>
+                    """
                     
                     # Agregar cada polígono individualmente
-                    for i, poly in enumerate(poligono_unificado.geoms):
+                    for i, poly in enumerate(geometria_unificada.geoms):
                         # Calcular área de este polígono específico
                         bounds_poly = poly.bounds
                         lat_centro_poly = (bounds_poly[1] + bounds_poly[3]) / 2
@@ -1602,17 +1624,18 @@ class SistemaMapasAvanzado:
                             "geometry": {
                                 "type": "Polygon",
                                 "coordinates": [list(poly.exterior.coords)]
-                            } if poly.geom_type == 'Polygon' else {
-                                "type": "MultiPolygon",
-                                "coordinates": [[list(part.exterior.coords)] for part in poly.geoms]
                             }
                         }
                         
+                        # Color diferente para cada polígono
+                        colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6']
+                        color = colors[i % len(colors)]
+                        
                         folium.GeoJson(
                             geojson_data,
-                            style_function=lambda x, idx=i: {
-                                'fillColor': '#3b82f6',
-                                'color': '#1d4ed8',
+                            style_function=lambda x, color=color: {
+                                'fillColor': color,
+                                'color': color,
                                 'weight': 2,
                                 'fillOpacity': 0.15,
                                 'opacity': 0.6
@@ -1627,24 +1650,13 @@ class SistemaMapasAvanzado:
                             )
                         ).add_to(m)
                     
-                    tooltip_html = f"""
-                    <div style="font-family: Arial; font-size: 12px; padding: 5px;">
-                        <b>{titulo}</b><br>
-                        <hr style="margin: 5px 0;">
-                        <b>Área total:</b> {area_ha:,.1f} ha<br>
-                        <b>Polígonos:</b> {num_poligonos}<br>
-                        <b>Coordenadas centro:</b><br>
-                        {centro[0]:.6f}°, {centro[1]:.6f}°<br>
-                        <b>Zoom recomendado:</b> {zoom}
-                    </div>
-                    """
                 else:
                     # Polígono simple
                     geojson_data = {
                         "type": "Feature",
                         "geometry": {
                             "type": "Polygon",
-                            "coordinates": [list(poligono_unificado.exterior.coords)]
+                            "coordinates": [list(geometria_unificada.exterior.coords)]
                         }
                     }
                     
@@ -1675,7 +1687,7 @@ class SistemaMapasAvanzado:
                 # Agregar marcador en el centro
                 folium.Marker(
                     location=centro,
-                    popup=f"<b>Centro del área de estudio</b><br>Área: {area_ha:,.1f} ha",
+                    popup=f"<b>Centro del área de estudio</b><br>Área: {area_ha:,.1f} ha<br>Polígonos: {num_poligonos}",
                     icon=folium.Icon(color='blue', icon='info-sign', prefix='fa')
                 ).add_to(m)
                 
@@ -1719,10 +1731,10 @@ class SistemaMapasAvanzado:
         
         # Agregar polígono base semi-transparente
         if gdf is not None and not gdf.empty:
-            poligono_unificado = gdf.geometry.unary_union
+            geometria_unificada = gdf.geometry.unary_union
             
-            if poligono_unificado.geom_type == 'MultiPolygon':
-                for poly in poligono_unificado.geoms:
+            if geometria_unificada.geom_type == 'MultiPolygon':
+                for poly in geometria_unificada.geoms:
                     geojson_data = {
                         "type": "Feature",
                         "geometry": {
@@ -1745,7 +1757,7 @@ class SistemaMapasAvanzado:
                     "type": "Feature",
                     "geometry": {
                         "type": "Polygon",
-                        "coordinates": [list(poligono_unificado.exterior.coords)]
+                        "coordinates": [list(geometria_unificada.exterior.coords)]
                     }
                 }
                 folium.GeoJson(
@@ -2408,10 +2420,19 @@ def main():
         st.session_state.analisis_carbono_realizado = False
     if 'tipo_ecosistema_seleccionado' not in st.session_state:
         st.session_state.tipo_ecosistema_seleccionado = None
+    if 'unir_poligonos' not in st.session_state:
+        st.session_state.unir_poligonos = True  # Por defecto unir polígonos
     
     # Sidebar
     with st.sidebar:
         st.header("⚙️ Configuración del Análisis")
+        
+        # Opción para unir polígonos
+        st.session_state.unir_poligonos = st.checkbox(
+            "🔗 Unir todos los polígonos en un solo análisis",
+            value=True,
+            help="Si está marcado, todos los polígonos se unirán en una sola área de análisis"
+        )
         
         # Carga de archivo
         uploaded_file = st.file_uploader(
@@ -2444,36 +2465,52 @@ def main():
                         elif gdf.crs.to_string() != 'EPSG:4326':
                             gdf = gdf.to_crs('EPSG:4326')
                         
+                        # Procesar y unir polígonos según la opción del usuario
+                        gdf_procesado = procesar_y_unir_poligonos(gdf, unir=st.session_state.unir_poligonos)
+                        
                         # INFORMACIÓN SOBRE LOS POLÍGONOS CARGADOS
-                        num_poligonos = len(gdf)
-                        st.info(f"📊 Se cargaron {num_poligonos} polígono(s)")
+                        num_poligonos_original = len(gdf)
+                        num_poligonos_final = len(gdf_procesado)
                         
-                        if num_poligonos > 1:
-                            st.warning("⚠️ Se detectaron múltiples polígonos")
-                            st.info("""
-                            **El sistema automáticamente:**
-                            1. Unirá todos los polígonos en un solo análisis
-                            2. Calculará el área total combinada
-                            3. Generará un análisis integrado
-                            """)
+                        st.info(f"📊 Se cargaron {num_poligonos_original} polígono(s)")
                         
-                        st.session_state.poligono_data = gdf
+                        if num_poligonos_original > 1 and st.session_state.unir_poligonos:
+                            st.success(f"✅ {num_poligonos_original} polígonos unidos en {num_poligonos_final} área(s) de análisis")
+                        elif num_poligonos_original > 1 and not st.session_state.unir_poligonos:
+                            st.info(f"ℹ️ Se mantienen {num_poligonos_original} polígonos separados")
+                        
+                        st.session_state.poligono_data = gdf_procesado
                         st.success("✅ Polígono(s) cargado(s) exitosamente")
                         
                         # Mostrar vista previa del polígono
                         with st.expander("👁️ Vista previa del polígono"):
-                            st.write(f"**Tipo de geometría:** {gdf.geometry.iloc[0].geom_type}")
-                            st.write(f"**Número de polígonos:** {num_poligonos}")
+                            # Obtener geometría unificada para estadísticas
+                            geometria_unificada = gdf_procesado.geometry.unary_union
+                            
+                            # Contar polígonos individuales
+                            def contar_poligonos_individuales(geometria):
+                                if geometria.geom_type == 'MultiPolygon':
+                                    return len(geometria.geoms)
+                                elif geometria.geom_type == 'Polygon':
+                                    return 1
+                                else:
+                                    return 0
+                            
+                            num_poligonos_individuales = contar_poligonos_individuales(geometria_unificada)
+                            
+                            st.write(f"**Tipo de geometría:** {geometria_unificada.geom_type}")
+                            st.write(f"**Número de polígonos:** {num_poligonos_individuales}")
                             
                             # Calcular área aproximada
-                            bounds = gdf.total_bounds
+                            bounds = gdf_procesado.total_bounds
                             centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
-                            area_grados = gdf.geometry.unary_union.area
+                            area_grados = geometria_unificada.area
                             lat_centro = centro[0]
                             cos_lat = math.cos(math.radians(lat_centro))
                             area_km2 = area_grados * 111 * 111 * cos_lat
+                            area_ha = area_km2 * 100
                             
-                            st.write(f"**Área aproximada:** {area_km2:.2f} km²")
+                            st.write(f"**Área total:** {area_ha:,.1f} ha ({area_km2:.2f} km²)")
                             st.write(f"**Centroide:** {centro[0]:.4f}°, {centro[1]:.4f}°")
                         
                 except Exception as e:
