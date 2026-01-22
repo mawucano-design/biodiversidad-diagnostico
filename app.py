@@ -2179,45 +2179,184 @@ def main():
         st.header("⚙️ Configuración del Análisis")
         uploaded_file = st.file_uploader(
             "📁 Cargar polígono de estudio",
-            type=['kml', 'geojson', 'zip'],
-            help="Formatos: KML, GeoJSON, Shapefile (ZIP)"
+            type=['kml', 'kmz', 'geojson', 'json', 'zip', 'shp'],
+            help="Formatos soportados: KML, KMZ, GeoJSON, Shapefile (ZIP)"
         )
+        
         if uploaded_file is not None:
             with st.spinner("Procesando archivo..."):
                 try:
-                    if uploaded_file.name.endswith('.kml'):
-                        gdf = gpd.read_file(uploaded_file, driver='KML')
-                    elif uploaded_file.name.endswith('.geojson'):
-                        gdf = gpd.read_file(uploaded_file)
-                    elif uploaded_file.name.endswith('.zip'):
+                    # Guardar archivo temporalmente
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}") as tmp_file:
+                        tmp_file.write(uploaded_file.getvalue())
+                        tmp_file_path = tmp_file.name
+                    
+                    file_extension = uploaded_file.name.split('.')[-1].lower()
+                    
+                    # Leer archivo según su extensión
+                    if file_extension in ['kml', 'kmz']:
+                        # Para KML/KMZ, intentamos diferentes métodos
+                        try:
+                            # Método 1: Intentar leer con geopandas (puede necesitar driver 'KML')
+                            try:
+                                gdf = gpd.read_file(tmp_file_path)
+                            except Exception as e1:
+                                # Método 2: Intentar con fiona
+                                import fiona
+                                # Habilitar driver KML si está disponible
+                                fiona.drvsupport.supported_drivers['KML'] = 'rw'
+                                fiona.drvsupport.supported_drivers['KMZ'] = 'rw'
+                                gdf = gpd.read_file(tmp_file_path, driver='KML' if file_extension == 'kml' else 'KMZ')
+                        except Exception as e2:
+                            # Método 3: Convertir KML a GeoJSON usando simplekml
+                            st.warning("Convirtiendo KML a GeoJSON...")
+                            try:
+                                import xml.etree.ElementTree as ET
+                                
+                                # Parsear el KML manualmente
+                                tree = ET.parse(tmp_file_path)
+                                root = tree.getroot()
+                                
+                                # Namespace de KML
+                                ns = {'kml': 'http://www.opengis.net/kml/2.2'}
+                                
+                                # Buscar polígonos
+                                polygons = []
+                                for placemark in root.findall('.//kml:Placemark', ns):
+                                    for polygon in placemark.findall('.//kml:Polygon', ns):
+                                        # Obtener coordenadas
+                                        coord_elem = polygon.find('.//kml:coordinates', ns)
+                                        if coord_elem is not None:
+                                            coord_text = coord_elem.text.strip()
+                                            # Parsear coordenadas
+                                            coords = []
+                                            for coord in coord_text.split():
+                                                lon, lat, z = coord.split(',')
+                                                coords.append((float(lon), float(lat)))
+                                            
+                                            if len(coords) >= 3:
+                                                polygons.append(Polygon(coords))
+                                
+                                if polygons:
+                                    if len(polygons) == 1:
+                                        geometry = polygons[0]
+                                    else:
+                                        geometry = MultiPolygon(polygons)
+                                    
+                                    gdf = gpd.GeoDataFrame({'geometry': [geometry]}, crs='EPSG:4326')
+                                else:
+                                    st.error("No se encontraron polígonos en el archivo KML")
+                                    return
+                            except Exception as e3:
+                                st.error(f"No se pudo leer el archivo KML: {str(e3)}")
+                                st.info("""
+                                **Sugerencias:**
+                                1. Convierta el archivo KML a GeoJSON usando herramientas en línea
+                                2. Use formatos GeoJSON o Shapefile
+                                3. Verifique que el KML contenga polígonos válidos
+                                """)
+                                return
+                    
+                    elif file_extension in ['geojson', 'json']:
+                        gdf = gpd.read_file(tmp_file_path)
+                    
+                    elif file_extension == 'zip':
                         with tempfile.TemporaryDirectory() as tmpdir:
-                            with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
+                            with zipfile.ZipFile(tmp_file_path, 'r') as zip_ref:
                                 zip_ref.extractall(tmpdir)
+                            
+                            # Buscar archivos shapefile
                             shp_files = [f for f in os.listdir(tmpdir) if f.endswith('.shp')]
                             if shp_files:
                                 gdf = gpd.read_file(os.path.join(tmpdir, shp_files[0]))
+                            else:
+                                # Buscar otros archivos geoespaciales
+                                for file in os.listdir(tmpdir):
+                                    if file.endswith(('.geojson', '.kml', '.json')):
+                                        gdf = gpd.read_file(os.path.join(tmpdir, file))
+                                        break
+                                else:
+                                    st.error("No se encontraron archivos geoespaciales en el ZIP")
+                                    return
+                    
+                    elif file_extension == 'shp':
+                        # Para shapefile individual, necesitamos los archivos auxiliares
+                        st.error("Los shapefiles deben subirse como archivo ZIP que contenga .shp, .shx, .dbf, etc.")
+                        return
+                    
+                    else:
+                        st.error(f"Formato de archivo no soportado: {file_extension}")
+                        return
+                    
+                    # Limpiar archivo temporal
+                    os.unlink(tmp_file_path)
+                    
                     if gdf is not None and not gdf.empty:
+                        # Asegurarse de que el CRS sea WGS84 (EPSG:4326)
+                        if gdf.crs is None:
+                            gdf = gdf.set_crs('EPSG:4326')
+                        else:
+                            gdf = gdf.to_crs('EPSG:4326')
+                        
                         num_poligonos = len(gdf)
+                        area_total = calcular_area_hectareas(unary_union(gdf.geometry.tolist())) if num_poligonos > 1 else calcular_area_hectareas(gdf.geometry.iloc[0])
+                        
                         st.info(f"📊 Se cargaron {num_poligonos} polígono(s)")
+                        st.info(f"📍 Área total: {area_total:,.1f} ha")
+                        
                         if num_poligonos > 1:
                             st.warning("⚠️ Se detectaron múltiples polígonos")
                             try:
+                                # Unificar polígonos si hay más de uno
                                 geometria_unificada = unary_union(gdf.geometry.tolist())
                                 if geometria_unificada.geom_type == 'MultiPolygon':
+                                    # Para múltiples polígonos, usar el convex hull para unificación
                                     geometria_unificada = geometria_unificada.convex_hull
                                     st.info(f"🔗 {num_poligonos} polígonos unificados en 1 área mediante envolvente convexa")
                                 else:
                                     st.info(f"✅ {num_poligonos} polígonos unificados en 1 polígono simple")
-                                gdf = gpd.GeoDataFrame({'geometry': [geometria_unificada]}, crs=gdf.crs)
+                                
+                                gdf = gpd.GeoDataFrame({'geometry': [geometria_unificada]}, crs='EPSG:4326')
                             except Exception as e:
                                 st.error(f"Error al unificar polígonos: {str(e)}")
+                                # Usar el primer polígono como fallback
+                                gdf = gpd.GeoDataFrame({'geometry': [gdf.geometry.iloc[0]]}, crs='EPSG:4326')
+                        
                         st.session_state.poligono_data = gdf
-                        st.success("✅ Polígono(s) cargado(s) y unificado(s) exitosamente")
+                        st.success("✅ Polígono(s) cargado(s) exitosamente!")
+                        
+                        # Mostrar información del polígono
+                        bounds = gdf.total_bounds
+                        st.sidebar.markdown("---")
+                        st.sidebar.subheader("📐 Información del Polígono")
+                        st.sidebar.write(f"**Centroide:** {bounds[1]:.4f}°S, {bounds[0]:.4f}°W")
+                        st.sidebar.write(f"**Extensión:** {bounds[3]-bounds[1]:.2f}° lat × {bounds[2]-bounds[0]:.2f}° lon")
+                        
                 except Exception as e:
-                    st.error(f"Error: {str(e)}")
+                    st.error(f"Error al procesar el archivo: {str(e)}")
                     import traceback
                     st.error(traceback.format_exc())
+                    
+                    # Información de troubleshooting
+                    with st.expander("🛠️ Solución de problemas"):
+                        st.markdown("""
+                        **Problemas comunes y soluciones:**
+                        
+                        1. **Formato KML no compatible:**
+                           - Convierta a GeoJSON usando: [geojson.io](https://geojson.io)
+                           - O use QGIS para exportar como Shapefile
+                        
+                        2. **Shapefile incompleto:**
+                           - Asegúrese de subir todos los archivos (.shp, .shx, .dbf, .prj) en un ZIP
+                        
+                        3. **Proyección no reconocida:**
+                           - Asegúrese de que el archivo use coordenadas WGS84 (lat/lon)
+                        
+                        4. **Polígono inválido:**
+                           - Verifique que el polígono esté cerrado y tenga al menos 3 vértices
+                        """)
 
+        # Resto del código de configuración...
         if st.session_state.poligono_data is not None and not st.session_state.poligono_data.empty:
             st.markdown("---")
             st.subheader("🛰️ Configuración Satelital")
@@ -2239,10 +2378,14 @@ def main():
                 help=f"Ecosistemas relevantes para {region_actual.replace('_', ' ').title()}"
             )
             st.session_state.tipo_ecosistema_seleccionado = tipo_ecosistema
-            nivel_detalle = st.slider("Nivel de detalle (divisiones)", 4, 12, 8)
+            
+            nivel_detalle = st.slider("Nivel de detalle (divisiones)", 4, 12, 8,
+                                     help="Mayor detalle = más celdas de análisis = mayor precisión pero más tiempo de procesamiento")
+            
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("🚀 Ejecutar Análisis Completo", use_container_width=True):
+                if st.button("🚀 Ejecutar Análisis Completo", use_container_width=True, 
+                           help="Análisis ambiental completo con índices de vegetación y carbono básico"):
                     with st.spinner("Procesando datos satelitales y climáticos..."):
                         resultados = st.session_state.sistema_analisis.analizar_area_completa(
                             st.session_state.poligono_data,
@@ -2253,8 +2396,10 @@ def main():
                             st.session_state.resultados = resultados
                             st.session_state.analisis_carbono_realizado = False
                             st.success("✅ Análisis ambiental completado!")
+                            
             with col2:
-                if st.button("🌳 Análisis Carbono Verra", type="primary", use_container_width=True):
+                if st.button("🌳 Análisis Carbono Verra", type="primary", use_container_width=True,
+                           help="Análisis detallado de carbono según metodología Verra VCS"):
                     with st.spinner("Calculando carbono según metodología Verra VCS..."):
                         resultados_carbono = st.session_state.sistema_analisis.analisis_carbono.analizar_carbono_area(
                             st.session_state.poligono_data,
@@ -2265,6 +2410,8 @@ def main():
                             st.session_state.resultados_carbono = resultados_carbono
                             st.session_state.analisis_carbono_realizado = True
                             st.success("✅ Análisis de carbono Verra completado!")
+
+    # ... (el resto del código se mantiene igual desde aquí)
 
     # ===============================
     # 📊 VISUALIZACIÓN DE RESULTADOS
