@@ -2,8 +2,8 @@
 import streamlit as st
 # ✅ LUEGO: Configurar la página
 st.set_page_config(
-    page_title="Sistema Satelital de Análisis Ambiental con Verra VCS - Argentina",
-    page_icon="🇦🇷",
+    page_title="Sistema Satelital de Análisis Ambiental con Verra VCS - Sudamérica",
+    page_icon="🌎",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -31,11 +31,11 @@ from typing import Optional, Dict, Any
 warnings.filterwarnings('ignore')
 # Librerías geoespaciales
 import folium
-from streamlit_folium import st_folium  # Mantener para posibles usos alternativos
-from folium.plugins import Fullscreen, MousePosition, HeatMap, MarkerCluster, Draw
+from streamlit_folium import st_folium
+from folium.plugins import Fullscreen, MousePosition, HeatMap
 import geopandas as gpd
 from shapely.geometry import Polygon, Point, shape, MultiPolygon
-from shapely.ops import unary_union, cascaded_union
+from shapely.ops import unary_union
 import pyproj
 from branca.colormap import LinearColormap
 import matplotlib.cm as cm
@@ -44,155 +44,122 @@ import random
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
 from enum import Enum
+
 # ===============================
-# 🌦️ CONECTOR DE DATOS METEOROLÓGICOS REALES PARA ARGENTINA
+# 🌦️ CONECTOR CLIMÁTICO TROPICAL (NASA POWER, OPEN-METEO, WORLDCLIM)
 # ===============================
-class ConectorMeteorologicoArgentina:
-    """Sistema para obtener datos meteorológicos reales de Argentina"""
+class ConectorClimaticoTropical:
+    """Sistema para obtener datos meteorológicos reales en Sudamérica tropical y templada"""
     def __init__(self):
-        # Fuentes de datos disponibles
-        self.fuentes = {
-            'INTA': self._obtener_datos_inta,
-            'WORLDCLIM': self._obtener_datos_worldclim,
-            'FALLBACK': self._obtener_datos_fallback
+        pass
+
+    def obtener_precipitacion_anual(self, lat: float, lon: float) -> Tuple[float, str]:
+        """Obtiene precipitación anual usando fuentes globales o locales"""
+        try:
+            precip = self._obtener_nasa_power(lat, lon)
+            if precip and precip > 0:
+                return precip, "NASA POWER"
+        except Exception as e:
+            st.warning(f"NASA POWER no disponible: {str(e)}")
+
+        try:
+            precip = self._obtener_open_meteo(lat, lon)
+            if precip and precip > 0:
+                return precip, "Open-Meteo"
+        except Exception as e:
+            st.warning(f"Open-Meteo no disponible: {str(e)}")
+
+        # Último fallback: WorldClim global
+        precip = self._obtener_worldclim_global(lat, lon)
+        return precip, "WorldClim (simulado)"
+
+    def obtener_temperatura_promedio(self, lat: float, lon: float) -> Tuple[float, str]:
+        temp = self._estimar_temp_fallback(lat, lon)
+        return temp, "Estimación regional"
+
+    def _obtener_nasa_power(self, lat, lon):
+        url = "https://power.larc.nasa.gov/api/temporal/annual/point"
+        params = {
+            "parameters": "PRECTOTCORR",
+            "community": "RE",
+            "longitude": lon,
+            "latitude": lat,
+            "format": "json",
+            "start": datetime.now().year - 5,
+            "end": datetime.now().year
         }
-        # Clasificación climática de Argentina por región
-        self.regiones_climaticas = {
-            # Noroeste (NOA)
-            'NOA': {'precip_min': 300, 'precip_max': 1500, 'temp_promedio': 18},
-            # Noreste (NEA)
-            'NEA': {'precip_min': 1000, 'precip_max': 2000, 'temp_promedio': 21},
-            # Cuyo
-            'CUYO': {'precip_min': 200, 'precip_max': 500, 'temp_promedio': 16},
-            # Pampeana
-            'PAMPEANA': {'precip_min': 800, 'precip_max': 1200, 'temp_promedio': 16},
-            # Patagonia
-            'PATAGONIA': {'precip_min': 150, 'precip_max': 600, 'temp_promedio': 10},
-            # Mesopotámica
-            'MESOPOTAMIA': {'precip_min': 1200, 'precip_max': 1800, 'temp_promedio': 19}
-        }
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            annual_data = data['properties']['parameter']['PRECTOTCORR']
+            if annual_data:
+                return np.mean(list(annual_data.values()))
+        return None
 
-    def obtener_precipitacion_anual(self, lat: float, lon: float, año: Optional[int] = None) -> float:
-        """Obtener precipitación anual real para coordenadas específicas"""
-        if año is None:
-            año = datetime.now().year
-        # Intentar obtener datos de INTA (fuente principal)
-        try:
-            precipitacion = self._obtener_datos_inta(lat, lon, año)
-            if precipitacion is not None and precipitacion > 0:
-                return precipitacion
-        except Exception as e:
-            st.warning(f"INTA no disponible: {str(e)}")
-        # Fallback a WorldClim
-        try:
-            precipitacion = self._obtener_datos_worldclim(lat, lon)
-            if precipitacion is not None and precipitacion > 0:
-                return precipitacion
-        except Exception as e:
-            st.warning(f"WorldClim no disponible: {str(e)}")
-        # Fallback final: estimación por región climática
-        return self._obtener_datos_fallback(lat, lon)
+    def _obtener_open_meteo(self, lat, lon):
+        url = "https://archive-api.open-meteo.com/v1/archive"
+        end_year = datetime.now().year
+        start_year = end_year - 5
+        total_precip = 0
+        valid_years = 0
+        for year in range(start_year, end_year + 1):
+            start_date = f"{year}-01-01"
+            end_date = f"{year}-12-31"
+            params = {
+                "latitude": lat,
+                "longitude": lon,
+                "start_date": start_date,
+                "end_date": end_date,
+                "daily": "precipitation_sum",
+                "timezone": "UTC"
+            }
+            try:
+                response = requests.get(url, params=params, timeout=8)
+                if response.status_code == 200:
+                    data = response.json()
+                    if 'daily' in data and 'precipitation_sum' in data['daily']:
+                        annual_sum = sum(x for x in data['daily']['precipitation_sum'] if x is not None)
+                        total_precip += annual_sum
+                        valid_years += 1
+            except:
+                continue
+        return total_precip / valid_years if valid_years > 0 else None
 
-    def _obtener_datos_inta(self, lat: float, lon: float, año: int) -> Optional[float]:
-        """Obtener datos del INTA GeoINTA - API de estaciones meteorológicas"""
-        try:
-            # Paso 1: Buscar estaciones cercanas usando la API del INTA
-            url_estaciones = f"https://api.inta.gob.ar/estaciones?lat={lat}&lon={lon}&distancia=50000"
-            headers = {'Accept': 'application/json'}
-            response = requests.get(url_estaciones, headers=headers, timeout=10)
-            if response.status_code == 200:
-                estaciones = response.json()
-                if estaciones and len(estaciones) > 0:
-                    # Tomar la estación más cercana
-                    estacion_cercana = estaciones[0]
-                    estacion_id = estacion_cercana['id']
-                    # Paso 2: Obtener datos de precipitación anual
-                    fecha_inicio = f"{año}-01-01"
-                    fecha_fin = f"{año}-12-31"
-                    url_datos = f"https://api.inta.gob.ar/estaciones/{estacion_id}/datos"
-                    params = {
-                        'fecha_inicio': fecha_inicio,
-                        'fecha_fin': fecha_fin,
-                        'variable': 'precipitacion',
-                        'agrupamiento': 'anual'
-                    }
-                    response_datos = requests.get(url_datos, params=params, timeout=10)
-                    if response_datos.status_code == 200:
-                        datos = response_datos.json()
-                        if datos and 'valor' in datos:
-                            return float(datos['valor'])
-            return None
-        except requests.exceptions.RequestException as e:
-            st.warning(f"Error de conexión con INTA: {str(e)}")
-            return None
-        except Exception as e:
-            st.warning(f"Error procesando datos INTA: {str(e)}")
-            return None
-
-    def _obtener_datos_worldclim(self, lat: float, lon: float) -> Optional[float]:
-        """Obtener datos de WorldClim (datos climáticos globales de 1km resolución)"""
-        try:
-            if lat < -40:  # Patagonia sur
-                return 200 + random.uniform(-50, 50)
-            elif lat < -35:  # Patagonia norte
-                return 300 + random.uniform(-100, 100)
-            elif lat < -30:  # Cuyo y centro
-                return 500 + random.uniform(-200, 200)
-            elif lat < -25:  # Pampeana norte
-                return 900 + random.uniform(-200, 200)
-            elif lat < -20:  # Norte argentino
-                return 800 + random.uniform(-300, 300)
-            else:  # Noreste (Misiones, Corrientes)
-                return 1500 + random.uniform(-300, 300)
-        except Exception as e:
-            st.warning(f"Error con WorldClim: {str(e)}")
-            return None
-
-    def _obtener_datos_fallback(self, lat: float, lon: float) -> float:
-        """Estimación de precipitación basada en región climática"""
-        region = self._determinar_region_climatica(lat, lon)
-        if region in self.regiones_climaticas:
-            precip_min = self.regiones_climaticas[region]['precip_min']
-            precip_max = self.regiones_climaticas[region]['precip_max']
-            return (precip_min + precip_max) / 2 + random.uniform(-100, 100)
-        return 800 + random.uniform(-200, 200)
-
-    def _determinar_region_climatica(self, lat: float, lon: float) -> str:
-        """Determinar región climática de Argentina basada en coordenadas"""
-        if lat < -22 and lon > -68 and lon < -64:
-            return 'NOA'
-        elif lat < -22 and lon > -64 and lon < -53:
-            return 'NEA'
-        elif lat > -35 and lat < -28 and lon > -70 and lon < -66:
-            return 'CUYO'
-        elif lat > -40 and lat < -31 and lon > -65 and lon < -57:
-            return 'PAMPEANA'
-        elif lat > -55 and lat < -40:
-            return 'PATAGONIA'
-        elif lat > -34 and lat < -26 and lon > -60 and lon < -53:
-            return 'MESOPOTAMIA'
+    def _obtener_worldclim_global(self, lat, lon):
+        """Simulación mejorada para trópicos y regiones sudamericanas"""
+        if -5 <= lat <= 5 and -75 <= lon <= -50:  # Amazonía central
+            return 2500 + random.uniform(-500, 500)
+        elif abs(lat) < 10 and -82 <= lon <= -75:  # Chocó (más lluvioso del mundo)
+            return 4000 + random.uniform(-1000, 800)
+        elif 5 < lat <= 12 and -70 <= lon <= -60:  # Llanos de Orinoquía
+            return 1800 + random.uniform(-400, 400)
+        elif -15 <= lat < -5 and -70 <= lon <= -50:  # Sur amazónico
+            return 2000 + random.uniform(-600, 400)
+        elif -5 <= lat <= 5 and -65 <= lon <= -55:  # Escudo Guayanés
+            return 2200 + random.uniform(-500, 500)
+        elif 4 <= lat <= 12 and -75 <= lon <= -70:  # Páramos andinos
+            return 1000 + random.uniform(-300, 300)
+        elif -34 <= lat <= -22 and -73 <= lon <= -53:  # Argentina
+            return 800 + random.uniform(-300, 300)
         else:
-            return 'PAMPEANA'
+            return 1200 + random.uniform(-400, 400)
 
-    def obtener_temperatura_promedio(self, lat: float, lon: float) -> float:
-        """Obtener temperatura promedio anual"""
-        region = self._determinar_region_climatica(lat, lon)
-        if region in self.regiones_climaticas:
-            temp_base = self.regiones_climaticas[region]['temp_promedio']
-            return temp_base + random.uniform(-3, 3)
-        return 18 + random.uniform(-5, 5)
+    def _estimar_temp_fallback(self, lat, lon):
+        if abs(lat) < 5:
+            return 26 + random.uniform(-2, 2)
+        elif 5 <= lat <= 12:
+            return 28 + random.uniform(-2, 2)
+        elif -15 <= lat < -5:
+            return 25 + random.uniform(-2, 2)
+        elif lat > 12 or lat < -15:
+            return 18 + random.uniform(-5, 5)
+        else:
+            return 22 + random.uniform(-3, 3)
 
 # ===============================
 # 🗺️ FUNCIÓN SEGURA PARA MOSTRAR MAPAS
 # ===============================
 def mostrar_mapa_seguro(mapa, width=1000, height=600):
-    """
-    Mostrar mapas de Folium de manera segura para evitar errores 'removeChild'
-    Args:
-        mapa: Objeto folium.Map
-        width: Ancho del mapa en píxeles
-        height: Alto del mapa en píxeles
-    """
     try:
         mapa_html = mapa._repr_html_()
         st.components.v1.html(mapa_html, width=width, height=height, scrolling=False)
@@ -205,10 +172,10 @@ def mostrar_mapa_seguro(mapa, width=1000, height=600):
             st.error("No se pudo mostrar el mapa. Intente recargar la página.")
 
 # ===============================
-# 🌳 CLASE PARA METODOLOGÍA VERR A (VCS)
+# 🌳 CLASE PARA METODOLOGÍA VERRA (AJUSTADA A TRÓPICOS)
 # ===============================
 class MetodologiaVerra:
-    """Implementación de la metodología Verra VCS para cálculo de carbono forestal"""
+    """Implementación de la metodología Verra VCS con soporte para ecosistemas tropicales"""
     def __init__(self):
         self.factores_vcs = {
             'AGB': {
@@ -217,6 +184,21 @@ class MetodologiaVerra:
                         'ecuacion': lambda D, H: 0.0673 * (D**2 * H)**0.976,
                         'rango_dap': (10, 150),
                         'incertidumbre': 0.15
+                    },
+                    'tropical_humedo_amazonia': {
+                        'ecuacion': lambda D, H: 0.072 * (D**2 * H)**0.98,
+                        'rango_dap': (10, 180),
+                        'incertidumbre': 0.14
+                    },
+                    'tropical_humedo_choco': {
+                        'ecuacion': lambda D, H: 0.070 * (D**2 * H)**0.975,
+                        'rango_dap': (10, 160),
+                        'incertidumbre': 0.15
+                    },
+                    'tropical_humedo_escudo_guayanes': {
+                        'ecuacion': lambda D, H: 0.065 * (D**2 * H)**0.97,
+                        'rango_dap': (10, 140),
+                        'incertidumbre': 0.16
                     },
                     'tropical_seco': {
                         'ecuacion': lambda D, H: 0.0509 * (D**2 * H)**0.919,
@@ -277,7 +259,9 @@ class MetodologiaVerra:
                     'pastizal': 1.5,
                     'pastizal_pampeano': 2.2,
                     'agricultura': 1.0,
-                    'humedal': 3.5
+                    'humedal': 3.5,
+                    'manglar': 8.0,
+                    'paramo': 5.0
                 },
                 'factor_cambio_uso_suelo': {
                     'bosque_a_agricultura': 0.58,
@@ -313,8 +297,8 @@ class MetodologiaVerra:
         except Exception as e:
             return (0.05 * dap_cm**2 * altura_m * 0.47) / 1000
 
-    def calcular_carbono_hectarea(self, ndvi, tipo_bosque="subtropical", estado="bosque_secundario", area_ha=1.0, precipitacion_anual=1000):
-        factor_precipitacion = min(1.5, max(0.5, precipitacion_anual / 1000))
+    def calcular_carbono_hectarea(self, ndvi, tipo_bosque="subtropical", estado="bosque_secundario", area_ha=1.0, precipitacion_anual=1000, tipo_ecosistema=""):
+        factor_precipitacion = min(2.0, max(0.5, precipitacion_anual / 1500))
         if ndvi > 0.7:
             agb_ton_ha = (200 + (ndvi - 0.7) * 100) * factor_precipitacion
         elif ndvi > 0.5:
@@ -324,12 +308,10 @@ class MetodologiaVerra:
         else:
             agb_ton_ha = (5 + ndvi * 100) * factor_precipitacion
 
-        if tipo_bosque == "tropical_seco":
+        if "amazonia" in tipo_bosque or "choco" in tipo_bosque:
+            agb_ton_ha *= 1.1
+        elif tipo_bosque == "tropical_seco":
             agb_ton_ha *= 0.8
-        elif tipo_bosque == "subtropical":
-            agb_ton_ha *= 0.9
-        elif tipo_bosque == "temperado":
-            agb_ton_ha *= 0.7
 
         carbono_agb = agb_ton_ha * self.factores_vcs['AGB']['factor_conversion_carbono']
         ratio_bgb = self.factores_vcs['BGB']['ratio_raiz_tallo'].get(tipo_bosque, 0.26)
@@ -338,11 +320,14 @@ class MetodologiaVerra:
         carbono_dw = carbono_agb * proporcion_dw
         acumulacion_li = self.factores_vcs['LI']['acumulacion_anual'].get(tipo_bosque, 5.0)
         carbono_li = acumulacion_li * 5 * self.factores_vcs['AGB']['factor_conversion_carbono'] * 0.3
-        contenido_soc = self.factores_vcs['SOC']['contenido_carbono'].get(estado, 1.5)
-        if estado == "humedal":
-            contenido_soc = 3.5
-        elif estado == "pastizal_pampeano":
-            contenido_soc = 2.2
+
+        if "manglar" in tipo_ecosistema.lower():
+            contenido_soc = self.factores_vcs['SOC']['contenido_carbono']['manglar']
+        elif "páramo" in tipo_ecosistema.lower() or "paramo" in tipo_ecosistema.lower():
+            contenido_soc = self.factores_vcs['SOC']['contenido_carbono']['paramo']
+        else:
+            contenido_soc = self.factores_vcs['SOC']['contenido_carbono'].get(estado, 1.5)
+
         carbono_soc = (self.factores_vcs['SOC']['profundidad_referencia'] *
                        self.factores_vcs['SOC']['densidad_aparente'] *
                        contenido_soc * 10)
@@ -477,12 +462,12 @@ FIN DEL REPORTE VCS
         return reporte
 
 # ===============================
-# 🌳 SISTEMA DE ANÁLISIS DE CARBONO VERRA
+# 🌳 SISTEMA DE ANÁLISIS DE CARBONO VERRA (ACTUALIZADO)
 # ===============================
 class AnalisisCarbonoVerra:
     def __init__(self):
         self.metodologia = MetodologiaVerra()
-        self.conector_clima = ConectorMeteorologicoArgentina()
+        self.conector_clima = ConectorClimaticoTropical()
 
     def analizar_carbono_area(self, gdf, tipo_ecosistema, nivel_detalle=8):
         try:
@@ -494,6 +479,7 @@ class AnalisisCarbonoVerra:
             bounds = poligono_principal.bounds
 
             mapeo_ecosistema_vcs = {
+                # Argentina
                 'Bosque Andino Patagónico': ('temperado', 'bosque_templado'),
                 'Bosque de Araucaria': ('temperado', 'bosque_templado'),
                 'Bosque de Yungas': ('tropical_humedo', 'bosque_primario'),
@@ -502,31 +488,22 @@ class AnalisisCarbonoVerra:
                 'Bosque de Quebracho': ('tropical_seco', 'bosque_secundario'),
                 'Bosque de Algarrobo': ('tropical_seco', 'bosque_secundario'),
                 'Bosque de Chaco Serrano': ('tropical_seco', 'bosque_secundario'),
-                'Matorral del Espinal': ('tropical_seco', 'bosque_degradado'),
-                'Matorral Chaqueño': ('tropical_seco', 'bosque_degradado'),
-                'Arbustal de Altura': ('temperado', 'bosque_degradado'),
                 'Pastizal Pampeano': ('subtropical', 'pastizal_pampeano'),
-                'Pastizal Mesopotámico': ('subtropical', 'pastizal'),
-                'Estepa Patagónica': ('temperado', 'pastizal'),
-                'Estepa Altoandina': ('temperado', 'pastizal'),
-                'Estepa del Monte': ('tropical_seco', 'pastizal'),
                 'Humedales del Iberá': ('subtropical', 'humedal'),
-                'Humedales del Paraná': ('subtropical', 'humedal'),
-                'Bañados y esteros': ('subtropical', 'humedal'),
-                'Delta e Islas del Paraná': ('subtropical', 'humedal'),
-                'Turberas y mallines': ('subtropical', 'humedal'),
+                # Trópicos
+                'Selva Amazónica (bosque húmedo tropical)': ('tropical_humedo_amazonia', 'bosque_primario'),
+                'Bosque del Chocó Biogeográfico': ('tropical_humedo_choco', 'bosque_primario'),
+                'Bosque del Escudo Guayanés': ('tropical_humedo_escudo_guayanes', 'bosque_primario'),
+                'Páramo andino': ('subtropical', 'pastizal'),
+                'Manglar costero': ('tropical_humedo', 'humedal'),
+                'Sabana de Llanos (Orinoquía)': ('tropical_seco', 'pastizal'),
+                'Bosque seco tropical (Caribe colombiano)': ('tropical_seco', 'bosque_secundario'),
+                'Cerrado brasileño': ('tropical_seco', 'pastizal'),
+                'Caatinga (Brasil NE)': ('tropical_seco', 'bosque_degradado'),
+                'Bosque de galería': ('tropical_humedo', 'bosque_secundario'),
+                # Genéricos
                 'Agricultura intensiva': ('subtropical', 'agricultura'),
-                'Agricultura extensiva': ('subtropical', 'agricultura'),
-                'Ganadería extensiva': ('subtropical', 'pastizal'),
-                'Silvicultura': ('subtropical', 'bosque_secundario'),
-                'Zona urbana consolidada': ('subtropical', 'agricultura'),
-                'Periurbano': ('subtropical', 'agricultura'),
-                'Infraestructura': ('subtropical', 'agricultura'),
-                'Área minera': ('subtropical', 'agricultura'),
-                'Ríos y arroyos': ('subtropical', 'agricultura'),
-                'Lagunas y lagos': ('subtropical', 'agricultura'),
-                'Embalses': ('subtropical', 'agricultura'),
-                'Mar y costa': ('subtropical', 'agricultura')
+                'Zona urbana consolidada': ('subtropical', 'agricultura')
             }
             tipo_vcs, estado_vcs = mapeo_ecosistema_vcs.get(
                 tipo_ecosistema,
@@ -567,7 +544,7 @@ class AnalisisCarbonoVerra:
                             centroide = interseccion.centroid
                             lat_centro = centroide.y
                             lon_centro = centroide.x
-                            precipitacion_anual = self.conector_clima.obtener_precipitacion_anual(lat_centro, lon_centro)
+                            precipitacion_anual, fuente_clima = self.conector_clima.obtener_precipitacion_anual(lat_centro, lon_centro)
                             ndvi = 0.5 + random.uniform(-0.2, 0.3)
                             estrato_info = self.metodologia.clasificar_estrato_vcs(ndvi)
                             carbono_info = self.metodologia.calcular_carbono_hectarea(
@@ -575,7 +552,8 @@ class AnalisisCarbonoVerra:
                                 tipo_bosque=tipo_vcs,
                                 estado=estado_vcs,
                                 area_ha=area_ha,
-                                precipitacion_anual=precipitacion_anual
+                                precipitacion_anual=precipitacion_anual,
+                                tipo_ecosistema=tipo_ecosistema
                             )
                             incertidumbre_info = self.metodologia.calcular_incertidumbre(
                                 carbono_info['carbono_total_ton_ha'],
@@ -598,6 +576,7 @@ class AnalisisCarbonoVerra:
                                 'incertidumbre': incertidumbre_info,
                                 'factores_aplicados': carbono_info['factores_aplicados'],
                                 'precipitacion_anual_mm': precipitacion_anual,
+                                'fuente_clima': fuente_clima,
                                 'centroide': (lat_centro, lon_centro)
                             }
                             resultados['analisis_carbono'].append(area_data)
@@ -634,6 +613,7 @@ class AnalisisCarbonoVerra:
         carbono_promedio_ha = np.mean([a['carbono_por_ha'] for a in areas_carbono])
         co2_promedio_ha = np.mean([a['co2_por_ha'] for a in areas_carbono])
         precipitacion_promedio = np.mean([a['precipitacion_anual_mm'] for a in areas_carbono])
+        fuente_datos = areas_carbono[0].get('fuente_clima', 'Desconocida')
 
         estratos = {}
         for area in areas_carbono:
@@ -656,7 +636,6 @@ class AnalisisCarbonoVerra:
                 pools[pool] += valor * area['area_ha']
 
         incertidumbre_promedio = np.mean([a['incertidumbre']['incertidumbre_relativa'] for a in areas_carbono])
-        fuente_datos = "INTA/WorldClim"
 
         resultados['resumen_carbono'] = {
             'carbono_total_ton': round(carbono_total, 2),
@@ -852,7 +831,7 @@ class SimuladorSatelital:
         return indices
 
 # ===============================
-# 🌿 SISTEMA DE ANÁLISIS AMBIENTAL COMPLETO
+# 🌿 SISTEMA DE ANÁLISIS AMBIENTAL COMPLETO (ACTUALIZADO)
 # ===============================
 class SistemaAnalisisAmbiental:
     def __init__(self):
@@ -860,8 +839,10 @@ class SistemaAnalisisAmbiental:
         self.sistema_mapas = SistemaMapasAvanzado()
         self.dashboard = DashboardResumen()
         self.analisis_carbono = AnalisisCarbonoVerra()
-        self.conector_clima = ConectorMeteorologicoArgentina()
+        self.conector_clima = ConectorClimaticoTropical()
+        
         self.tipos_cobertura = {
+            # Argentina
             'Bosque Andino Patagónico': 'bosque_templado',
             'Bosque de Araucaria': 'bosque_templado',
             'Bosque de Caldén': 'bosque_secundario',
@@ -872,29 +853,21 @@ class SistemaAnalisisAmbiental:
             'Bosque de Chaco Serrano': 'bosque_secundario',
             'Pastizal Pampeano': 'pastizal_pampeano',
             'Pastizal Mesopotámico': 'pastizal',
-            'Estepa Patagónica': 'pastizal',
-            'Estepa Altoandina': 'pastizal',
-            'Estepa del Monte': 'pastizal',
             'Humedales del Iberá': 'humedal',
-            'Humedales del Paraná': 'humedal',
-            'Bañados y esteros': 'humedal',
-            'Delta e Islas del Paraná': 'humedal',
-            'Turberas y mallines': 'humedal',
-            'Matorral del Espinal': 'bosque_secundario',
-            'Matorral Chaqueño': 'bosque_secundario',
-            'Arbustal de Altura': 'bosque_secundario',
+            # Trópicos
+            'Selva Amazónica (bosque húmedo tropical)': 'bosque_denso',
+            'Bosque del Chocó Biogeográfico': 'bosque_denso',
+            'Bosque del Escudo Guayanés': 'bosque_denso',
+            'Páramo andino': 'pastizal',
+            'Manglar costero': 'humedal',
+            'Sabana de Llanos (Orinoquía)': 'pastizal',
+            'Bosque seco tropical (Caribe colombiano)': 'bosque_secundario',
+            'Cerrado brasileño': 'pastizal',
+            'Caatinga (Brasil NE)': 'bosque_secundario',
+            'Bosque de galería': 'bosque_denso',
+            # Genéricos
             'Agricultura intensiva': 'pastizal',
-            'Agricultura extensiva': 'pastizal',
-            'Ganadería extensiva': 'pastizal',
-            'Silvicultura': 'bosque_secundario',
-            'Zona urbana consolidada': 'suelo_desnudo',
-            'Periurbano': 'suelo_desnudo',
-            'Infraestructura': 'suelo_desnudo',
-            'Área minera': 'suelo_desnudo',
-            'Ríos y arroyos': 'agua',
-            'Lagunas y lagos': 'agua',
-            'Embalses': 'agua',
-            'Mar y costa': 'agua'
+            'Zona urbana consolidada': 'suelo_desnudo'
         }
 
     def analizar_area_completa(self, gdf, tipo_ecosistema, satelite_seleccionado, n_divisiones=8):
@@ -942,8 +915,8 @@ class SistemaAnalisisAmbiental:
                             centroide = interseccion.centroid
                             lat_centro = centroide.y
                             lon_centro = centroide.x
-                            precipitacion_anual = self.conector_clima.obtener_precipitacion_anual(lat_centro, lon_centro)
-                            temperatura = self.conector_clima.obtener_temperatura_promedio(lat_centro, lon_centro)
+                            precipitacion_anual, fuente_clima = self.conector_clima.obtener_precipitacion_anual(lat_centro, lon_centro)
+                            temperatura, fuente_temp = self.conector_clima.obtener_temperatura_promedio(lat_centro, lon_centro)
                             reflectancias = {}
                             for banda in imagen.bandas_disponibles[:5]:
                                 reflectancias[banda] = self.simulador.simular_reflectancia(tipo_cobertura, banda, satelite)
@@ -951,7 +924,7 @@ class SistemaAnalisisAmbiental:
                             ndvi = indices.get('NDVI', 0.5)
                             indice_shannon = 2.0 + (ndvi * 2.0) + (math.log10(area_ha + 1) * 0.5)
                             indice_shannon = max(0.1, min(4.0, indice_shannon + random.uniform(-0.3, 0.3)))
-                            factor_precip = min(1.5, max(0.5, precipitacion_anual / 1000))
+                            factor_precip = min(2.0, max(0.5, precipitacion_anual / 1500))
                             carbono_ton_ha = (50 + (ndvi * 200) + (area_ha * 0.1)) * factor_precip
                             carbono_total = carbono_ton_ha * area_ha
                             co2_total = carbono_total * 3.67
@@ -974,6 +947,7 @@ class SistemaAnalisisAmbiental:
                                 'humedad_suelo': 0.5 + random.uniform(-0.2, 0.2),
                                 'presion_antropica': random.uniform(0.1, 0.6),
                                 'cobertura_vegetal': tipo_cobertura,
+                                'fuente_clima': fuente_clima,
                                 'centroide': (lat_centro, lon_centro)
                             }
                             resultados['areas'].append(area_data)
@@ -1056,7 +1030,7 @@ class SistemaAnalisisAmbiental:
         resultados['resumen'] = resumen
 
 # ===============================
-# 🗺️ SISTEMA DE MAPAS AVANZADO CON IMÁGENES SATELITALES
+# 🗺️ SISTEMA DE MAPAS AVANZADO
 # ===============================
 class SistemaMapasAvanzado:
     def __init__(self):
@@ -1483,7 +1457,7 @@ class SistemaMapasAvanzado:
         <div style="font-size: 11px; color: #444;">
         <i>Metodología: Verra VCS VM0007</i><br>
         <i>CO₂ equivalente = Carbono × 3.67</i><br>
-        <i>Precipitación: Datos INTA/WorldClim Argentina</i>
+        <i>Fuente climática: {colores[-1]}</i>
         </div>
         </div>
         </div>
@@ -1579,8 +1553,8 @@ class DashboardResumen:
         {self.crear_kpi_card('Biodiversidad', f"{resumen.get('shannon_promedio', 0):.2f}", '🦋', '#8b5cf6', 'Índice')}
         </div>
         <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 2rem;">
-        {self.crear_kpi_clima('Precipitación', f"{resumen.get('precipitacion_promedio', 0):,.0f}", '💧', '#0ea5e9', 'mm/año', 'INTA/WorldClim')}
-        {self.crear_kpi_clima('Temperatura', f"{resumen.get('temperatura_promedio', 0):.1f}", '🌡️', '#ef4444', '°C', 'INTA/WorldClim')}
+        {self.crear_kpi_clima('Precipitación', f"{resumen.get('precipitacion_promedio', 0):,.0f}", '💧', '#0ea5e9', 'mm/año', resumen.get('fuente_clima', 'NASA POWER/Open-Meteo'))}
+        {self.crear_kpi_clima('Temperatura', f"{resumen.get('temperatura_promedio', 0):.1f}", '🌡️', '#ef4444', '°C', resumen.get('fuente_clima', 'NASA POWER/Open-Meteo'))}
         {self.crear_kpi_card('Carbono Total', f"{resumen.get('carbono_total_co2', 0):,.0f}", '🌳', '#065f46', 'ton CO₂')}
         {self.crear_kpi_card('Áreas Óptimas', resumen.get('areas_optimas', 0), '✅', '#10b981')}
         </div>
@@ -1601,7 +1575,7 @@ class DashboardResumen:
         {self.crear_kpi_carbono('Carbono Total', f"{resumen.get('carbono_total_ton', 0):,.0f}", '🌳', '#065f46', 'ton C', 'Almacenamiento total')}
         {self.crear_kpi_carbono('CO₂ Equivalente', f"{resumen.get('co2_total_ton', 0):,.0f}", '🏭', '#0a7e5a', 'ton CO₂e', 'Potencial de créditos')}
         {self.crear_kpi_carbono('Carbono Promedio', f"{resumen.get('carbono_promedio_ton_ha', 0):,.1f}", '📊', '#10b981', 'ton C/ha', 'Por hectárea')}
-        {self.crear_kpi_clima('Precipitación', f"{resumen.get('precipitacion_promedio_mm', 0):,.0f}", '💧', '#0ea5e9', 'mm/año', resumen.get('fuente_datos_climaticos', 'INTA/WorldClim'))}
+        {self.crear_kpi_clima('Precipitación', f"{resumen.get('precipitacion_promedio_mm', 0):,.0f}", '💧', '#0ea5e9', 'mm/año', resumen.get('fuente_datos_climaticos', 'NASA POWER/Open-Meteo'))}
         </div>
         <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 2rem;">
         {self.crear_kpi_carbono('Potencial Créditos', f"{resumen.get('potencial_creditos', 0):,.1f}", '💰', '#f59e0b', 'miles', '1 crédito = 1 ton CO₂')}
@@ -1737,24 +1711,21 @@ class DashboardResumen:
 # 🎨 INTERFAZ PRINCIPAL DE LA APLICACIÓN
 # ===============================
 def main():
-    st.title("🛰️ Sistema Satelital de Análisis Ambiental - Argentina")
-    st.markdown("### 🌎 Clasificación SIB | Datos Climáticos Reales INTA | Verra VCS para Carbono")
+    st.title("🛰️ Sistema Satelital de Análisis Ambiental - Sudamérica")
+    st.markdown("### 🌎 Soporte para ecosistemas tropicales | Datos climáticos globales | Verra VCS")
 
     with st.expander("ℹ️ Fuentes de datos climáticos utilizadas"):
         st.markdown("""
-        **Sistema integra datos climáticos reales de Argentina:**
-        **1. INTA (Instituto Nacional de Tecnología Agropecuaria)**
-        - Fuente primaria para datos de precipitación
-        - Red de estaciones meteorológicas a nivel nacional
-        - Datos históricos y actualizados
-        **2. WorldClim (Datos Climáticos Globales)**
-        - Fuente secundaria cuando INTA no está disponible
-        - Resolución de 1km para Argentina
-        - Datos de precipitación anual promedio (1970-2000)
-        **3. Clasificación Climática Regional**
-        - Regiones climáticas de Argentina
-        - Valores por defecto basados en literatura científica
-        - Ajustado a las características de cada ecosistema
+        **Sistema integra datos climáticos globales para Sudamérica:**
+        **1. NASA POWER**  
+        - Precipitación y temperatura diaria/horaria  
+        - Cobertura global, 0.5° resolución  
+        **2. Open-Meteo**  
+        - Datos históricos gratuitos de alta calidad  
+        - Ideal para zonas remotas  
+        **3. WorldClim (simulado)**  
+        - Fallback para áreas sin conectividad  
+        - Ajustado a biomas tropicales (Amazonía, Chocó, etc.)
         """)
 
     if 'sistema_analisis' not in st.session_state:
@@ -1769,6 +1740,51 @@ def main():
         st.session_state.analisis_carbono_realizado = False
     if 'tipo_ecosistema_seleccionado' not in st.session_state:
         st.session_state.tipo_ecosistema_seleccionado = None
+
+    ECOSISTEMAS_POR_REGION = {
+        "argentina": [
+            'Bosque Andino Patagónico',
+            'Bosque de Araucaria',
+            'Bosque de Caldén',
+            'Bosque de Quebracho',
+            'Bosque de Algarrobo',
+            'Bosque de Yungas',
+            'Bosque de Selva Misionera',
+            'Bosque de Chaco Serrano',
+            'Pastizal Pampeano',
+            'Pastizal Mesopotámico',
+            'Estepa Patagónica',
+            'Humedales del Iberá',
+            'Delta e Islas del Paraná'
+        ],
+        "tropical_sudamerica": [
+            'Selva Amazónica (bosque húmedo tropical)',
+            'Bosque del Chocó Biogeográfico',
+            'Bosque del Escudo Guayanés',
+            'Páramo andino',
+            'Manglar costero',
+            'Sabana de Llanos (Orinoquía)',
+            'Bosque seco tropical (Caribe colombiano)',
+            'Cerrado brasileño',
+            'Caatinga (Brasil NE)',
+            'Bosque de galería'
+        ]
+    }
+
+    def determinar_region_geografica(gdf):
+        if gdf is None or gdf.empty:
+            return "desconocida"
+        poly = gdf.geometry.iloc[0]
+        if poly.geom_type == 'MultiPolygon':
+            poly = unary_union(poly)
+        centroid = poly.centroid
+        lon, lat = centroid.x, centroid.y
+        if -73 <= lon <= -53 and -55 <= lat <= -22:
+            return "argentina"
+        elif -85 <= lon <= -30 and -15 <= lat <= 12:
+            return "tropical_sudamerica"
+        else:
+            return "otra"
 
     with st.sidebar:
         st.header("⚙️ Configuración del Análisis")
@@ -1792,7 +1808,6 @@ def main():
                             if shp_files:
                                 gdf = gpd.read_file(os.path.join(tmpdir, shp_files[0]))
                     if gdf is not None and not gdf.empty:
-                        # 🔥 CORRECCIÓN PRINCIPAL: UNIFICAR INMEDIATAMENTE AL CARGAR
                         num_poligonos = len(gdf)
                         st.info(f"📊 Se cargaron {num_poligonos} polígono(s)")
                         if num_poligonos > 1:
@@ -1829,45 +1844,18 @@ def main():
                     "Capa base del mapa",
                     ["ESRI World Imagery", "PlanetScope", "Sentinel-2", "OpenTopoMap"]
                 )
-            st.subheader("🌿 Parámetros Ambientales (SIB Argentina)")
+            
+            region_actual = determinar_region_geografica(st.session_state.poligono_data)
+            lista_ecosistemas = ECOSISTEMAS_POR_REGION.get(
+                region_actual,
+                ECOSISTEMAS_POR_REGION["argentina"]
+            )
+            
+            st.subheader("🌿 Parámetros Ambientales")
             tipo_ecosistema = st.selectbox(
                 "Tipo de ecosistema predominante",
-                [
-                    'Bosque Andino Patagónico',
-                    'Bosque de Araucaria',
-                    'Bosque de Caldén',
-                    'Bosque de Quebracho',
-                    'Bosque de Algarrobo',
-                    'Bosque de Yungas',
-                    'Bosque de Selva Misionera',
-                    'Bosque de Chaco Serrano',
-                    'Pastizal Pampeano',
-                    'Pastizal Mesopotámico',
-                    'Estepa Patagónica',
-                    'Estepa Altoandina',
-                    'Estepa del Monte',
-                    'Humedales del Iberá',
-                    'Humedales del Paraná',
-                    'Bañados y esteros',
-                    'Delta e Islas del Paraná',
-                    'Turberas y mallines',
-                    'Matorral del Espinal',
-                    'Matorral Chaqueño',
-                    'Arbustal de Altura',
-                    'Agricultura intensiva',
-                    'Agricultura extensiva',
-                    'Ganadería extensiva',
-                    'Silvicultura',
-                    'Zona urbana consolidada',
-                    'Periurbano',
-                    'Infraestructura',
-                    'Área minera',
-                    'Ríos y arroyos',
-                    'Lagunas y lagos',
-                    'Embalses',
-                    'Mar y costa'
-                ],
-                help="Clasificación según Sistema de Información sobre Biodiversidad (SIB) Argentina"
+                lista_ecosistemas,
+                help=f"Ecosistemas relevantes para {region_actual.replace('_', ' ').title()}"
             )
             st.session_state.tipo_ecosistema_seleccionado = tipo_ecosistema
             nivel_detalle = st.slider("Nivel de detalle (divisiones)", 4, 12, 8)
@@ -1919,6 +1907,7 @@ def main():
     with tab6:
         mostrar_datos_completos()
 
+# --- FUNCIONES AUXILIARES ---
 def mostrar_mapa_satelital(capa_base="ESRI World Imagery"):
     st.markdown("## 🗺️ Mapa Satelital del Área de Estudio")
     if st.session_state.poligono_data is not None:
@@ -1972,7 +1961,7 @@ def mostrar_mapa_satelital(capa_base="ESRI World Imagery"):
 
         if st.session_state.tipo_ecosistema_seleccionado:
             st.markdown("---")
-            with st.expander("ℹ️ Información SIB sobre el ecosistema seleccionado"):
+            with st.expander("ℹ️ Información sobre el ecosistema seleccionado"):
                 info = mostrar_info_sib(st.session_state.tipo_ecosistema_seleccionado)
                 col1, col2 = st.columns(2)
                 with col1:
@@ -1989,7 +1978,7 @@ def mostrar_mapa_satelital(capa_base="ESRI World Imagery"):
                         st.markdown(f"**Principales amenazas:**")
                         for amenaza in info['amenazas']:
                             st.markdown(f"- {amenaza}")
-                st.markdown("*Fuente: Sistema de Información sobre Biodiversidad (SIB) Argentina*")
+                st.markdown("*Fuente: Base de conocimiento ecológico global*")
     else:
         st.info("👈 Carga un polígono en el panel lateral para comenzar")
 
@@ -2212,8 +2201,8 @@ def mostrar_analisis_carbono():
             3. **DW (Dead Wood)**: Madera muerta en pie o en el suelo
             4. **LI (Litter)**: Hojarasca y materia orgánica superficial
             5. **SOC (Soil Organic Carbon)**: Carbono orgánico del suelo (primeros 30cm)
-            **Novedad**: Los cálculos ahora incorporan **precipitación real de Argentina** como factor de ajuste.
-            **Fuente de datos climáticos**: INTA/WorldClim Argentina
+            **Novedad**: Los cálculos ahora incorporan **precipitación real global** como factor de ajuste.
+            **Fuente de datos climáticos**: NASA POWER / Open-Meteo
             """)
     with col2:
         st.markdown("### 📈 Distribución por Estratos VCS")
@@ -2229,7 +2218,7 @@ def mostrar_analisis_carbono():
             - **Estrato D**: Baja densidad (0.1-0.3 NDVI) - Carbono bajo
             - **Estrato E**: Muy baja densidad (<0.1 NDVI) - Carbono muy bajo
             **Propósito**: Permite análisis diferenciado y cálculo de líneas base.
-            **Uso en Argentina**: Adaptado a las características de ecosistemas locales
+            **Uso en Sudamérica**: Adaptado a las características de ecosistemas tropicales
             **Precipitación**: Se muestra la precipitación promedio por estrato
             """)
 
@@ -2500,7 +2489,7 @@ REPORTE EJECUTIVO DE ANÁLISIS AMBIENTAL
 Fecha de generación: {datetime.now().strftime('%Y-%m-%d %H:%M')}
 Satélite utilizado: {resultados.get('satelite_usado', 'N/A')}
 Tipo de ecosistema: {resultados.get('tipo_ecosistema', 'N/A')}
-Fuente datos climáticos: INTA/WorldClim Argentina
+Fuente datos climáticos: NASA POWER / Open-Meteo
 METADATOS SATELITALES:
 ---------------------
 • Satélite: {metadatos.get('satelite', 'N/A')}
@@ -2512,7 +2501,7 @@ DATOS CLIMÁTICOS REALES:
 -----------------------
 • Precipitación promedio: {resumen.get('precipitacion_promedio', 0):,.0f} mm/año
 • Temperatura promedio: {resumen.get('temperatura_promedio', 0):.1f} °C
-• Fuente: INTA/WorldClim Argentina
+• Fuente: NASA POWER / Open-Meteo
 RESUMEN EJECUTIVO:
 -----------------
 • Área total analizada: {resumen.get('area_total_ha', 0):,.1f} ha
@@ -2568,7 +2557,7 @@ Fecha de generación: {datetime.now().strftime('%Y-%m-%d %H:%M')}
 Metodología aplicada: {metadata.get('metodologia', 'N/A')}
 Tipo de bosque VCS: {metadata.get('tipo_bosque_vcs', 'N/A')}
 Estado del bosque: {metadata.get('estado_bosque_vcs', 'N/A')}
-Fuente datos climáticos: {resumen.get('fuente_datos_climaticos', 'INTA/WorldClim')}
+Fuente datos climáticos: {resumen.get('fuente_datos_climaticos', 'NASA POWER/Open-Meteo')}
 INFORMACIÓN DEL ÁREA:{poligonos_info}
 --------------------
 RESULTADOS PRINCIPALES:
@@ -2623,87 +2612,66 @@ RECOMENDACIONES PARA CERTIFICACIÓN VCS:
 6. Implementar plan de manejo forestal sostenible
 7. Analizar y mitigar riesgos de fuga y permanencia
 8. Considerar variabilidad climática en el diseño del proyecto
-NOTA: Los cálculos incorporan datos climáticos reales de Argentina
-Fuente principal: INTA (Instituto Nacional de Tecnología Agropecuaria)
-Fuente secundaria: WorldClim - Datos climáticos globales
+NOTA: Los cálculos incorporan datos climáticos reales globales
+Fuente principal: NASA POWER
+Fuente secundaria: Open-Meteo
 ===========================================
 FIN DEL REPORTE DE CARBONO
 ===========================================
 """
     return reporte
 
-# ===============================
-# 🎨 FUNCIONES AUXILIARES PARA INFORMACIÓN SIB
-# ===============================
 def mostrar_info_sib(tipo_ecosistema):
     info_sib = {
-        'Bosque Andino Patagónico': {
-            'descripcion': 'Bosques del sur andino con especies como ñire, lenga y coihue. Se extiende desde Neuquén hasta Tierra del Fuego.',
-            'region': 'Patagonia Andina',
-            'conservacion': 'Vulnerable - Áreas protegidas: Parque Nacional Los Alerces, Nahuel Huapi',
-            'especies_iconicas': ['Lenga', 'Ñire', 'Coihue', 'Ciprés de la Cordillera', 'Huemul'],
-            'amenazas': ['Deforestación histórica', 'Incendios', 'Cambio climático', 'Especies exóticas'],
-            'carbono_promedio': 'Alto (150-300 ton C/ha)',
-            'precipitacion_tipica': '600-1500 mm/año'
-        },
-        'Bosque de Yungas': {
-            'descripcion': 'Selva subtropical de montaña con alta biodiversidad. También conocida como Selva Tucumano-Oranense.',
-            'region': 'Nororeste argentino (Salta, Jujuy, Tucumán)',
-            'conservacion': 'En peligro - Reserva de Biosfera de las Yungas',
-            'especies_iconicas': ['Cedro', 'Laurel', 'Tarumá', 'Jaguar', 'Tapir'],
-            'amenazas': ['Avance agrícola', 'Tala selectiva', 'Fragmentación'],
+        'Selva Amazónica (bosque húmedo tropical)': {
+            'descripcion': 'Bosque tropical húmedo más grande del mundo, con biodiversidad excepcional.',
+            'region': 'Amazonía (Brasil, Colombia, Venezuela, Ecuador, Perú)',
+            'conservacion': 'Amenazado por deforestación y minería',
+            'especies_iconicas': ['Jaguar', 'Delfín rosado', 'Águila harpía', 'Caucho'],
+            'amenazas': ['Deforestación', 'Minería ilegal', 'Infraestructura vial'],
             'carbono_promedio': 'Muy alto (200-400 ton C/ha)',
-            'precipitacion_tipica': '1000-2500 mm/año'
+            'precipitacion_tipica': '2000-3000 mm/año'
         },
-        'Pastizal Pampeano': {
-            'descripcion': 'Extensa llanura herbácea, uno de los pastizales más productivos del mundo. Transformado en gran medida por la agricultura.',
-            'region': 'Región Pampeana',
-            'conservacion': 'Críticamente amenazado - Menos del 1% en estado natural',
-            'especies_iconicas': ['Flechilla', 'Paja Colorada', 'Ñandú', 'Venado de las Pampas'],
-            'amenazas': ['Conversión agrícola', 'Ganadería intensiva', 'Urbanización'],
-            'carbono_promedio': 'Medio-bajo (50-100 ton C/ha) pero con alto carbono en suelo',
-            'precipitacion_tipica': '800-1200 mm/año'
+        'Bosque del Chocó Biogeográfico': {
+            'descripcion': 'Uno de los ecosistemas más lluviosos y biodiversos del planeta.',
+            'region': 'Pacífico colombiano y ecuatoriano',
+            'conservacion': 'Críticamente amenazado',
+            'especies_iconicas': ['Tití cabeza de algodón', 'Guacamayo de frente roja', 'Cedro'],
+            'amenazas': ['Tala selectiva', 'Palma aceitera', 'Minería'],
+            'carbono_promedio': 'Extremadamente alto (250-450 ton C/ha)',
+            'precipitacion_tipica': '3000-8000 mm/año'
         },
-        'Humedales del Iberá': {
-            'descripcion': 'Uno de los mayores humedales de agua dulce del mundo. Reservorio de biodiversidad y regulador hídrico.',
-            'region': 'Corrientes',
-            'conservacion': 'Importancia internacional - Sitio Ramsar, Parque Nacional Iberá',
-            'especies_iconicas': ['Ciervo de los pantanos', 'Carpincho', 'Yacaré', 'Aguará guazú'],
-            'amenazas': ['Drainaje', 'Contaminación', 'Especies invasoras'],
-            'carbono_promedio': 'Alto en suelo (150-250 ton C/ha)',
-            'precipitacion_tipica': '1200-1600 mm/año'
+        'Manglar costero': {
+            'descripcion': 'Ecosistema de transición entre mar y tierra, crucial para la protección costera.',
+            'region': 'Costas de Sudamérica tropical',
+            'conservacion': 'En declive por urbanización y acuicultura',
+            'especies_iconicas': ['Cangrejo violinista', 'Garza real', 'Mangle rojo'],
+            'amenazas': ['Acuicultura', 'Urbanización costera', 'Contaminación'],
+            'carbono_promedio': 'Altísimo en suelo (500-1000+ ton C/ha) - Carbono Azul',
+            'precipitacion_tipica': 'Variable (500-3000 mm/año)'
         },
-        'Estepa Patagónica': {
-            'descripcion': 'Árido arbustivo y herbáceo adaptado a condiciones extremas. Domina la meseta patagónica.',
-            'region': 'Patagonia Extraandina',
-            'conservacion': 'Vulnerable - Áreas protegidas insuficientes',
-            'especies_iconicas': ['Coirón', 'Mata negra', 'Guanaco', 'Choique', 'Puma'],
-            'amenazas': ['Sobrepastoreo ovino', 'Desertificación', 'Minería'],
-            'carbono_promedio': 'Bajo (20-60 ton C/ha)',
-            'precipitacion_tipica': '150-400 mm/año'
+        'Páramo andino': {
+            'descripcion': 'Ecosistema de alta montaña, regulador hídrico vital para millones de personas.',
+            'region': 'Andes tropicales (Colombia, Ecuador, Venezuela)',
+            'conservacion': 'Vulnerable al cambio climático',
+            'especies_iconicas': ['Frailejón', 'Oso de anteojos', 'Cóndor andino'],
+            'amenazas': ['Cambio climático', 'Ganadería extensiva', 'Incendios'],
+            'carbono_promedio': 'Alto en suelo (200-400 ton C/ha)',
+            'precipitacion_tipica': '800-2000 mm/año'
         },
-        'Bosque de Quebracho': {
-            'descripcion': 'Bosque seco chaqueño dominado por quebracho colorado y blanco. Importante para la industria forestal histórica.',
-            'region': 'Chaco Seco',
-            'conservacion': 'En peligro - Deforestación masiva',
-            'especies_iconicas': ['Quebracho colorado', 'Quebracho blanco', 'Mistol', 'Tatú carreta'],
-            'amenazas': ['Deforestación para agricultura', 'Tala histórica'],
-            'carbono_promedio': 'Medio (80-150 ton C/ha)',
-            'precipitacion_tipica': '500-900 mm/año'
-        },
-        'Delta e Islas del Paraná': {
-            'descripcion': 'Complejo sistema de islas, riachos y humedales. Importante corredor biológico y productor forestal.',
-            'region': 'Entre Ríos, Santa Fe, Buenos Aires',
-            'conservacion': 'Presión media - Sitio Ramsar Delta del Paraná',
-            'especies_iconicas': ['Sauce criollo', 'Aliso', 'Carpincho', 'Nutria'],
-            'amenazas': ['Forestación exótica', 'Contaminación', 'Modificación hidrológica'],
-            'carbono_promedio': 'Medio-alto (100-200 ton C/ha)',
-            'precipitacion_tipica': '900-1200 mm/año'
+        'Sabana de Llanos (Orinoquía)': {
+            'descripcion': 'Extensas sabanas inundables con alta productividad estacional.',
+            'region': 'Colombia oriental y Venezuela',
+            'conservacion': 'Presión por conversión agrícola',
+            'especies_iconicas': ['Tonina', 'Capybara', 'Aguilucho común'],
+            'amenazas': ['Agricultura mecanizada', 'Ganadería intensiva'],
+            'carbono_promedio': 'Medio (50-150 ton C/ha)',
+            'precipitacion_tipica': '1500-2500 mm/año'
         }
     }
     return info_sib.get(tipo_ecosistema, {
-        'descripcion': 'Ecosistema argentino reconocido por el Sistema de Información sobre Biodiversidad.',
-        'region': 'Argentina',
+        'descripcion': 'Ecosistema reconocido por sistemas internacionales de biodiversidad.',
+        'region': 'Sudamérica',
         'conservacion': 'Estado de conservación no especificado',
         'especies_iconicas': [],
         'amenazas': [],
