@@ -36,6 +36,7 @@ from streamlit_folium import st_folium  # Mantener para posibles usos alternativ
 from folium.plugins import Fullscreen, MousePosition, HeatMap, MarkerCluster, Draw
 import geopandas as gpd
 from shapely.geometry import Polygon, Point, shape, MultiPolygon
+from shapely.ops import unary_union, cascaded_union
 import pyproj
 from branca.colormap import LinearColormap
 import matplotlib.cm as cm
@@ -593,7 +594,13 @@ class AnalisisCarbonoVerra:
     def analizar_carbono_area(self, gdf, tipo_ecosistema, nivel_detalle=8):
         """Analizar carbono en toda el área usando metodología Verra"""
         try:
-            poligono_principal = gdf.geometry.iloc[0]
+            # UNIFICAR POLÍGONOS SI HAY MÚLTIPLES
+            if len(gdf) > 1:
+                poligono_principal = self._unificar_poligonos(gdf)
+                gdf = gpd.GeoDataFrame({'geometry': [poligono_principal]}, crs=gdf.crs)
+            else:
+                poligono_principal = gdf.geometry.iloc[0]
+            
             bounds = poligono_principal.bounds
             
             # Mapear tipo de ecosistema SIB a parámetros VCS
@@ -660,7 +667,9 @@ class AnalisisCarbonoVerra:
                     'metodologia': 'VCS VM0007',
                     'tipo_bosque_vcs': tipo_vcs,
                     'estado_bosque_vcs': estado_vcs,
-                    'fecha_analisis': datetime.now().strftime('%Y-%m-%d')
+                    'fecha_analisis': datetime.now().strftime('%Y-%m-%d'),
+                    'poligonos_originales': len(gdf),
+                    'poligonos_unificados': True if len(gdf) > 1 else False
                 }
             }
             
@@ -750,7 +759,29 @@ class AnalisisCarbonoVerra:
             
         except Exception as e:
             st.error(f"Error en análisis de carbono Verra: {str(e)}")
+            import traceback
+            st.error(traceback.format_exc())
             return None
+    
+    def _unificar_poligonos(self, gdf):
+        """Unificar múltiples polígonos en uno solo"""
+        try:
+            # Unir todos los polígonos usando unary_union
+            poligono_unificado = unary_union(gdf.geometry.tolist())
+            
+            # Si el resultado es MultiPolygon, tomar el convex hull para tener un solo polígono
+            if poligono_unificado.geom_type == 'MultiPolygon':
+                st.info(f"⚠️ {len(poligono_unificado.geoms)} polígonos unificados en 1 área de análisis")
+                # Tomar el convex hull para un solo polígono
+                poligono_unificado = poligono_unificado.convex_hull
+            else:
+                st.info(f"✅ {len(gdf)} polígonos unificados en 1 área de análisis")
+            
+            return poligono_unificado
+        except Exception as e:
+            st.error(f"Error al unificar polígonos: {str(e)}")
+            # En caso de error, devolver el primer polígono
+            return gdf.geometry.iloc[0]
     
     def _calcular_resumen_carbono(self, resultados):
         """Calcular estadísticas resumen del análisis de carbono"""
@@ -1165,7 +1196,13 @@ class SistemaAnalisisAmbiental:
     def analizar_area_completa(self, gdf, tipo_ecosistema, satelite_seleccionado, n_divisiones=8):
         """Realizar análisis ambiental completo con datos satelitales"""
         try:
-            poligono_principal = gdf.geometry.iloc[0]
+            # UNIFICAR POLÍGONOS SI HAY MÚLTIPLES
+            if len(gdf) > 1:
+                poligono_principal = self._unificar_poligonos(gdf)
+                gdf = gpd.GeoDataFrame({'geometry': [poligono_principal]}, crs=gdf.crs)
+            else:
+                poligono_principal = gdf.geometry.iloc[0]
+            
             bounds = poligono_principal.bounds
             
             # Determinar satélite
@@ -1185,7 +1222,8 @@ class SistemaAnalisisAmbiental:
                 'areas': [],
                 'resumen': {},
                 'tipo_ecosistema': tipo_ecosistema,
-                'satelite_usado': satelite_seleccionado
+                'satelite_usado': satelite_seleccionado,
+                'poligonos_unificados': True if len(gdf) > 1 else False
             }
             
             # Determinar tipo de cobertura para simulación
@@ -1284,7 +1322,29 @@ class SistemaAnalisisAmbiental:
             
         except Exception as e:
             st.error(f"Error en análisis ambiental: {str(e)}")
+            import traceback
+            st.error(traceback.format_exc())
             return None
+    
+    def _unificar_poligonos(self, gdf):
+        """Unificar múltiples polígonos en uno solo"""
+        try:
+            # Unir todos los polígonos usando unary_union
+            poligono_unificado = unary_union(gdf.geometry.tolist())
+            
+            # Si el resultado es MultiPolygon, tomar el convex hull para tener un solo polígono
+            if poligono_unificado.geom_type == 'MultiPolygon':
+                # Tomar el convex hull para un solo polígono
+                poligono_unificado = poligono_unificado.convex_hull
+                st.info(f"⚠️ {len(gdf)} polígonos unificados en 1 área de análisis (convex hull)")
+            else:
+                st.info(f"✅ {len(gdf)} polígonos unificados en 1 área de análisis")
+            
+            return poligono_unificado
+        except Exception as e:
+            st.error(f"Error al unificar polígonos: {str(e)}")
+            # En caso de error, devolver el primer polígono
+            return gdf.geometry.iloc[0]
     
     def _calcular_resumen_estadistico(self, resultados):
         """Calcular estadísticas resumen del análisis"""
@@ -1312,7 +1372,9 @@ class SistemaAnalisisAmbiental:
             'areas_buena': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Buena']),
             'areas_moderada': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Moderada']),
             'areas_pobre': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Pobre']),
-            'areas_degradada': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Degradada'])
+            'areas_degradada': len([a for a in areas if a['indices'].get('Salud_Vegetacion') == 'Degradada']),
+            # Información de unificación
+            'poligonos_unificados': resultados.get('poligonos_unificados', False)
         }
         
         # ✅ Calcular áreas óptimas considerando precipitación real
@@ -1396,17 +1458,23 @@ class SistemaMapasAvanzado:
             return [-34.0, -64.0], 6  # Centro de Argentina por defecto
         
         try:
-            # Calcular centroide
+            # Calcular centroide del área total
             bounds = gdf.total_bounds
             centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
             
             # Calcular área en km²
             poligono = gdf.geometry.iloc[0]
             if hasattr(poligono, 'area'):
+                # Para MultiPolygon, calcular área total
+                if poligono.geom_type == 'MultiPolygon':
+                    area_total = sum(poly.area for poly in poligono.geoms)
+                else:
+                    area_total = poligono.area
+                
                 # Conversión aproximada de grados a km²
                 lat_centro = centro[0]
                 cos_lat = math.cos(math.radians(lat_centro))
-                area_grados = poligono.area
+                area_grados = area_total
                 area_km2 = area_grados * 111 * 111 * cos_lat
                 
                 # Algoritmo de zoom basado en área (optimizado)
@@ -1480,40 +1548,83 @@ class SistemaMapasAvanzado:
             try:
                 poligono = gdf.geometry.iloc[0]
                 
-                # Calcular área aproximada
+                # Calcular área total
                 bounds = gdf.total_bounds
                 lat_centro = centro[0]
                 cos_lat = math.cos(math.radians(lat_centro))
-                area_grados = gdf.geometry.area.iloc[0]
-                area_km2 = area_grados * 111 * 111 * cos_lat
-                area_ha = area_km2 * 100
                 
-                # Tooltip informativo
-                tooltip_html = f"""
-                <div style="font-family: Arial; font-size: 12px; padding: 5px;">
-                    <b>{titulo}</b><br>
-                    <hr style="margin: 5px 0;">
-                    <b>Área:</b> {area_ha:,.1f} ha<br>
-                    <b>Coordenadas centro:</b><br>
-                    {centro[0]:.6f}°, {centro[1]:.6f}°<br>
-                    <b>Zoom recomendado:</b> {zoom}
-                </div>
-                """
-                
-                # Estilo del polígono
-                folium.GeoJson(
-                    poligono,
-                    style_function=lambda x: {
-                        'fillColor': '#3b82f6',
-                        'color': '#1d4ed8',
-                        'weight': 3,
-                        'fillOpacity': 0.15,
-                        'dashArray': '5, 5',
-                        'opacity': 0.8
-                    },
-                    name='Área de Estudio',
-                    tooltip=folium.Tooltip(tooltip_html, sticky=True)
-                ).add_to(m)
+                # Calcular área correctamente para Polygon o MultiPolygon
+                if poligono.geom_type == 'MultiPolygon':
+                    area_total = sum(poly.area for poly in poligono.geoms)
+                    num_poligonos = len(poligono.geoms)
+                    
+                    # Agregar cada polígono individualmente
+                    for i, poly in enumerate(poligono.geoms):
+                        # Calcular área de este polígono específico
+                        bounds_poly = poly.bounds
+                        lat_centro_poly = (bounds_poly[1] + bounds_poly[3]) / 2
+                        area_grados_poly = poly.area
+                        area_km2_poly = area_grados_poly * 111 * 111 * math.cos(math.radians(lat_centro_poly))
+                        area_ha_poly = area_km2_poly * 100
+                        
+                        folium.GeoJson(
+                            poly,
+                            style_function=lambda x, idx=i: {
+                                'fillColor': '#3b82f6',
+                                'color': '#1d4ed8',
+                                'weight': 2,
+                                'fillOpacity': 0.15,
+                                'dashArray': '5, 5',
+                                'opacity': 0.6
+                            },
+                            name=f'Polígono {i+1}',
+                            tooltip=f'Polígono {i+1}: {area_ha_poly:,.1f} ha'
+                        ).add_to(m)
+                    
+                    area_km2 = area_total * 111 * 111 * cos_lat
+                    area_ha = area_km2 * 100
+                    
+                    tooltip_html = f"""
+                    <div style="font-family: Arial; font-size: 12px; padding: 5px;">
+                        <b>{titulo}</b><br>
+                        <hr style="margin: 5px 0;">
+                        <b>Área total:</b> {area_ha:,.1f} ha<br>
+                        <b>Polígonos:</b> {num_poligonos}<br>
+                        <b>Coordenadas centro:</b><br>
+                        {centro[0]:.6f}°, {centro[1]:.6f}°<br>
+                        <b>Zoom recomendado:</b> {zoom}
+                    </div>
+                    """
+                else:
+                    # Polígono simple
+                    area_grados = gdf.geometry.area.iloc[0]
+                    area_km2 = area_grados * 111 * 111 * cos_lat
+                    area_ha = area_km2 * 100
+                    
+                    tooltip_html = f"""
+                    <div style="font-family: Arial; font-size: 12px; padding: 5px;">
+                        <b>{titulo}</b><br>
+                        <hr style="margin: 5px 0;">
+                        <b>Área:</b> {area_ha:,.1f} ha<br>
+                        <b>Coordenadas centro:</b><br>
+                        {centro[0]:.6f}°, {centro[1]:.6f}°<br>
+                        <b>Zoom recomendado:</b> {zoom}
+                    </div>
+                    """
+                    
+                    folium.GeoJson(
+                        poligono,
+                        style_function=lambda x: {
+                            'fillColor': '#3b82f6',
+                            'color': '#1d4ed8',
+                            'weight': 3,
+                            'fillOpacity': 0.15,
+                            'dashArray': '5, 5',
+                            'opacity': 0.8
+                        },
+                        name='Área de Estudio',
+                        tooltip=folium.Tooltip(tooltip_html, sticky=True)
+                    ).add_to(m)
                 
                 # Agregar marcador en el centro
                 folium.Marker(
@@ -1544,23 +1655,6 @@ class SistemaMapasAvanzado:
         MousePosition(position='bottomleft').add_to(m)
         folium.LayerControl(position='topright', collapsed=False).add_to(m)
         
-        # Medir distancia (opcional, puede causar conflictos)
-        try:
-            Draw(
-                export=True,
-                position='topleft',
-                draw_options={
-                    'polyline': True,
-                    'rectangle': True,
-                    'polygon': True,
-                    'circle': False,
-                    'marker': True,
-                    'circlemarker': False
-                }
-            ).add_to(m)
-        except:
-            pass  # Ignorar si hay error en controles Draw
-        
         return m
     
     def crear_mapa_indices(self, gdf, datos_areas, indice_seleccionado, titulo="Mapa de Índices"):
@@ -1578,16 +1672,31 @@ class SistemaMapasAvanzado:
         
         # Agregar polígono base semi-transparente
         if gdf is not None and not gdf.empty:
-            folium.GeoJson(
-                gdf.geometry.iloc[0],
-                style_function=lambda x: {
-                    'fillColor': '#ffffff',
-                    'color': '#000000',
-                    'weight': 1,
-                    'fillOpacity': 0.05,
-                    'opacity': 0.3
-                }
-            ).add_to(m)
+            poligono = gdf.geometry.iloc[0]
+            
+            if poligono.geom_type == 'MultiPolygon':
+                for poly in poligono.geoms:
+                    folium.GeoJson(
+                        poly,
+                        style_function=lambda x: {
+                            'fillColor': '#ffffff',
+                            'color': '#000000',
+                            'weight': 1,
+                            'fillOpacity': 0.05,
+                            'opacity': 0.3
+                        }
+                    ).add_to(m)
+            else:
+                folium.GeoJson(
+                    poligono,
+                    style_function=lambda x: {
+                        'fillColor': '#ffffff',
+                        'color': '#000000',
+                        'weight': 1,
+                        'fillOpacity': 0.05,
+                        'opacity': 0.3
+                    }
+                ).add_to(m)
         
         # Definir paletas de colores por índice
         paletas_colores = {
@@ -2246,11 +2355,26 @@ def main():
                                 gdf = gpd.read_file(os.path.join(tmpdir, shp_files[0]))
                     
                     if gdf is not None and not gdf.empty:
+                        # INFORMACIÓN SOBRE LOS POLÍGONOS CARGADOS
+                        num_poligonos = len(gdf)
+                        st.info(f"📊 Se cargaron {num_poligonos} polígono(s)")
+                        
+                        if num_poligonos > 1:
+                            st.warning("⚠️ Se detectaron múltiples polígonos")
+                            st.info("""
+                            **El sistema automáticamente:**
+                            1. Unirá todos los polígonos en un solo análisis
+                            2. Calculará el área total combinada
+                            3. Generará un análisis integrado
+                            """)
+                        
                         st.session_state.poligono_data = gdf
-                        st.success("✅ Polígono cargado exitosamente")
+                        st.success("✅ Polígono(s) cargado(s) exitosamente")
                         
                 except Exception as e:
                     st.error(f"Error: {str(e)}")
+                    import traceback
+                    st.error(traceback.format_exc())
         
         # Configuración del análisis
         if st.session_state.poligono_data is not None and not st.session_state.poligono_data.empty:
@@ -2387,14 +2511,36 @@ def mostrar_mapa_satelital(capa_base="ESRI World Imagery"):
         gdf = st.session_state.poligono_data
         bounds = gdf.total_bounds
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            area_km2 = gdf.geometry.area.iloc[0] * 111 * 111 * math.cos(math.radians((bounds[1] + bounds[3])/2))
-            st.metric("Área aproximada", f"{area_km2:.2f} km²")
+            if gdf.geometry.iloc[0].geom_type == 'MultiPolygon':
+                area_total = sum(poly.area for poly in gdf.geometry.iloc[0].geoms)
+            else:
+                area_total = gdf.geometry.area.iloc[0]
+            
+            lat_centro = (bounds[1] + bounds[3]) / 2
+            cos_lat = math.cos(math.radians(lat_centro))
+            area_km2 = area_total * 111 * 111 * cos_lat
+            st.metric("Área total", f"{area_km2:.2f} km²")
+        
         with col2:
-            st.metric("Centroide", f"{(bounds[1] + bounds[3])/2:.4f}°, {(bounds[0] + bounds[2])/2:.4f}°")
+            if gdf.geometry.iloc[0].geom_type == 'MultiPolygon':
+                num_poligonos = len(gdf.geometry.iloc[0].geoms)
+            else:
+                num_poligonos = 1
+            st.metric("Polígonos", f"{num_poligonos}")
+        
         with col3:
-            st.metric("Tipo de geometría", gdf.geometry.iloc[0].geom_type)
+            centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
+            st.metric("Centroide", f"{centro[0]:.4f}°, {centro[1]:.4f}°")
+        
+        with col4:
+            geom_type = gdf.geometry.iloc[0].geom_type
+            st.metric("Geometría", f"{geom_type}")
+        
+        # Información sobre unificación si aplica
+        if num_poligonos > 1:
+            st.info(f"🔗 {num_poligonos} polígonos unificados para análisis integrado")
         
         # Crear y mostrar mapa
         mapa = st.session_state.sistema_analisis.sistema_mapas.crear_mapa_satelital(
@@ -2478,6 +2624,10 @@ def mostrar_dashboard_ejecutivo():
             st.session_state.resultados
         )
         st.markdown(dashboard_html, unsafe_allow_html=True)
+        
+        # Información sobre unificación de polígonos
+        if st.session_state.resultados.get('poligonos_unificados', False):
+            st.info("📊 **Análisis integrado**: Los resultados representan el análisis unificado de múltiples polígonos")
         
         # Gráficos complementarios
         col1, col2 = st.columns(2)
@@ -2674,6 +2824,10 @@ def mostrar_analisis_carbono():
     
     resultados = st.session_state.resultados_carbono
     
+    # Información sobre unificación de polígonos
+    if resultados.get('metadata_vcs', {}).get('poligonos_unificados', False):
+        st.info("🌳 **Análisis de carbono integrado**: Cálculos basados en la unificación de múltiples polígonos")
+    
     # Dashboard de carbono
     st.markdown("### 📊 Dashboard de Carbono Verra")
     dashboard_carbono_html = st.session_state.sistema_analisis.dashboard.crear_dashboard_carbono(resultados)
@@ -2793,6 +2947,13 @@ def mostrar_reporte_verra():
         centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
         coordenadas = f"{centro[0]:.6f}°, {centro[1]:.6f}°"
         
+        # Información sobre unificación de polígonos
+        poligonos_info = ""
+        if resultados.get('metadata_vcs', {}).get('poligonos_unificados', False):
+            poligonos_originales = resultados.get('metadata_vcs', {}).get('poligonos_originales', 1)
+            poligonos_info = f"\n        • Polígonos originales: {poligonos_originales}"
+            poligonos_info += f"\n        • Análisis: Unificado en 1 área integrada"
+        
         # Crear datos para el reporte
         metadata = resultados.get('metadata_vcs', {})
         factores_aplicados_reporte = {
@@ -2814,6 +2975,19 @@ def mostrar_reporte_verra():
             resumen.get('area_total_ha', 0),
             coordenadas
         )
+        
+        # Añadir información sobre unificación al reporte
+        if poligonos_info:
+            lines = reporte_vcs.split('\n')
+            for i, line in enumerate(lines):
+                if 'INFORMACIÓN DEL PROYECTO:' in line:
+                    # Insertar información de polígonos después del área total
+                    for j in range(i, len(lines)):
+                        if 'Área total del proyecto:' in lines[j]:
+                            lines.insert(j + 1, poligonos_info)
+                            break
+                    break
+            reporte_vcs = '\n'.join(lines)
         
         # Mostrar reporte en formato de texto
         st.text_area("Reporte Verra VCS", reporte_vcs, height=800)
@@ -3121,6 +3295,13 @@ def generar_reporte_carbono(resultados_carbono):
     # Calcular valor económico
     valor_economico = resumen.get('co2_total_ton', 0) * 15
     
+    # Información sobre unificación de polígonos
+    poligonos_info = ""
+    if metadata.get('poligonos_unificados', False):
+        poligonos_originales = metadata.get('poligonos_originales', 1)
+        poligonos_info = f"\n        • Polígonos originales: {poligonos_originales}"
+        poligonos_info += f"\n        • Análisis: Unificado en 1 área integrada"
+    
     reporte = f"""
     ===========================================
     REPORTE DE ANÁLISIS DE CARBONO - VERRA VCS
@@ -3130,6 +3311,9 @@ def generar_reporte_carbono(resultados_carbono):
     Tipo de bosque VCS: {metadata.get('tipo_bosque_vcs', 'N/A')}
     Estado del bosque: {metadata.get('estado_bosque_vcs', 'N/A')}
     Fuente datos climáticos: {resumen.get('fuente_datos_climaticos', 'INTA/WorldClim')}
+    
+    INFORMACIÓN DEL ÁREA:{poligonos_info}
+    --------------------
     
     RESULTADOS PRINCIPALES:
     ----------------------
@@ -3242,7 +3426,7 @@ def mostrar_info_sib(tipo_ecosistema):
             'region': 'Corrientes',
             'conservacion': 'Importancia internacional - Sitio Ramsar, Parque Nacional Iberá',
             'especies_iconicas': ['Ciervo de los pantanos', 'Carpincho', 'Yacaré', 'Aguará guazú'],
-            'amenazas': ['Drenaje', 'Contaminación', 'Especies invasoras'],
+            'amenazas': ['Drainaje', 'Contaminación', 'Especies invasoras'],
             'carbono_promedio': 'Alto en suelo (150-250 ton C/ha)',
             'precipitacion_tipica': '1200-1600 mm/año'
         },
