@@ -32,7 +32,7 @@ warnings.filterwarnings('ignore')
 
 # Librerías geoespaciales
 import folium
-from streamlit_folium import st_folium  # Mantener para posibles usos alternativos
+from streamlit_folium import st_folium, folium_static  # ✅ Corregido import
 from folium.plugins import Fullscreen, MousePosition, HeatMap, MarkerCluster, Draw
 import geopandas as gpd
 from shapely.geometry import Polygon, Point, shape, MultiPolygon
@@ -223,7 +223,7 @@ class ConectorMeteorologicoArgentina:
         return 18 + random.uniform(-5, 5)  # Valor por defecto
 
 # ===============================
-# 🗺️ FUNCIÓN SEGURA PARA MOSTRAR MAPAS
+# 🗺️ FUNCIÓN SEGURA PARA MOSTRAR MAPAS - CORREGIDA
 # ===============================
 def mostrar_mapa_seguro(mapa, width=1000, height=600):
     """
@@ -234,15 +234,15 @@ def mostrar_mapa_seguro(mapa, width=1000, height=600):
         height: Alto del mapa en píxeles
     """
     try:
-        # Método 1: Usar components.v1.html (más estable)
-        mapa_html = mapa._repr_html_()
-        st.components.v1.html(mapa_html, width=width, height=height, scrolling=False)
+        # Usar folium_static que es más estable en Streamlit
+        from streamlit_folium import folium_static
+        folium_static(mapa, width=width, height=height)
     except Exception as e:
         st.warning(f"Error al renderizar el mapa: {str(e)}")
-        # Método alternativo
+        # Método alternativo usando HTML
         try:
-            from streamlit_folium import folium_static
-            folium_static(mapa, width=width, height=height)
+            mapa_html = mapa._repr_html_()
+            st.components.v1.html(mapa_html, width=width, height=height, scrolling=False)
         except:
             st.error("No se pudo mostrar el mapa. Intente recargar la página.")
 
@@ -594,12 +594,22 @@ class AnalisisCarbonoVerra:
     def analizar_carbono_area(self, gdf, tipo_ecosistema, nivel_detalle=8):
         """Analizar carbono en toda el área usando metodología Verra"""
         try:
+            # VERIFICAR QUE EL GDF TENGA DATOS
+            if gdf is None or gdf.empty:
+                st.error("No hay datos geoespaciales para analizar")
+                return None
+            
             # UNIFICAR POLÍGONOS SI HAY MÚLTIPLES
             if len(gdf) > 1:
                 poligono_principal = self._unificar_poligonos(gdf)
                 gdf = gpd.GeoDataFrame({'geometry': [poligono_principal]}, crs=gdf.crs)
             else:
                 poligono_principal = gdf.geometry.iloc[0]
+            
+            # Verificar que el polígono sea válido
+            if poligono_principal.is_empty:
+                st.error("El polígono está vacío o es inválido")
+                return None
             
             bounds = poligono_principal.bounds
             
@@ -796,8 +806,8 @@ class AnalisisCarbonoVerra:
         
         # Promedios por hectárea
         carbono_promedio_ha = np.mean([a['carbono_por_ha'] for a in areas_carbono])
-        co2_promedio_ha = np.mean([a['co2_por_ha'] for a in areas_carbono])
-        precipitacion_promedio = np.mean([a['precipitacion_anual_mm'] for a in areas_carbono])
+        co2_promedio_ha = np.mean([a['co2_por_ha'] for a in areas_carbono)
+        precipitacion_promedio = np.mean([a['precipitacion_anual_mm'] for a in areas_carbono)
         
         # Distribución por estratos VCS
         estratos = {}
@@ -1196,12 +1206,22 @@ class SistemaAnalisisAmbiental:
     def analizar_area_completa(self, gdf, tipo_ecosistema, satelite_seleccionado, n_divisiones=8):
         """Realizar análisis ambiental completo con datos satelitales"""
         try:
+            # VERIFICAR QUE EL GDF TENGA DATOS
+            if gdf is None or gdf.empty:
+                st.error("No hay datos geoespaciales para analizar")
+                return None
+            
             # UNIFICAR POLÍGONOS SI HAY MÚLTIPLES
             if len(gdf) > 1:
                 poligono_principal = self._unificar_poligonos(gdf)
                 gdf = gpd.GeoDataFrame({'geometry': [poligono_principal]}, crs=gdf.crs)
             else:
                 poligono_principal = gdf.geometry.iloc[0]
+            
+            # Verificar que el polígono sea válido
+            if poligono_principal.is_empty:
+                st.error("El polígono está vacío o es inválido")
+                return None
             
             bounds = poligono_principal.bounds
             
@@ -1418,7 +1438,7 @@ class SistemaAnalisisAmbiental:
         resultados['resumen'] = resumen
 
 # ===============================
-# 🗺️ SISTEMA DE MAPAS AVANZADO CON IMÁGENES SATELITALES
+# 🗺️ SISTEMA DE MAPAS AVANZADO CON IMÁGENES SATELITALES - CORREGIDO
 # ===============================
 class SistemaMapasAvanzado:
     """Sistema de mapas con integración satelital y zoom automático"""
@@ -1449,6 +1469,12 @@ class SistemaMapasAvanzado:
                 'attr': 'OpenTopoMap',
                 'nombre': '⛰️ Topográfico',
                 'max_zoom': 17
+            },
+            'OpenStreetMap': {
+                'tiles': 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                'attr': '© OpenStreetMap contributors',
+                'nombre': '🗺️ OpenStreetMap',
+                'max_zoom': 19
             }
         }
     
@@ -1463,43 +1489,34 @@ class SistemaMapasAvanzado:
             centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
             
             # Calcular área en km²
-            poligono = gdf.geometry.iloc[0]
-            if hasattr(poligono, 'area'):
-                # Para MultiPolygon, calcular área total
-                if poligono.geom_type == 'MultiPolygon':
-                    area_total = sum(poly.area for poly in poligono.geoms)
-                else:
-                    area_total = poligono.area
-                
-                # Conversión aproximada de grados a km²
-                lat_centro = centro[0]
-                cos_lat = math.cos(math.radians(lat_centro))
-                area_grados = area_total
-                area_km2 = area_grados * 111 * 111 * cos_lat
-                
-                # Algoritmo de zoom basado en área (optimizado)
-                if area_km2 < 0.1:      # Muy pequeño (< 0.1 km²)
-                    zoom = 16
-                elif area_km2 < 1:      # Pequeño (0.1-1 km²)
-                    zoom = 15
-                elif area_km2 < 10:     # Pequeño-mediano (1-10 km²)
-                    zoom = 14
-                elif area_km2 < 50:     # Mediano (10-50 km²)
-                    zoom = 13
-                elif area_km2 < 100:    # Mediano-grande (50-100 km²)
-                    zoom = 12
-                elif area_km2 < 500:    # Grande (100-500 km²)
-                    zoom = 11
-                elif area_km2 < 1000:   # Muy grande (500-1000 km²)
-                    zoom = 10
-                elif area_km2 < 5000:   # Enorme (1000-5000 km²)
-                    zoom = 9
-                else:                   # Gigantesco (>5000 km²)
-                    zoom = 8
-            else:
+            area_total = gdf.geometry.unary_union.area
+            
+            # Conversión aproximada de grados a km²
+            lat_centro = centro[0]
+            cos_lat = math.cos(math.radians(lat_centro))
+            area_km2 = area_total * 111 * 111 * cos_lat
+            
+            # Algoritmo de zoom basado en área (optimizado)
+            if area_km2 < 0.1:      # Muy pequeño (< 0.1 km²)
+                zoom = 16
+            elif area_km2 < 1:      # Pequeño (0.1-1 km²)
+                zoom = 15
+            elif area_km2 < 10:     # Pequeño-mediano (1-10 km²)
+                zoom = 14
+            elif area_km2 < 50:     # Mediano (10-50 km²)
+                zoom = 13
+            elif area_km2 < 100:    # Mediano-grande (50-100 km²)
+                zoom = 12
+            elif area_km2 < 500:    # Grande (100-500 km²)
+                zoom = 11
+            elif area_km2 < 1000:   # Muy grande (500-1000 km²)
                 zoom = 10
+            elif area_km2 < 5000:   # Enorme (1000-5000 km²)
+                zoom = 9
+            else:                   # Gigantesco (>5000 km²)
+                zoom = 8
                 
-            return centro, min(zoom, 16)  # Limitar zoom máximo
+            return centro, min(zoom, 18)  # Limitar zoom máximo
         except Exception:
             return [-34.0, -64.0], 6  # Centro de Argentina por defecto
     
@@ -1507,15 +1524,13 @@ class SistemaMapasAvanzado:
         """Crear mapa con capa satelital y polígono"""
         centro, zoom = self.calcular_zoom_automatico(gdf)
         
-        # Crear mapa base con ID único para evitar conflictos DOM
-        mapa_id = f"map_{int(datetime.now().timestamp() * 1000)}"
+        # Crear mapa base
         m = folium.Map(
             location=centro,
             zoom_start=zoom,
             tiles=None,
             control_scale=True,
-            zoom_control=True,
-            prefer_canvas=True
+            zoom_control=True
         )
         
         # Agregar capa base seleccionada
@@ -1543,23 +1558,37 @@ class SistemaMapasAvanzado:
                 control=True
             ).add_to(m)
         
+        # Agregar OpenStreetMap como capa base adicional
+        folium.TileLayer(
+            tiles=self.capas_base['OpenStreetMap']['tiles'],
+            attr=self.capas_base['OpenStreetMap']['attr'],
+            name=self.capas_base['OpenStreetMap']['nombre'],
+            overlay=False,
+            control=True
+        ).add_to(m)
+        
         # Agregar polígono si existe
         if gdf is not None and not gdf.empty:
             try:
-                poligono = gdf.geometry.iloc[0]
+                # Usar unary_union para manejar múltiples polígonos
+                poligono_unificado = gdf.geometry.unary_union
                 
                 # Calcular área total
                 bounds = gdf.total_bounds
                 lat_centro = centro[0]
                 cos_lat = math.cos(math.radians(lat_centro))
                 
-                # Calcular área correctamente para Polygon o MultiPolygon
-                if poligono.geom_type == 'MultiPolygon':
-                    area_total = sum(poly.area for poly in poligono.geoms)
-                    num_poligonos = len(poligono.geoms)
+                # Calcular área correctamente
+                area_grados = poligono_unificado.area
+                area_km2 = area_grados * 111 * 111 * cos_lat
+                area_ha = area_km2 * 100
+                
+                # Determinar si es MultiPolygon
+                if poligono_unificado.geom_type == 'MultiPolygon':
+                    num_poligonos = len(poligono_unificado.geoms)
                     
                     # Agregar cada polígono individualmente
-                    for i, poly in enumerate(poligono.geoms):
+                    for i, poly in enumerate(poligono_unificado.geoms):
                         # Calcular área de este polígono específico
                         bounds_poly = poly.bounds
                         lat_centro_poly = (bounds_poly[1] + bounds_poly[3]) / 2
@@ -1567,22 +1596,36 @@ class SistemaMapasAvanzado:
                         area_km2_poly = area_grados_poly * 111 * 111 * math.cos(math.radians(lat_centro_poly))
                         area_ha_poly = area_km2_poly * 100
                         
+                        # Crear GeoJSON para el polígono
+                        geojson_data = {
+                            "type": "Feature",
+                            "geometry": {
+                                "type": "Polygon",
+                                "coordinates": [list(poly.exterior.coords)]
+                            } if poly.geom_type == 'Polygon' else {
+                                "type": "MultiPolygon",
+                                "coordinates": [[list(part.exterior.coords)] for part in poly.geoms]
+                            }
+                        }
+                        
                         folium.GeoJson(
-                            poly,
+                            geojson_data,
                             style_function=lambda x, idx=i: {
                                 'fillColor': '#3b82f6',
                                 'color': '#1d4ed8',
                                 'weight': 2,
                                 'fillOpacity': 0.15,
-                                'dashArray': '5, 5',
                                 'opacity': 0.6
                             },
                             name=f'Polígono {i+1}',
-                            tooltip=f'Polígono {i+1}: {area_ha_poly:,.1f} ha'
+                            tooltip=folium.Tooltip(
+                                f'<div style="font-family: Arial; font-size: 12px;">'
+                                f'<b>Polígono {i+1}</b><br>'
+                                f'Área: {area_ha_poly:,.1f} ha<br>'
+                                f'</div>',
+                                sticky=True
+                            )
                         ).add_to(m)
-                    
-                    area_km2 = area_total * 111 * 111 * cos_lat
-                    area_ha = area_km2 * 100
                     
                     tooltip_html = f"""
                     <div style="font-family: Arial; font-size: 12px; padding: 5px;">
@@ -1597,9 +1640,13 @@ class SistemaMapasAvanzado:
                     """
                 else:
                     # Polígono simple
-                    area_grados = gdf.geometry.area.iloc[0]
-                    area_km2 = area_grados * 111 * 111 * cos_lat
-                    area_ha = area_km2 * 100
+                    geojson_data = {
+                        "type": "Feature",
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [list(poligono_unificado.exterior.coords)]
+                        }
+                    }
                     
                     tooltip_html = f"""
                     <div style="font-family: Arial; font-size: 12px; padding: 5px;">
@@ -1613,13 +1660,12 @@ class SistemaMapasAvanzado:
                     """
                     
                     folium.GeoJson(
-                        poligono,
+                        geojson_data,
                         style_function=lambda x: {
                             'fillColor': '#3b82f6',
                             'color': '#1d4ed8',
                             'weight': 3,
                             'fillOpacity': 0.15,
-                            'dashArray': '5, 5',
                             'opacity': 0.8
                         },
                         name='Área de Estudio',
@@ -1638,10 +1684,11 @@ class SistemaMapasAvanzado:
                 
             except Exception as e:
                 st.warning(f"Error al visualizar polígono: {str(e)}")
+                # Si hay error, mostrar solo el mapa sin polígono
         
         # Agregar capas adicionales
         for nombre, config in self.capas_base.items():
-            if nombre != capa_base:
+            if nombre != capa_base and nombre != 'OpenStreetMap':
                 folium.TileLayer(
                     tiles=config['tiles'] if '{date}' not in config['tiles'] else config['tiles'].replace('{date}', datetime.now().strftime('%Y-%m')),
                     attr=config['attr'],
@@ -1672,12 +1719,19 @@ class SistemaMapasAvanzado:
         
         # Agregar polígono base semi-transparente
         if gdf is not None and not gdf.empty:
-            poligono = gdf.geometry.iloc[0]
+            poligono_unificado = gdf.geometry.unary_union
             
-            if poligono.geom_type == 'MultiPolygon':
-                for poly in poligono.geoms:
+            if poligono_unificado.geom_type == 'MultiPolygon':
+                for poly in poligono_unificado.geoms:
+                    geojson_data = {
+                        "type": "Feature",
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [list(poly.exterior.coords)]
+                        }
+                    }
                     folium.GeoJson(
-                        poly,
+                        geojson_data,
                         style_function=lambda x: {
                             'fillColor': '#ffffff',
                             'color': '#000000',
@@ -1687,8 +1741,15 @@ class SistemaMapasAvanzado:
                         }
                     ).add_to(m)
             else:
+                geojson_data = {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [list(poligono_unificado.exterior.coords)]
+                    }
+                }
                 folium.GeoJson(
-                    poligono,
+                    geojson_data,
                     style_function=lambda x: {
                         'fillColor': '#ffffff',
                         'color': '#000000',
@@ -1725,17 +1786,27 @@ class SistemaMapasAvanzado:
                     color_idx = min(int(valor * (len(colores) - 1)), len(colores) - 1)
                     color = colores[color_idx]
                     
-                    folium.GeoJson(
-                        geometry,
-                        style_function=lambda x, color=color: {
-                            'fillColor': color,
-                            'color': color,
-                            'weight': 1,
-                            'fillOpacity': 0.4,
-                            'opacity': 0.6
-                        },
-                        tooltip=f"Valor: {valor:.3f}"
-                    ).add_to(m)
+                    # Convertir geometría a GeoJSON
+                    if not geometry.is_empty:
+                        geojson_data = {
+                            "type": "Feature",
+                            "geometry": {
+                                "type": "Polygon",
+                                "coordinates": [list(geometry.exterior.coords)]
+                            }
+                        }
+                        
+                        folium.GeoJson(
+                            geojson_data,
+                            style_function=lambda x, color=color: {
+                                'fillColor': color,
+                                'color': color,
+                                'weight': 1,
+                                'fillOpacity': 0.4,
+                                'opacity': 0.6
+                            },
+                            tooltip=f"Valor: {valor:.3f}"
+                        ).add_to(m)
             except Exception:
                 continue
         
@@ -1822,17 +1893,27 @@ class SistemaMapasAvanzado:
                     </div>
                     """
                     
-                    folium.GeoJson(
-                        geometry,
-                        style_function=lambda x, color=color: {
-                            'fillColor': color,
-                            'color': color,
-                            'weight': 1,
-                            'fillOpacity': 0.6,
-                            'opacity': 0.8
-                        },
-                        tooltip=folium.Tooltip(tooltip, sticky=True)
-                    ).add_to(m)
+                    # Convertir geometría a GeoJSON
+                    if not geometry.is_empty:
+                        geojson_data = {
+                            "type": "Feature",
+                            "geometry": {
+                                "type": "Polygon",
+                                "coordinates": [list(geometry.exterior.coords)]
+                            }
+                        }
+                        
+                        folium.GeoJson(
+                            geojson_data,
+                            style_function=lambda x, color=color: {
+                                'fillColor': color,
+                                'color': color,
+                                'weight': 1,
+                                'fillOpacity': 0.6,
+                                'opacity': 0.8
+                            },
+                            tooltip=folium.Tooltip(tooltip, sticky=True)
+                        ).add_to(m)
             except Exception as e:
                 continue
         
@@ -2286,7 +2367,7 @@ class DashboardResumen:
         return fig
 
 # ===============================
-# 🎨 INTERFAZ PRINCIPAL DE LA APLICACIÓN
+# 🎨 INTERFAZ PRINCIPAL DE LA APLICACIÓN - CORREGIDA
 # ===============================
 def main():
     # Título principal
@@ -2342,6 +2423,8 @@ def main():
         if uploaded_file is not None:
             with st.spinner("Procesando archivo..."):
                 try:
+                    gdf = None
+                    
                     if uploaded_file.name.endswith('.kml'):
                         gdf = gpd.read_file(uploaded_file, driver='KML')
                     elif uploaded_file.name.endswith('.geojson'):
@@ -2355,6 +2438,12 @@ def main():
                                 gdf = gpd.read_file(os.path.join(tmpdir, shp_files[0]))
                     
                     if gdf is not None and not gdf.empty:
+                        # Asegurar que el CRS sea WGS84 (EPSG:4326)
+                        if gdf.crs is None:
+                            gdf.set_crs('EPSG:4326', inplace=True)
+                        elif gdf.crs.to_string() != 'EPSG:4326':
+                            gdf = gdf.to_crs('EPSG:4326')
+                        
                         # INFORMACIÓN SOBRE LOS POLÍGONOS CARGADOS
                         num_poligonos = len(gdf)
                         st.info(f"📊 Se cargaron {num_poligonos} polígono(s)")
@@ -2371,8 +2460,24 @@ def main():
                         st.session_state.poligono_data = gdf
                         st.success("✅ Polígono(s) cargado(s) exitosamente")
                         
+                        # Mostrar vista previa del polígono
+                        with st.expander("👁️ Vista previa del polígono"):
+                            st.write(f"**Tipo de geometría:** {gdf.geometry.iloc[0].geom_type}")
+                            st.write(f"**Número de polígonos:** {num_poligonos}")
+                            
+                            # Calcular área aproximada
+                            bounds = gdf.total_bounds
+                            centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
+                            area_grados = gdf.geometry.unary_union.area
+                            lat_centro = centro[0]
+                            cos_lat = math.cos(math.radians(lat_centro))
+                            area_km2 = area_grados * 111 * 111 * cos_lat
+                            
+                            st.write(f"**Área aproximada:** {area_km2:.2f} km²")
+                            st.write(f"**Centroide:** {centro[0]:.4f}°, {centro[1]:.4f}°")
+                        
                 except Exception as e:
-                    st.error(f"Error: {str(e)}")
+                    st.error(f"Error al cargar el archivo: {str(e)}")
                     import traceback
                     st.error(traceback.format_exc())
         
@@ -2390,7 +2495,7 @@ def main():
             with col2:
                 capa_base = st.selectbox(
                     "Capa base del mapa",
-                    ["ESRI World Imagery", "PlanetScope", "Sentinel-2", "OpenTopoMap"]
+                    ["ESRI World Imagery", "PlanetScope", "Sentinel-2", "OpenTopoMap", "OpenStreetMap"]
                 )
             
             st.subheader("🌿 Parámetros Ambientales (SIB Argentina)")
@@ -2507,31 +2612,36 @@ def mostrar_mapa_satelital(capa_base="ESRI World Imagery"):
     st.markdown("## 🗺️ Mapa Satelital del Área de Estudio")
     
     if st.session_state.poligono_data is not None:
-        # Información del área
         gdf = st.session_state.poligono_data
+        
+        # Información del área
         bounds = gdf.total_bounds
         
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            if gdf.geometry.iloc[0].geom_type == 'MultiPolygon':
-                area_total = sum(poly.area for poly in gdf.geometry.iloc[0].geoms)
-            else:
-                area_total = gdf.geometry.area.iloc[0]
-            
-            lat_centro = (bounds[1] + bounds[3]) / 2
+            # Calcular área total
+            area_grados = gdf.geometry.unary_union.area
+            centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
+            lat_centro = centro[0]
             cos_lat = math.cos(math.radians(lat_centro))
-            area_km2 = area_total * 111 * 111 * cos_lat
+            area_km2 = area_grados * 111 * 111 * cos_lat
             st.metric("Área total", f"{area_km2:.2f} km²")
         
         with col2:
-            if gdf.geometry.iloc[0].geom_type == 'MultiPolygon':
-                num_poligonos = len(gdf.geometry.iloc[0].geoms)
-            else:
-                num_poligonos = 1
+            # Contar polígonos individuales
+            def contar_poligonos_individuales(gdf):
+                count = 0
+                for geom in gdf.geometry:
+                    if geom.geom_type == 'MultiPolygon':
+                        count += len(geom.geoms)
+                    else:
+                        count += 1
+                return count
+            
+            num_poligonos = contar_poligonos_individuales(gdf)
             st.metric("Polígonos", f"{num_poligonos}")
         
         with col3:
-            centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
             st.metric("Centroide", f"{centro[0]:.4f}°, {centro[1]:.4f}°")
         
         with col4:
@@ -2539,8 +2649,8 @@ def mostrar_mapa_satelital(capa_base="ESRI World Imagery"):
             st.metric("Geometría", f"{geom_type}")
         
         # Información sobre unificación si aplica
-        if num_poligonos > 1:
-            st.info(f"🔗 {num_poligonos} polígonos unificados para análisis integrado")
+        if len(gdf) > 1:
+            st.info(f"🔗 {len(gdf)} polígonos unificados para análisis integrado")
         
         # Crear y mostrar mapa
         mapa = st.session_state.sistema_analisis.sistema_mapas.crear_mapa_satelital(
@@ -3292,7 +3402,7 @@ def generar_reporte_carbono(resultados_carbono):
     resumen = resultados_carbono.get('resumen_carbono', {})
     metadata = resultados_carbono.get('metadata_vcs', {})
     
-    # Calcular valor económico
+    # Calcular valor económico aproximado (US$15/ton CO₂)
     valor_economico = resumen.get('co2_total_ton', 0) * 15
     
     # Información sobre unificación de polígonos
