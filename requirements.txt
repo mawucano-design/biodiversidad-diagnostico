@@ -13,3 +13,4 @@ branca==0.6.0
 requests==2.31.0
 python-docx==0.8.11
 typing-extensions==4.8.0
+kml2geojson==4.0.0
