@@ -1907,7 +1907,7 @@ def main():
                            tipo_ecosistema=tipo_ecosistema,
                            satelite=satelite,  # 👈 Nombre correcto según la firma del método
                            n_divisiones=nivel_detalle
-)
+                            )
                             if resultados:
                                 st.session_state.resultados = resultados
                                 st.session_state.analisis_carbono_realizado = False
