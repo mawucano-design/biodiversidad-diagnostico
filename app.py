@@ -701,7 +701,7 @@ class AnalisisCarbonoVerra:
 # 🛰️ ENUMERACIONES Y CLASES DE DATOS SATELITALES
 # ===============================
 class Satelite(Enum):
-    PLANETSCOPE = "PlanetScope"
+    PLANETSCOPE = "PlanetScope"  # ✅ CORREGIDO: Añadido
     SENTINEL2 = "Sentinel-2"
     LANDSAT8 = "Landsat-8"
     MODIS = "MODIS"
@@ -818,21 +818,15 @@ class SimuladorSatelital:
             if satelite == Satelite.SENTINEL2:
                 blue = reflectancias.get('B2', 0.05)
                 indices['EVI'] = 2.5 * ((nir - red) / (nir + 6 * red - 7.5 * blue + 1))
-            else:
-                indices['EVI'] = indices['NDVI'] * 1.2
-
-            if satelite == Satelite.SENTINEL2:
                 green = reflectancias.get('B3', 0.08)
                 nir2 = reflectancias.get('B8A', nir)
                 indices['NDWI'] = (green - nir2) / (green + nir2)
+                indices['GNDVI'] = (nir - green) / (nir + green)
             else:
+                indices['EVI'] = indices['NDVI'] * 1.2
                 indices['NDWI'] = -indices['NDVI'] * 0.5
 
             indices['MSAVI'] = (2 * nir + 1 - np.sqrt((2 * nir + 1)**2 - 8 * (nir - red))) / 2
-
-            if satelite == Satelite.SENTINEL2:
-                green = reflectancias.get('B3', 0.08)
-                indices['GNDVI'] = (nir - green) / (nir + green)
 
             ndvi_val = indices['NDVI']
             if ndvi_val > 0.7:
@@ -853,6 +847,7 @@ class SimuladorSatelital:
                 'EVI': 0.3,
                 'NDWI': 0.1,
                 'MSAVI': 0.4,
+                'GNDVI': 0.3,
                 'Salud_Vegetacion': 'Moderada'
             }
         return indices
@@ -1543,7 +1538,14 @@ class SistemaAnalisisAmbiental:
 
             bounds = poligono_principal.bounds
 
-            satelite_enum = Satelite.PLANETSCOPE if satelite == "PlanetScope" else Satelite.SENTINEL2
+            # ✅ CORRECCIÓN: Convertir string a Enum correctamente
+            if satelite == "PlanetScope":
+                satelite_enum = Satelite.PLANETSCOPE
+            elif satelite == "Sentinel-2":
+                satelite_enum = Satelite.SENTINEL2
+            else:
+                satelite_enum = Satelite.SENTINEL2  # default
+
             imagen = self.simulador.generar_imagen_satelital(satelite_enum)
 
             resultados = {
