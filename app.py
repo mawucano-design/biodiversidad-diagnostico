@@ -187,33 +187,39 @@ class AnalisisBiodiversidad:
         if shannon > 3.5:
             categoria = "Muy Alta"
             color = "#10b981"
+            color_hex = "#10b981"
         elif shannon > 2.5:
             categoria = "Alta"
             color = "#3b82f6"
+            color_hex = "#3b82f6"
         elif shannon > 1.5:
             categoria = "Moderada"
             color = "#f59e0b"
+            color_hex = "#f59e0b"
         elif shannon > 0.5:
             categoria = "Baja"
             color = "#ef4444"
+            color_hex = "#ef4444"
         else:
             categoria = "Muy Baja"
             color = "#991b1b"
+            color_hex = "#991b1b"
         
         return {
             'indice_shannon': round(shannon, 3),
             'categoria': categoria,
             'color': color,
+            'color_hex': color_hex,
             'riqueza_especies': riqueza_especies,
             'abundancia_total': abundancia_acumulada,
             'especies_muestra': especies[:10]  # Solo muestra las primeras 10
         }
 
 # ===============================
-# 🗺️ SISTEMA DE MAPAS SIMPLIFICADO
+# 🗺️ SISTEMA DE MAPAS SIMPLIFICADO CON HEATMAPS
 # ===============================
 class SistemaMapas:
-    """Sistema de mapas simplificado"""
+    """Sistema de mapas simplificado con heatmaps"""
     def __init__(self):
         self.capa_base = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
     
@@ -271,23 +277,266 @@ class SistemaMapas:
             heat_data,
             name='Carbono (ton C/ha)',
             min_opacity=0.3,
-            radius=20,
-            blur=15,
-            gradient={0.2: 'blue', 0.4: 'lime', 0.6: 'yellow', 0.8: 'orange', 1.0: 'red'}
+            radius=25,
+            blur=20,
+            gradient={0.0: 'blue', 0.2: 'cyan', 0.4: 'lime', 0.6: 'yellow', 0.8: 'orange', 1.0: 'red'}
         ).add_to(m)
         
         # Agregar marcadores para puntos importantes
-        for p in puntos_carbono[:10]:  # Limitar a 10 marcadores
+        for p in puntos_carbono[:15]:  # Limitar a 15 marcadores
             folium.CircleMarker(
                 location=[p['lat'], p['lon']],
-                radius=5,
+                radius=6,
                 color='#065f46',
                 fill=True,
                 fill_color='#10b981',
-                popup=f"Carbono: {p['carbono_ton_ha']} ton C/ha<br>NDVI: {p['ndvi']}"
+                fill_opacity=0.7,
+                popup=f"""
+                <div style="font-family: Arial; font-size: 12px;">
+                <b>Carbono según Verra VCS</b><br>
+                <hr style="margin: 3px 0;">
+                <b>Carbono:</b> {p['carbono_ton_ha']:.1f} ton C/ha<br>
+                <b>NDVI:</b> {p['ndvi']:.3f}<br>
+                <b>Precipitación:</b> {p['precipitacion']:.0f} mm/año<br>
+                <b>Coordenadas:</b><br>
+                {p['lat']:.4f}°, {p['lon']:.4f}°
+                </div>
+                """
             ).add_to(m)
         
+        # Agregar leyenda
+        self._agregar_leyenda_carbono(m)
+        
         return m
+    
+    def crear_mapa_biodiversidad(self, puntos_biodiversidad):
+        """Crea mapa de calor para biodiversidad (índice de Shannon)"""
+        if not puntos_biodiversidad:
+            return None
+        
+        # Calcular centro del primer punto
+        centro = [puntos_biodiversidad[0]['lat'], puntos_biodiversidad[0]['lon']]
+        
+        m = folium.Map(
+            location=centro,
+            zoom_start=12,
+            tiles=self.capa_base,
+            attr='Esri, Maxar, Earthstar Geographics'
+        )
+        
+        # Preparar datos para heatmap
+        heat_data = [[p['lat'], p['lon'], p['shannon']] for p in puntos_biodiversidad]
+        
+        # Agregar heatmap con gradiente de colores para biodiversidad
+        HeatMap(
+            heat_data,
+            name='Índice de Shannon',
+            min_opacity=0.4,
+            radius=25,
+            blur=20,
+            gradient={
+                0.0: '#991b1b',    # Muy baja - Rojo oscuro
+                0.2: '#ef4444',    # Baja - Rojo
+                0.4: '#f59e0b',    # Moderada - Naranja
+                0.6: '#3b82f6',    # Alta - Azul
+                0.8: '#8b5cf6',    # Muy alta - Púrpura
+                1.0: '#10b981'     # Excelente - Verde
+            }
+        ).add_to(m)
+        
+        # Agregar marcadores para puntos importantes
+        for p in puntos_biodiversidad[:15]:  # Limitar a 15 marcadores
+            # Determinar color del marcador según categoría
+            color_categoria = p.get('color_hex', '#808080')
+            
+            folium.CircleMarker(
+                location=[p['lat'], p['lon']],
+                radius=6,
+                color=color_categoria,
+                fill=True,
+                fill_color=color_categoria,
+                fill_opacity=0.7,
+                popup=f"""
+                <div style="font-family: Arial; font-size: 12px;">
+                <b>Biodiversidad - Índice de Shannon</b><br>
+                <hr style="margin: 3px 0;">
+                <b>Índice de Shannon:</b> {p['shannon']:.3f}<br>
+                <b>Categoría:</b> {p['categoria']}<br>
+                <b>Riqueza de especies:</b> {p['riqueza']}<br>
+                <b>Abundancia total:</b> {p['abundancia']:,}<br>
+                <b>Coordenadas:</b><br>
+                {p['lat']:.4f}°, {p['lon']:.4f}°
+                </div>
+                """
+            ).add_to(m)
+        
+        # Agregar leyenda
+        self._agregar_leyenda_biodiversidad(m)
+        
+        return m
+    
+    def crear_mapa_combinado(self, puntos_carbono, puntos_biodiversidad):
+        """Crea mapa con capas intercambiables para carbono y biodiversidad"""
+        if not puntos_carbono or not puntos_biodiversidad:
+            return None
+        
+        centro = [puntos_carbono[0]['lat'], puntos_carbono[0]['lon']]
+        
+        m = folium.Map(
+            location=centro,
+            zoom_start=12,
+            tiles=self.capa_base,
+            attr='Esri, Maxar, Earthstar Geographics'
+        )
+        
+        # Preparar datos para heatmaps
+        heat_data_carbono = [[p['lat'], p['lon'], p['carbono_ton_ha']] for p in puntos_carbono]
+        heat_data_biodiv = [[p['lat'], p['lon'], p['shannon']] for p in puntos_biodiversidad]
+        
+        # Heatmap de carbono
+        heatmap_carbono = HeatMap(
+            heat_data_carbono,
+            name='Carbono (ton C/ha)',
+            min_opacity=0.3,
+            radius=20,
+            blur=15,
+            gradient={0.0: 'blue', 0.4: 'lime', 0.6: 'yellow', 0.8: 'orange', 1.0: 'red'},
+            show=False
+        )
+        heatmap_carbono.add_to(m)
+        
+        # Heatmap de biodiversidad
+        heatmap_biodiv = HeatMap(
+            heat_data_biodiv,
+            name='Índice de Shannon',
+            min_opacity=0.3,
+            radius=20,
+            blur=15,
+            gradient={
+                0.0: '#991b1b',
+                0.2: '#ef4444',
+                0.4: '#f59e0b',
+                0.6: '#3b82f6',
+                0.8: '#8b5cf6',
+                1.0: '#10b981'
+            },
+            show=True
+        )
+        heatmap_biodiv.add_to(m)
+        
+        # Control de capas
+        folium.LayerControl().add_to(m)
+        
+        # Agregar leyenda dual
+        self._agregar_leyenda_combinada(m)
+        
+        return m
+    
+    def _agregar_leyenda_carbono(self, mapa):
+        """Agrega leyenda para el mapa de carbono"""
+        leyenda_html = '''
+        <div style="position: fixed; 
+            bottom: 50px; 
+            left: 50px; 
+            width: 250px;
+            background-color: white;
+            border: 2px solid #065f46;
+            z-index: 9999;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
+            font-family: Arial;">
+            <h4 style="margin-top: 0; color: #065f46; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
+            🌳 Carbono (ton C/ha)
+            </h4>
+            <div style="margin: 10px 0;">
+                <div style="height: 20px; background: linear-gradient(90deg, blue, cyan, lime, yellow, orange, red); border: 1px solid #666;"></div>
+                <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px;">
+                    <span>Bajo</span>
+                    <span>Medio</span>
+                    <span>Alto</span>
+                </div>
+            </div>
+            <div style="font-size: 12px; color: #666;">
+                <div><span style="color: #065f46; font-weight: bold;">■</span> Puntos verdes: Muestreo</div>
+                <div><span style="color: #3b82f6; font-weight: bold;">■</span> Heatmap: Intensidad de carbono</div>
+            </div>
+        </div>
+        '''
+        mapa.get_root().html.add_child(folium.Element(leyenda_html))
+    
+    def _agregar_leyenda_biodiversidad(self, mapa):
+        """Agrega leyenda para el mapa de biodiversidad"""
+        leyenda_html = '''
+        <div style="position: fixed; 
+            bottom: 50px; 
+            left: 50px; 
+            width: 280px;
+            background-color: white;
+            border: 2px solid #8b5cf6;
+            z-index: 9999;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
+            font-family: Arial;">
+            <h4 style="margin-top: 0; color: #8b5cf6; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
+            🦋 Índice de Shannon
+            </h4>
+            <div style="margin: 10px 0;">
+                <div style="height: 20px; background: linear-gradient(90deg, #991b1b, #ef4444, #f59e0b, #3b82f6, #8b5cf6, #10b981); border: 1px solid #666;"></div>
+                <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px;">
+                    <span>0.0</span>
+                    <span>2.0</span>
+                    <span>4.0</span>
+                </div>
+            </div>
+            <div style="font-size: 12px; color: #666;">
+                <div><span style="color: #991b1b; font-weight: bold;">■</span> Muy Baja: < 0.5</div>
+                <div><span style="color: #ef4444; font-weight: bold;">■</span> Baja: 0.5 - 1.5</div>
+                <div><span style="color: #f59e0b; font-weight: bold;">■</span> Moderada: 1.5 - 2.5</div>
+                <div><span style="color: #3b82f6; font-weight: bold;">■</span> Alta: 2.5 - 3.5</div>
+                <div><span style="color: #10b981; font-weight: bold;">■</span> Muy Alta: > 3.5</div>
+            </div>
+        </div>
+        '''
+        mapa.get_root().html.add_child(folium.Element(leyenda_html))
+    
+    def _agregar_leyenda_combinada(self, mapa):
+        """Agrega leyenda combinada"""
+        leyenda_html = '''
+        <div style="position: fixed; 
+            bottom: 50px; 
+            left: 50px; 
+            width: 300px;
+            background-color: white;
+            border: 2px solid #3b82f6;
+            z-index: 9999;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
+            font-family: Arial;">
+            <h4 style="margin-top: 0; color: #3b82f6; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
+            🗺️ Capas del Mapa
+            </h4>
+            <div style="margin: 10px 0;">
+                <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                    <div style="width: 20px; height: 20px; background: linear-gradient(90deg, blue, lime, yellow, orange, red); margin-right: 10px; border: 1px solid #666;"></div>
+                    <div>Carbono (ton C/ha)</div>
+                </div>
+                <div style="display: flex; align-items: center;">
+                    <div style="width: 20px; height: 20px; background: linear-gradient(90deg, #991b1b, #ef4444, #f59e0b, #3b82f6, #8b5cf6, #10b981); margin-right: 10px; border: 1px solid #666;"></div>
+                    <div>Índice de Shannon</div>
+                </div>
+            </div>
+            <div style="font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 10px;">
+                <div><strong>Instrucciones:</strong></div>
+                <div>• Use el control en la esquina superior derecha para cambiar entre capas</div>
+                <div>• Haga clic en los puntos para ver detalles</div>
+                <div>• Zoom con la rueda del mouse</div>
+            </div>
+        </div>
+        '''
+        mapa.get_root().html.add_child(folium.Element(leyenda_html))
 
 # ===============================
 # 📊 VISUALIZACIONES Y GRÁFICOS
@@ -302,7 +551,9 @@ class Visualizaciones:
             go.Bar(
                 x=list(desglose.keys()),
                 y=list(desglose.values()),
-                marker_color=['#238b45', '#41ab5d', '#74c476', '#a1d99b', '#d9f0a3']
+                marker_color=['#238b45', '#41ab5d', '#74c476', '#a1d99b', '#d9f0a3'],
+                text=[f"{v:.1f}" for v in desglose.values()],
+                textposition='auto'
             )
         ])
         
@@ -318,21 +569,26 @@ class Visualizaciones:
     @staticmethod
     def crear_grafico_radar_biodiversidad(shannon_data: Dict):
         """Crea gráfico radar para biodiversidad"""
-        categorias = ['Shannon', 'Riqueza', 'Abundancia', 'NDVI', 'Conservación']
+        categorias = ['Shannon', 'Riqueza', 'Abundancia', 'Equitatividad', 'Conservación']
         
         # Normalizar valores para el radar
         shannon_norm = min(shannon_data['indice_shannon'] / 4.0 * 100, 100)
         riqueza_norm = min(shannon_data['riqueza_especies'] / 200 * 100, 100)
         abundancia_norm = min(shannon_data['abundancia_total'] / 2000 * 100, 100)
         
-        valores = [shannon_norm, riqueza_norm, abundancia_norm, 75, 80]
+        # Valores simulados para equitatividad y conservación
+        equitatividad = random.uniform(70, 90)
+        conservacion = random.uniform(60, 95)
+        
+        valores = [shannon_norm, riqueza_norm, abundancia_norm, equitatividad, conservacion]
         
         fig = go.Figure(data=go.Scatterpolar(
             r=valores,
             theta=categorias,
             fill='toself',
             fillcolor='rgba(139, 92, 246, 0.3)',
-            line_color='#8b5cf6'
+            line_color='#8b5cf6',
+            name='Biodiversidad'
         ))
         
         fig.update_layout(
@@ -342,7 +598,49 @@ class Visualizaciones:
                     range=[0, 100]
                 )
             ),
-            showlegend=False,
+            showlegend=True,
+            height=400,
+            title='Perfil de Biodiversidad'
+        )
+        
+        return fig
+    
+    @staticmethod
+    def crear_grafico_correlacion(carbono_vals, shannon_vals):
+        """Crea gráfico de correlación entre carbono y biodiversidad"""
+        fig = go.Figure(data=go.Scatter(
+            x=carbono_vals,
+            y=shannon_vals,
+            mode='markers',
+            marker=dict(
+                size=10,
+                color=shannon_vals,
+                colorscale='Viridis',
+                showscale=True,
+                colorbar=dict(title="Shannon")
+            ),
+            text=[f"C: {c:.1f}, S: {s:.2f}" for c, s in zip(carbono_vals, shannon_vals)]
+        ))
+        
+        # Calcular línea de tendencia
+        if len(carbono_vals) > 1:
+            z = np.polyfit(carbono_vals, shannon_vals, 1)
+            p = np.poly1d(z)
+            trend_x = np.linspace(min(carbono_vals), max(carbono_vals), 100)
+            trend_y = p(trend_x)
+            
+            fig.add_trace(go.Scatter(
+                x=trend_x,
+                y=trend_y,
+                mode='lines',
+                line=dict(color='red', width=2),
+                name='Tendencia'
+            ))
+        
+        fig.update_layout(
+            title='Correlación: Carbono vs Biodiversidad',
+            xaxis_title='Carbono (ton C/ha)',
+            yaxis_title='Índice de Shannon',
             height=400
         )
         
@@ -438,8 +736,8 @@ def main():
             num_puntos = st.slider(
                 "Número de puntos de muestreo",
                 min_value=10,
-                max_value=100,
-                value=30,
+                max_value=200,
+                value=50,
                 help="Cantidad de puntos para análisis"
             )
             
@@ -470,27 +768,41 @@ def main():
             
             1. **Metodología Verra VCS** para cálculo de carbono forestal
             2. **Índice de Shannon** para análisis de biodiversidad
-            3. **Datos climáticos** realistas para Sudamérica
-            4. **Visualizaciones interactivas** y mapas
+            3. **Mapas de calor** interactivos para carbono y biodiversidad
+            4. **Datos climáticos** realistas para Sudamérica
+            5. **Visualizaciones interactivas** y gráficos correlacionales
             
             **Formato de archivos soportados:**
             - KML/KMZ
             - GeoJSON
             - Shapefile (comprimido en ZIP)
             
+            **Nuevas funcionalidades añadidas:**
+            - 🌋 **Mapa de calor de biodiversidad** con índice de Shannon
+            - 🔥 **Mapa de calor de carbono** según metodología Verra VCS
+            - 📈 **Gráfico de correlación** carbono vs biodiversidad
+            - 🎨 **Leyendas interactivas** y controles de capas
+            
             **Áreas de aplicación:**
-            - Proyectos REDD+
-            - Monitoreo de conservación
-            - Planificación territorial
+            - Proyectos REDD+ y créditos de carbono
+            - Monitoreo de conservación de biodiversidad
+            - Planificación territorial sostenible
             - Estudios de impacto ambiental
+            - Investigación ecológica
             """)
     
     else:
         # Mostrar pestañas
-        tab1, tab2, tab3, tab4 = st.tabs(["🗺️ Mapa", "📊 Dashboard", "🌳 Carbono", "🦋 Biodiversidad"])
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "🗺️ Mapas", 
+            "📊 Dashboard", 
+            "🌳 Carbono", 
+            "🦋 Biodiversidad",
+            "📈 Correlación"
+        ])
         
         with tab1:
-            mostrar_mapa()
+            mostrar_mapas()
         
         with tab2:
             mostrar_dashboard()
@@ -500,6 +812,9 @@ def main():
         
         with tab4:
             mostrar_biodiversidad()
+        
+        with tab5:
+            mostrar_correlacion()
 
 # ===============================
 # 📁 FUNCIONES AUXILIARES
@@ -617,7 +932,7 @@ def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos):
         co2_total += carbono_info['co2_equivalente_ton_ha'] * area_por_punto
         shannon_promedio += biodiv_info['indice_shannon']
         
-        # Guardar punto para visualización
+        # Guardar punto para visualización de carbono
         puntos_carbono.append({
             'lat': lat,
             'lon': lon,
@@ -626,7 +941,16 @@ def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos):
             'precipitacion': datos_clima['precipitacion']
         })
         
-        puntos_biodiversidad.append(biodiv_info)
+        # Guardar punto para visualización de biodiversidad
+        puntos_biodiversidad.append({
+            'lat': lat,
+            'lon': lon,
+            'shannon': biodiv_info['indice_shannon'],
+            'categoria': biodiv_info['categoria'],
+            'color_hex': biodiv_info['color_hex'],
+            'riqueza': biodiv_info['riqueza_especies'],
+            'abundancia': biodiv_info['abundancia_total']
+        })
     
     # Calcular promedios
     shannon_promedio /= num_puntos
@@ -642,7 +966,9 @@ def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos):
         'puntos_biodiversidad': puntos_biodiversidad,
         'tipo_ecosistema': tipo_ecosistema,
         'num_puntos': num_puntos,
-        'desglose_promedio': verra.calcular_carbono_hectarea(0.6, tipo_ecosistema, 1500)['desglose']
+        'desglose_promedio': verra.calcular_carbono_hectarea(0.6, tipo_ecosistema, 1500)['desglose'],
+        'valores_carbono': [p['carbono_ton_ha'] for p in puntos_carbono],
+        'valores_shannon': [p['shannon'] for p in puntos_biodiversidad]
     }
     
     return resultados
@@ -650,24 +976,96 @@ def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos):
 # ===============================
 # 🗺️ FUNCIONES DE VISUALIZACIÓN
 # ===============================
-def mostrar_mapa():
-    """Muestra el mapa del área de estudio"""
-    st.header("🗺️ Mapa del Área de Estudio")
+def mostrar_mapas():
+    """Muestra los diferentes mapas disponibles"""
+    st.header("🗺️ Mapas de Análisis")
     
-    if st.session_state.mapa:
-        folium_static(st.session_state.mapa, width=1000, height=600)
-    else:
-        st.info("No hay mapa para mostrar")
+    # Crear subtabs para diferentes mapas
+    tab_mapa1, tab_mapa2, tab_mapa3, tab_mapa4 = st.tabs([
+        "🌍 Área de Estudio", 
+        "🌳 Carbono", 
+        "🦋 Biodiversidad", 
+        "🎭 Combinado"
+    ])
     
-    if st.session_state.resultados:
-        st.subheader("🌳 Mapa de Distribución de Carbono")
-        sistema_mapas = SistemaMapas()
-        mapa_carbono = sistema_mapas.crear_mapa_carbono(
-            st.session_state.resultados['puntos_carbono']
-        )
-        
-        if mapa_carbono:
-            folium_static(mapa_carbono, width=1000, height=600)
+    with tab_mapa1:
+        st.subheader("Área de Estudio")
+        if st.session_state.mapa:
+            folium_static(st.session_state.mapa, width=1000, height=600)
+            st.info("Mapa base con el polígono del área de estudio")
+        else:
+            st.info("No hay mapa para mostrar")
+    
+    with tab_mapa2:
+        st.subheader("Mapa de Calor - Carbono (Metodología Verra VCS)")
+        if st.session_state.resultados:
+            sistema_mapas = SistemaMapas()
+            mapa_carbono = sistema_mapas.crear_mapa_carbono(
+                st.session_state.resultados['puntos_carbono']
+            )
+            
+            if mapa_carbono:
+                folium_static(mapa_carbono, width=1000, height=600)
+                
+                # Información adicional
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Puntos muestreados", len(st.session_state.resultados['puntos_carbono']))
+                with col2:
+                    min_carb = min(p['carbono_ton_ha'] for p in st.session_state.resultados['puntos_carbono'])
+                    st.metric("Carbono mínimo", f"{min_carb:.1f} ton C/ha")
+                with col3:
+                    max_carb = max(p['carbono_ton_ha'] for p in st.session_state.resultados['puntos_carbono'])
+                    st.metric("Carbono máximo", f"{max_carb:.1f} ton C/ha")
+        else:
+            st.info("Ejecute el análisis primero para ver el mapa de carbono")
+    
+    with tab_mapa3:
+        st.subheader("Mapa de Calor - Biodiversidad (Índice de Shannon)")
+        if st.session_state.resultados:
+            sistema_mapas = SistemaMapas()
+            
+            if 'puntos_biodiversidad' in st.session_state.resultados:
+                mapa_biodiv = sistema_mapas.crear_mapa_biodiversidad(
+                    st.session_state.resultados['puntos_biodiversidad']
+                )
+                
+                if mapa_biodiv:
+                    folium_static(mapa_biodiv, width=1000, height=600)
+                    
+                    # Información adicional
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Puntos muestreados", len(st.session_state.resultados['puntos_biodiversidad']))
+                    with col2:
+                        min_shannon = min(p['shannon'] for p in st.session_state.resultados['puntos_biodiversidad'])
+                        st.metric("Shannon mínimo", f"{min_shannon:.2f}")
+                    with col3:
+                        max_shannon = max(p['shannon'] for p in st.session_state.resultados['puntos_biodiversidad'])
+                        st.metric("Shannon máximo", f"{max_shannon:.2f}")
+            else:
+                st.info("No hay datos de biodiversidad para mostrar en el mapa.")
+        else:
+            st.info("Ejecute el análisis primero para ver el mapa de biodiversidad")
+    
+    with tab_mapa4:
+        st.subheader("Mapa Combinado - Capas Intercambiables")
+        if st.session_state.resultados:
+            sistema_mapas = SistemaMapas()
+            
+            if 'puntos_carbono' in st.session_state.resultados and 'puntos_biodiversidad' in st.session_state.resultados:
+                mapa_combinado = sistema_mapas.crear_mapa_combinado(
+                    st.session_state.resultados['puntos_carbono'],
+                    st.session_state.resultados['puntos_biodiversidad']
+                )
+                
+                if mapa_combinado:
+                    folium_static(mapa_combinado, width=1000, height=600)
+                    st.info("Use el control en la esquina superior derecha para alternar entre capas de carbono y biodiversidad")
+            else:
+                st.info("No hay datos suficientes para el mapa combinado")
+        else:
+            st.info("Ejecute el análisis primero para ver el mapa combinado")
 
 def mostrar_dashboard():
     """Muestra dashboard ejecutivo"""
@@ -694,7 +1092,7 @@ def mostrar_dashboard():
             st.plotly_chart(fig_barras, use_container_width=True)
         
         with col2:
-            st.subheader("Análisis de Biodiversidad")
+            st.subheader("Perfil de Biodiversidad")
             if res['puntos_biodiversidad']:
                 fig_radar = Visualizaciones.crear_grafico_radar_biodiversidad(res['puntos_biodiversidad'][0])
                 st.plotly_chart(fig_radar, use_container_width=True)
@@ -825,21 +1223,21 @@ def mostrar_biodiversidad():
             with col1:
                 st.metric(
                     "Índice de Shannon", 
-                    f"{biodiv['indice_shannon']:.3f}",
+                    f"{biodiv['shannon']:.3f}",
                     f"Categoría: {biodiv['categoria']}"
                 )
             
             with col2:
                 st.metric(
                     "Riqueza de Especies", 
-                    f"{biodiv['riqueza_especies']}",
+                    f"{biodiv['riqueza']}",
                     "Número estimado de especies"
                 )
             
             with col3:
                 st.metric(
                     "Abundancia Total", 
-                    f"{biodiv['abundancia_total']:,}",
+                    f"{biodiv['abundancia']:,}",
                     "Individuos estimados"
                 )
             
@@ -856,30 +1254,36 @@ def mostrar_biodiversidad():
             
             for cat, desc in interpretaciones.items():
                 if cat == biodiv['categoria']:
-                    st.info(f"**{cat}**: {desc}")
+                    st.success(f"**{cat}**: {desc}")
                 else:
                     st.text(f"{cat}: {desc}")
             
-            # Muestra de especies (simulada)
-            st.subheader("Muestra de Distribución de Especies")
+            # Distribución de categorías en los puntos
+            st.subheader("Distribución de Categorías en Puntos de Muestreo")
             
-            if 'especies_muestra' in biodiv and biodiv['especies_muestra']:
-                especies_data = []
-                for i, esp in enumerate(biodiv['especies_muestra'][:5]):  # Solo 5
-                    especies_data.append({
-                        'Especie': f"Esp {esp['especie_id']}",
-                        'Abundancia': esp['abundancia'],
-                        'Proporción': f"{esp['proporcion']*100:.2f}%",
-                        'Grupo': random.choice(['Árbol', 'Arbusto', 'Hierba', 'Epífita', 'Fauna'])
-                    })
-                
-                df_especies = pd.DataFrame(especies_data)
-                st.dataframe(df_especies, use_container_width=True, hide_index=True)
+            categorias = {}
+            for p in res['puntos_biodiversidad']:
+                cat = p['categoria']
+                categorias[cat] = categorias.get(cat, 0) + 1
+            
+            fig_cat = go.Figure(data=[go.Pie(
+                labels=list(categorias.keys()),
+                values=list(categorias.values()),
+                hole=0.3,
+                marker_colors=['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#991b1b']
+            )])
+            
+            fig_cat.update_layout(
+                title='Distribución de Categorías de Biodiversidad',
+                height=400
+            )
+            
+            st.plotly_chart(fig_cat, use_container_width=True)
             
             # Recomendaciones de conservación
             with st.expander("🌿 Recomendaciones para Conservación"):
                 st.markdown(f"""
-                Basado en el índice de Shannon de **{biodiv['indice_shannon']:.3f}** ({biodiv['categoria']}):
+                Basado en el índice de Shannon de **{biodiv['shannon']:.3f}** ({biodiv['categoria']}):
                 
                 **Medidas recomendadas:**
                 """)
@@ -909,11 +1313,11 @@ def mostrar_biodiversidad():
         # Distribución del índice entre puntos
         st.subheader("Distribución del Índice entre Puntos de Muestreo")
         
-        shannon_values = [p['indice_shannon'] for p in res['puntos_biodiversidad']]
+        shannon_values = [p['shannon'] for p in res['puntos_biodiversidad']]
         
         fig = go.Figure(data=[go.Histogram(
             x=shannon_values,
-            nbinsx=10,
+            nbinsx=15,
             marker_color='#8b5cf6',
             opacity=0.7
         )])
@@ -929,6 +1333,108 @@ def mostrar_biodiversidad():
     
     else:
         st.info("Ejecute el análisis primero para ver los datos de biodiversidad")
+
+def mostrar_correlacion():
+    """Muestra análisis de correlación entre carbono y biodiversidad"""
+    st.header("📈 Correlación Carbono vs Biodiversidad")
+    
+    if st.session_state.resultados:
+        res = st.session_state.resultados
+        
+        st.markdown("""
+        ### Análisis de Relación entre Carbono y Biodiversidad
+        
+        Este análisis explora la relación entre el almacenamiento de carbono 
+        y la diversidad biológica en el área de estudio.
+        """)
+        
+        # Gráfico de correlación
+        if 'valores_carbono' in res and 'valores_shannon' in res:
+            fig_corr = Visualizaciones.crear_grafico_correlacion(
+                res['valores_carbono'],
+                res['valores_shannon']
+            )
+            st.plotly_chart(fig_corr, use_container_width=True)
+            
+            # Análisis estadístico simple
+            if len(res['valores_carbono']) > 1 and len(res['valores_shannon']) > 1:
+                correlacion = np.corrcoef(res['valores_carbono'], res['valores_shannon'])[0, 1]
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Coeficiente de Correlación", f"{correlacion:.3f}")
+                with col2:
+                    st.metric("Número de pares", len(res['valores_carbono']))
+                with col3:
+                    if correlacion > 0.5:
+                        st.metric("Relación", "Fuerte positiva", delta="Alta")
+                    elif correlacion > 0.3:
+                        st.metric("Relación", "Moderada positiva", delta="Media")
+                    elif correlacion > 0:
+                        st.metric("Relación", "Débil positiva", delta="Baja")
+                    else:
+                        st.metric("Relación", "Negativa", delta="Inversa")
+                
+                # Interpretación
+                with st.expander("📊 Interpretación Estadística"):
+                    st.markdown(f"""
+                    **Coeficiente de Correlación de Pearson:** `{correlacion:.3f}`
+                    
+                    **Interpretación:**
+                    - **±0.9 a ±1.0:** Correlación muy fuerte
+                    - **±0.7 a ±0.9:** Correlación fuerte
+                    - **±0.5 a ±0.7:** Correlación moderada
+                    - **±0.3 a ±0.5:** Correlación débil
+                    - **±0.0 a ±0.3:** Correlación muy débil o nula
+                    
+                    **En este caso:**
+                    """)
+                    
+                    if correlacion > 0.7:
+                        st.success("Existe una fuerte correlación positiva entre carbono y biodiversidad.")
+                    elif correlacion > 0.5:
+                        st.info("Existe una correlación moderada positiva entre carbono y biodiversidad.")
+                    elif correlacion > 0.3:
+                        st.warning("Existe una correlación débil positiva entre carbono y biodiversidad.")
+                    elif correlacion > 0:
+                        st.warning("La correlación es muy débil o prácticamente nula.")
+                    else:
+                        st.error("Existe una correlación negativa entre carbono y biodiversidad.")
+            
+            # Tabla de datos de correlación
+            st.subheader("Datos de Puntos de Muestreo")
+            
+            datos_corr = []
+            for i in range(min(20, len(res['valores_carbono']))):  # Mostrar máximo 20 filas
+                datos_corr.append({
+                    'Punto': i+1,
+                    'Carbono (ton C/ha)': res['valores_carbono'][i],
+                    'Índice Shannon': res['valores_shannon'][i],
+                    'Categoría': res['puntos_biodiversidad'][i]['categoria'] if i < len(res['puntos_biodiversidad']) else "N/A"
+                })
+            
+            df_corr = pd.DataFrame(datos_corr)
+            st.dataframe(df_corr, use_container_width=True, hide_index=True)
+            
+            # Implicaciones para conservación
+            with st.expander("🌿 Implicaciones para la Conservación"):
+                st.markdown("""
+                **Relación Carbono-Biodiversidad:**
+                
+                - **Correlación positiva alta:** Las estrategias de conservación de carbono también protegen la biodiversidad
+                - **Correlación positiva moderada:** Beneficios colaterales significativos
+                - **Correlación débil o nula:** Necesidad de estrategias específicas para cada objetivo
+                - **Correlación negativa:** Posibles trade-offs entre objetivos
+                
+                **Recomendaciones según resultados:**
+                1. **Sinergias:** Identificar áreas de alto valor para ambos parámetros
+                2. **Trade-offs:** Considerar compensaciones donde sea necesario
+                3. **Planificación integrada:** Diseñar estrategias que maximicen beneficios múltiples
+                4. **Monitoreo dual:** Seguir ambos indicadores simultáneamente
+                """)
+        
+    else:
+        st.info("Ejecute el análisis primero para ver la correlación")
 
 # ===============================
 # 🚀 EJECUCIÓN PRINCIPAL
