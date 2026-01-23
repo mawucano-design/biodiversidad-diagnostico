@@ -28,6 +28,7 @@ import base64
 import warnings
 import requests
 from typing import Optional, Dict, Any, List, Tuple
+import xml.etree.ElementTree as ET
 warnings.filterwarnings('ignore')
 
 # Librerías geoespaciales
@@ -797,7 +798,7 @@ class SistemaMapas:
                     'dashArray': '5, 5'
                 },
                 name='Área de estudio',
-                tooltip=f"Área: {gdf.to_crs('EPSG:3857').geometry.area.sum()/10000:,.1f} ha"
+                tooltip=f"Área: {calcular_superficie(gdf):,.1f} ha"
             ).add_to(m)
             
             # Agregar control de capas
@@ -1654,6 +1655,266 @@ class Visualizaciones:
         return html
 
 # ===============================
+# ===== FUNCIONES AUXILIARES - INTEGRADAS DEL CÓDIGO PROPORCIONADO =====
+# ===============================
+
+def validar_y_corregir_crs(gdf):
+    if gdf is None or len(gdf) == 0:
+        return gdf
+    try:
+        if gdf.crs is None:
+            gdf = gdf.set_crs('EPSG:4326', inplace=False)
+            st.info("ℹ️ Se asignó EPSG:4326 al archivo (no tenía CRS)")
+        elif str(gdf.crs).upper() != 'EPSG:4326':
+            original_crs = str(gdf.crs)
+            gdf = gdf.to_crs('EPSG:4326')
+            st.info(f"ℹ️ Transformado de {original_crs} a EPSG:4326")
+        return gdf
+    except Exception as e:
+        st.warning(f"⚠️ Error al corregir CRS: {str(e)}")
+        return gdf
+
+def calcular_superficie(gdf):
+    """
+    Calcula el área total de un GeoDataFrame en hectáreas.
+    Usa una proyección de área equivalente para mayor precisión.
+    """
+    try:
+        if gdf is None or len(gdf) == 0:
+            return 0.0
+
+        # Asegurar CRS
+        gdf = validar_y_corregir_crs(gdf)
+
+        # Obtener el centroide para determinar UTM (opcional pero más preciso)
+        centroid = gdf.geometry.unary_union.centroid
+        lon, lat = centroid.x, centroid.y
+
+        # Determinar zona UTM
+        utm_zone = int((lon + 180) / 6) + 1
+        hemisphere = 'north' if lat >= 0 else 'south'
+        epsg_utm = f"326{utm_zone:02d}" if hemisphere == 'north' else f"327{utm_zone:02d}"
+
+        try:
+            # Intentar reproyectar a UTM local
+            gdf_utm = gdf.to_crs(epsg=epsg_utm)
+            area_m2 = gdf_utm.geometry.area.sum()
+        except Exception:
+            # Fallback a CRS de área global (EPSG:6933 - Equal Earth)
+            gdf_eq = gdf.to_crs("EPSG:6933")
+            area_m2 = gdf_eq.geometry.area.sum()
+
+        return area_m2 / 10000  # Convertir a hectáreas
+
+    except Exception as e:
+        st.warning(f"⚠️ Error al calcular área precisa: {str(e)}. Usando cálculo aproximado.")
+        # Último fallback: cálculo en grados (solo válido cerca del ecuador)
+        area_grados2 = gdf.geometry.area.sum()
+        area_m2 = area_grados2 * (111000 ** 2)
+        return area_m2 / 10000
+
+def dividir_parcela_en_zonas(gdf, n_zonas):
+    if len(gdf) == 0:
+        return gdf
+    gdf = validar_y_corregir_crs(gdf)
+    parcela_principal = gdf.iloc[0].geometry
+    bounds = parcela_principal.bounds
+    minx, miny, maxx, maxy = bounds
+    sub_poligonos = []
+    n_cols = math.ceil(math.sqrt(n_zonas))
+    n_rows = math.ceil(n_zonas / n_cols)
+    width = (maxx - minx) / n_cols
+    height = (maxy - miny) / n_rows
+    for i in range(n_rows):
+        for j in range(n_cols):
+            if len(sub_poligonos) >= n_zonas:
+                break
+            cell_minx = minx + (j * width)
+            cell_maxx = minx + ((j + 1) * width)
+            cell_miny = miny + (i * height)
+            cell_maxy = miny + ((i + 1) * height)
+            cell_poly = Polygon([(cell_minx, cell_miny), (cell_maxx, cell_miny), (cell_maxx, cell_maxy), (cell_minx, cell_maxy)])
+            intersection = parcela_principal.intersection(cell_poly)
+            if not intersection.is_empty and intersection.area > 0:
+                sub_poligonos.append(intersection)
+    if sub_poligonos:
+        nuevo_gdf = gpd.GeoDataFrame({'id_zona': range(1, len(sub_poligonos) + 1), 'geometry': sub_poligonos}, crs='EPSG:4326')
+        return nuevo_gdf
+    else:
+        return gdf
+
+def cargar_shapefile_desde_zip(zip_file):
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+                zip_ref.extractall(tmp_dir)
+            shp_files = [f for f in os.listdir(tmp_dir) if f.endswith('.shp')]
+            if shp_files:
+                shp_path = os.path.join(tmp_dir, shp_files[0])
+                gdf = gpd.read_file(shp_path)
+                gdf = validar_y_corregir_crs(gdf)
+                return gdf
+            else:
+                st.error("❌ No se encontró ningún archivo .shp en el ZIP")
+                return None
+    except Exception as e:
+        st.error(f"❌ Error cargando shapefile desde ZIP: {str(e)}")
+        return None
+
+def parsear_kml_manual(contenido_kml):
+    try:
+        root = ET.fromstring(contenido_kml)
+        namespaces = {'kml': 'http://www.opengis.net/kml/2.2'}
+        polygons = []
+        for polygon_elem in root.findall('.//kml:Polygon', namespaces):
+            coords_elem = polygon_elem.find('.//kml:coordinates', namespaces)
+            if coords_elem is not None and coords_elem.text:
+                coord_text = coords_elem.text.strip()
+                coord_list = []
+                for coord_pair in coord_text.split():
+                    parts = coord_pair.split(',')
+                    if len(parts) >= 2:
+                        lon = float(parts[0])
+                        lat = float(parts[1])
+                        coord_list.append((lon, lat))
+                if len(coord_list) >= 3:
+                    polygons.append(Polygon(coord_list))
+        if not polygons:
+            for multi_geom in root.findall('.//kml:MultiGeometry', namespaces):
+                for polygon_elem in multi_geom.findall('.//kml:Polygon', namespaces):
+                    coords_elem = polygon_elem.find('.//kml:coordinates', namespaces)
+                    if coords_elem is not None and coords_elem.text:
+                        coord_text = coords_elem.text.strip()
+                        coord_list = []
+                        for coord_pair in coord_text.split():
+                            parts = coord_pair.split(',')
+                            if len(parts) >= 2:
+                                lon = float(parts[0])
+                                lat = float(parts[1])
+                                coord_list.append((lon, lat))
+                        if len(coord_list) >= 3:
+                            polygons.append(Polygon(coord_list))
+        if polygons:
+            gdf = gpd.GeoDataFrame({'geometry': polygons}, crs='EPSG:4326')
+            return gdf
+        else:
+            for placemark in root.findall('.//kml:Placemark', namespaces):
+                for elem_name in ['Polygon', 'LineString', 'Point', 'LinearRing']:
+                    elem = placemark.find(f'.//kml:{elem_name}', namespaces)
+                    if elem is not None:
+                        coords_elem = elem.find('.//kml:coordinates', namespaces)
+                        if coords_elem is not None and coords_elem.text:
+                            coord_text = coords_elem.text.strip()
+                            coord_list = []
+                            for coord_pair in coord_text.split():
+                                parts = coord_pair.split(',')
+                                if len(parts) >= 2:
+                                    lon = float(parts[0])
+                                    lat = float(parts[1])
+                                    coord_list.append((lon, lat))
+                            if len(coord_list) >= 3:
+                                polygons.append(Polygon(coord_list))
+                            break
+            if polygons:
+                gdf = gpd.GeoDataFrame({'geometry': polygons}, crs='EPSG:4326')
+                return gdf
+        return None
+    except Exception as e:
+        st.error(f"❌ Error parseando KML manualmente: {str(e)}")
+        return None
+
+def cargar_kml(kml_file):
+    try:
+        if kml_file.name.endswith('.kmz'):
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                with zipfile.ZipFile(kml_file, 'r') as zip_ref:
+                    zip_ref.extractall(tmp_dir)
+                kml_files = [f for f in os.listdir(tmp_dir) if f.endswith('.kml')]
+                if kml_files:
+                    kml_path = os.path.join(tmp_dir, kml_files[0])
+                    with open(kml_path, 'r', encoding='utf-8') as f:
+                        contenido = f.read()
+                    gdf = parsear_kml_manual(contenido)
+                    if gdf is not None:
+                        return gdf
+                    else:
+                        try:
+                            gdf = gpd.read_file(kml_path)
+                            gdf = validar_y_corregir_crs(gdf)
+                            return gdf
+                        except:
+                            st.error("❌ No se pudo cargar el archivo KML/KMZ")
+                            return None
+                else:
+                    st.error("❌ No se encontró ningún archivo .kml en el KMZ")
+                    return None
+        else:
+            contenido = kml_file.read().decode('utf-8')
+            gdf = parsear_kml_manual(contenido)
+            if gdf is not None:
+                return gdf
+            else:
+                kml_file.seek(0)
+                gdf = gpd.read_file(kml_file)
+                gdf = validar_y_corregir_crs(gdf)
+                return gdf
+    except Exception as e:
+        st.error(f"❌ Error cargando archivo KML/KMZ: {str(e)}")
+        return None
+
+def cargar_archivo(uploaded_file):
+    """Versión mejorada que integra las funciones robustas de carga"""
+    try:
+        if uploaded_file.name.endswith('.zip'):
+            gdf = cargar_shapefile_desde_zip(uploaded_file)
+        elif uploaded_file.name.endswith(('.kml', '.kmz')):
+            gdf = cargar_kml(uploaded_file)
+        elif uploaded_file.name.endswith(('.geojson', '.json')):
+            gdf = gpd.read_file(uploaded_file)
+            gdf = validar_y_corregir_crs(gdf)
+        else:
+            st.error("❌ Formato de archivo no soportado")
+            return None
+        
+        if gdf is not None:
+            gdf = validar_y_corregir_crs(gdf)
+            if not gdf.geometry.geom_type.str.contains('Polygon').any():
+                st.warning("⚠️ El archivo no contiene polígonos. Intentando extraer polígonos...")
+                gdf = gdf.explode()
+                gdf = gdf[gdf.geometry.geom_type.isin(['Polygon', 'MultiPolygon'])]
+            
+            if len(gdf) > 0:
+                # Crear un ID único para cada polígono si no existe
+                if 'id_zona' not in gdf.columns:
+                    gdf['id_zona'] = range(1, len(gdf) + 1)
+                
+                # Calcular y mostrar área
+                area_total = calcular_superficie(gdf)
+                st.success(f"✅ Archivo cargado: {len(gdf)} polígono(s) - Área total: {area_total:,.1f} ha")
+                
+                return gdf
+            else:
+                st.error("❌ No se encontraron polígonos en el archivo")
+                return None
+        return gdf
+    except Exception as e:
+        st.error(f"❌ Error cargando archivo: {str(e)}")
+        import traceback
+        st.error(f"Detalle: {traceback.format_exc()}")
+        
+        # Crear un polígono de prueba por defecto si falla
+        st.warning("Usando polígono de prueba debido al error de carga")
+        polygon = Polygon([
+            (-64.0, -34.0),
+            (-63.5, -34.0),
+            (-63.5, -34.5),
+            (-64.0, -34.5),
+            (-64.0, -34.0)
+        ])
+        gdf = gpd.GeoDataFrame({'geometry': [polygon], 'id_zona': [1]}, crs="EPSG:4326")
+        return gdf
+
+# ===============================
 # 🎨 INTERFAZ PRINCIPAL SIMPLIFICADA - ACTUALIZADA
 # ===============================
 def main():
@@ -1679,8 +1940,8 @@ def main():
         
         # Cargar archivo
         uploaded_file = st.file_uploader(
-            "Cargar polígono (KML, GeoJSON, SHP)",
-            type=['kml', 'geojson', 'zip'],
+            "Cargar polígono (KML, KMZ, GeoJSON, SHP-ZIP)",
+            type=['kml', 'kmz', 'geojson', 'json', 'zip'],
             help="Suba un archivo con el polígono de estudio"
         )
         
@@ -1690,12 +1951,6 @@ def main():
                     gdf = cargar_archivo(uploaded_file)
                     if gdf is not None:
                         st.session_state.poligono_data = gdf
-                        st.success(f"✅ Polígono cargado: {len(gdf)} geometrías")
-                        
-                        # Calcular área
-                        gdf_proj = gdf.to_crs("EPSG:3857")
-                        area_ha = gdf_proj.geometry.area.sum() / 10000
-                        st.info(f"Área aproximada: {area_ha:,.1f} ha")
                         
                         # Crear mapa inicial CON ZOOM AUTOMÁTICO
                         sistema_mapas = SistemaMapas()
@@ -1782,6 +2037,7 @@ def main():
             • **Zoom automático** al área del polígono
             • **Contorno del polígono** en todos los mapas de calor
             • **Informe completo** PDF con todos los resultados
+            • **Carga robusta** de KML, KMZ, Shapefiles y GeoJSON
             
             **Variables analizadas:**
             - **Carbono almacenado** (ton C/ha)
@@ -1822,88 +2078,14 @@ def main():
         with tab5:
             mostrar_comparacion()
 
-# ===============================
-# 📁 FUNCIONES AUXILIARES
-# ===============================
-def cargar_archivo(uploaded_file):
-    """Carga un archivo geoespacial"""
-    try:
-        if uploaded_file.name.endswith('.kml'):
-            # Para KML simple
-            content = uploaded_file.read().decode('utf-8')
-            
-            # Buscar coordenadas
-            import re
-            coordinates = re.findall(r'<coordinates>(.*?)</coordinates>', content, re.DOTALL)
-            
-            if coordinates:
-                coords_text = coordinates[0].strip()
-                points = []
-                for coord in coords_text.split():
-                    parts = coord.split(',')
-                    if len(parts) >= 2:
-                        lon, lat = float(parts[0]), float(parts[1])
-                        points.append((lon, lat))
-                
-                if len(points) >= 3:
-                    polygon = Polygon(points)
-                    gdf = gpd.GeoDataFrame({'geometry': [polygon]}, crs="EPSG:4326")
-                    return gdf
-        
-        elif uploaded_file.name.endswith('.geojson'):
-            # Leer GeoJSON
-            gdf = gpd.read_file(uploaded_file)
-            if gdf.crs is None:
-                gdf.set_crs("EPSG:4326", inplace=True)
-            return gdf
-        
-        elif uploaded_file.name.endswith('.zip'):
-            # Leer Shapefile
-            with tempfile.TemporaryDirectory() as tmpdir:
-                with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
-                    zip_ref.extractall(tmpdir)
-                
-                shp_files = [f for f in os.listdir(tmpdir) if f.endswith('.shp')]
-                if shp_files:
-                    gdf = gpd.read_file(os.path.join(tmpdir, shp_files[0]))
-                    if gdf.crs is None:
-                        gdf.set_crs("EPSG:4326", inplace=True)
-                    return gdf
-        
-        # Si no se pudo cargar, crear un polígono de prueba
-        st.warning("No se pudo leer el archivo correctamente. Usando polígono de prueba.")
-        polygon = Polygon([
-            (-64.0, -34.0),
-            (-63.5, -34.0),
-            (-63.5, -34.5),
-            (-64.0, -34.5),
-            (-64.0, -34.0)
-        ])
-        gdf = gpd.GeoDataFrame({'geometry': [polygon]}, crs="EPSG:4326")
-        return gdf
-        
-    except Exception as e:
-        st.error(f"Error al cargar archivo: {str(e)}")
-        # Crear un polígono de prueba por defecto
-        polygon = Polygon([
-            (-64.0, -34.0),
-            (-63.5, -34.0),
-            (-63.5, -34.5),
-            (-64.0, -34.5),
-            (-64.0, -34.0)
-        ])
-        gdf = gpd.GeoDataFrame({'geometry': [polygon]}, crs="EPSG:4326")
-        return gdf
-
 def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos):
     """Ejecuta análisis completo de carbono, biodiversidad e índices espectrales"""
     
     try:
-        # Calcular área
-        gdf_proj = gdf.to_crs("EPSG:3857")
-        area_total = gdf_proj.geometry.area.sum() / 10000
+        # Calcular área usando la función mejorada
+        area_total = calcular_superficie(gdf)
         
-        # Obtener polígono principal
+        # Obtener polígono principal (unión de todos los polígonos)
         if len(gdf) > 1:
             poligono = unary_union(gdf.geometry.tolist())
         else:
@@ -1946,7 +2128,6 @@ def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos):
                 ndvi = 0.5 + random.uniform(-0.2, 0.3)
                 
                 # Generar NDWI basado en precipitación y ubicación
-                # NDWI típicamente entre -1 y 1, positivo indica presencia de agua
                 base_ndwi = 0.1
                 if datos_clima['precipitacion'] > 2000:
                     base_ndwi += 0.3
@@ -2058,7 +2239,8 @@ def mostrar_mapas_calor():
         st.subheader("Área de Estudio - CON ZOOM AUTOMÁTICO")
         if st.session_state.mapa:
             folium_static(st.session_state.mapa, width=1000, height=600)
-            st.info("✅ Zoom automático ajustado al polígono. Área delimitada en azul.")
+            area_total = calcular_superficie(st.session_state.poligono_data)
+            st.info(f"✅ Zoom automático ajustado al polígono. Área: {area_total:,.1f} ha")
         else:
             st.info("No hay mapa para mostrar")
     
