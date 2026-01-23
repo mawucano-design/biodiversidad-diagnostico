@@ -1902,12 +1902,12 @@ def main():
                     with st.spinner("Procesando datos satelitales y climáticos..."):
                         try:
                             # ✅ CORRECCIÓN: Uso de argumentos nombrados
-                            resultados = st.session_state.sistema_analisis.analizar_area_completa(
-                                gdf=st.session_state.poligono_data,
-                                tipo_ecosistema=tipo_ecosistema,
-                                satelite_seleccionado=satelite,
-                                n_divisiones=nivel_detalle
-                            )
+                           resultados = st.session_state.sistema_analisis.analizar_area_completa(
+                           gdf=st.session_state.poligono_data,
+                           tipo_ecosistema=tipo_ecosistema,
+                           satelite=satelite,  # 👈 Nombre correcto según la firma del método
+                           n_divisiones=nivel_detalle
+)
                             if resultados:
                                 st.session_state.resultados = resultados
                                 st.session_state.analisis_carbono_realizado = False
