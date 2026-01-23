@@ -47,12 +47,11 @@ from enum import Enum
 # ✅ AÑADIR: Librerías para manejar KML
 try:
     from fastkml import kml
-    from fastkml import geometry as kgeo
     import xml.etree.ElementTree as ET
     KML_SUPPORT = True
 except ImportError:
     KML_SUPPORT = False
-    st.warning("⚠️ fastkml no está instalado. Para soporte completo de KML, instálelo con: pip install fastkml")
+    st.warning("⚠️ fastkml no está instalado. Para soporte completo de KML, instálelo con: pip install fastkml lxml")
 
 # ===============================
 # 🌦️ CONECTOR CLIMÁTICO TROPICAL (NASA POWER, OPEN-METEO, WORLDCLIM)
@@ -856,35 +855,18 @@ class SimuladorSatelital:
         return indices
 
 # ===============================
-# 🗺️ SISTEMA DE MAPAS AVANZADO
+# 🗺️ SISTEMA DE MAPAS AVANZADO — SOLO ESRI
 # ===============================
 class SistemaMapasAvanzado:
     def __init__(self):
         self.simulador = SimuladorSatelital()
+        # ✅ Solo ESRI World Imagery
         self.capas_base = {
-            'PlanetScope': {
-                'tiles': 'https://tiles.planet.com/basemaps/v1/planet-tiles/global_monthly_{date}_mosaic/gmap/{z}/{x}/{y}.png?api_key=DEMO_KEY',
-                'attr': '© Planet Labs',
-                'nombre': '🛰️ PlanetScope',
-                'max_zoom': 15
-            },
-            'Sentinel-2': {
-                'tiles': 'https://services.sentinel-hub.com/ogc/wms/{id}?REQUEST=GetMap&LAYERS=TRUE-COLOR-S2-L1C&MAXCC=20&WIDTH=512&HEIGHT=512&FORMAT=image/png&TIME={date}&BBOX={bbox}',
-                'attr': '© ESA Sentinel-2',
-                'nombre': '🛰️ Sentinel-2',
-                'max_zoom': 14
-            },
             'ESRI World Imagery': {
                 'tiles': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
                 'attr': 'Esri, Maxar, Earthstar Geographics',
                 'nombre': '🌍 ESRI World Imagery',
                 'max_zoom': 19
-            },
-            'OpenTopoMap': {
-                'tiles': 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-                'attr': 'OpenTopoMap',
-                'nombre': '⛰️ Topográfico',
-                'max_zoom': 17
             }
         }
 
@@ -934,33 +916,12 @@ class SistemaMapasAvanzado:
         m = folium.Map(
             location=centro,
             zoom_start=zoom,
-            tiles=None,
+            tiles=self.capas_base['ESRI World Imagery']['tiles'],
+            attr=self.capas_base['ESRI World Imagery']['attr'],
             control_scale=True,
             zoom_control=True,
             prefer_canvas=True
         )
-
-        capa_config = self.capas_base.get(capa_base, self.capas_base['ESRI World Imagery'])
-        if '{date}' in capa_config['tiles']:
-            fecha = datetime.now().strftime('%Y-%m')
-            tiles_url = capa_config['tiles'].replace('{date}', fecha)
-            folium.TileLayer(
-                tiles=tiles_url,
-                attr=capa_config['attr'],
-                name=capa_config['nombre'],
-                max_zoom=capa_config.get('max_zoom', 19),
-                overlay=False,
-                control=True
-            ).add_to(m)
-        else:
-            folium.TileLayer(
-                tiles=capa_config['tiles'],
-                attr=capa_config['attr'],
-                name=capa_config['nombre'],
-                max_zoom=capa_config.get('max_zoom', 19),
-                overlay=False,
-                control=True
-            ).add_to(m)
 
         if gdf is not None and not gdf.empty:
             try:
@@ -1043,19 +1004,8 @@ class SistemaMapasAvanzado:
             except Exception as e:
                 st.warning(f"Error al visualizar polígono: {str(e)}")
 
-        for nombre, config in self.capas_base.items():
-            if nombre != capa_base:
-                folium.TileLayer(
-                    tiles=config['tiles'] if '{date}' not in config['tiles'] else config['tiles'].replace('{date}', datetime.now().strftime('%Y-%m')),
-                    attr=config['attr'],
-                    name=config['nombre'],
-                    overlay=False,
-                    control=True
-                ).add_to(m)
-
         Fullscreen(position='topright').add_to(m)
         MousePosition(position='bottomleft').add_to(m)
-        folium.LayerControl(position='topright', collapsed=False).add_to(m)
         return m
 
     def crear_mapa_indices(self, gdf, datos_areas, indice_seleccionado, titulo="Mapa de Índices"):
@@ -1142,7 +1092,6 @@ class SistemaMapasAvanzado:
 
         self._agregar_leyenda(m, indice_seleccionado, colores)
         Fullscreen().add_to(m)
-        folium.LayerControl().add_to(m)
         return m
 
     def crear_mapa_carbono(self, gdf, datos_carbono, titulo="Mapa de Carbono"):
@@ -1221,7 +1170,6 @@ class SistemaMapasAvanzado:
 
         self._agregar_leyenda_carbono(m, min_carbono, max_carbono, colores_carbono)
         Fullscreen().add_to(m)
-        folium.LayerControl().add_to(m)
         return m
 
     def _agregar_leyenda(self, mapa, indice, colores):
@@ -1799,69 +1747,35 @@ def main():
         # Carga de archivo con mejor manejo de errores
         uploaded_file = st.file_uploader(
             "📁 Cargar polígono de estudio",
-            type=['kml', 'geojson', 'zip', 'json'],
+            type=['kml', 'geojson', 'zip'],
             help="Formatos: KML, GeoJSON, Shapefile (ZIP)"
         )
         if uploaded_file is not None:
             with st.spinner("Procesando archivo..."):
                 try:
                     gdf = None
+                    file_content = uploaded_file.read()
+                    uploaded_file.seek(0)  # reset pointer
+
                     if uploaded_file.name.endswith('.kml'):
-                        # ✅ CORRECCIÓN: Manejo mejorado de archivos KML
                         if KML_SUPPORT:
-                            # Usar fastkml para leer KML
-                            content = uploaded_file.read().decode('utf-8')
                             k = kml.KML()
-                            k.from_string(content)
+                            k.from_string(file_content)
                             geometries = []
-                            
-                            # Extraer geometrías del KML
-                            for feature in k.features():
-                                if hasattr(feature, 'geometry'):
-                                    geometries.append(feature.geometry)
-                                elif hasattr(feature, 'features'):
-                                    for sub_feature in feature.features():
-                                        if hasattr(sub_feature, 'geometry'):
-                                            geometries.append(sub_feature.geometry)
-                            
+                            def extract_geom(elem):
+                                if hasattr(elem, 'features'):
+                                    for f in elem.features():
+                                        extract_geom(f)
+                                elif hasattr(elem, 'geometry') and elem.geometry:
+                                    geometries.append(shape(elem.geometry))
+                            extract_geom(k)
                             if geometries:
-                                gdf = gpd.GeoDataFrame(geometry=geometries, crs="EPSG:4326")
+                                gdf = gpd.GeoDataFrame({'geometry': geometries}, crs="EPSG:4326")
                             else:
-                                st.error("No se encontraron geometrías en el archivo KML")
+                                st.error("No se encontraron geometrías en el KML")
                         else:
-                            st.error("""
-                            **Soporte KML no disponible.**
-                            
-                            Instale la biblioteca necesaria:
-                            ```bash
-                            pip install fastkml
-                            ```
-                            
-                            O convierta el archivo KML a GeoJSON usando:
-                            - [Online KML to GeoJSON Converter](https://mygeodata.cloud/converter/kml-to-geojson)
-                            - QGIS Desktop
-                            """)
-                            # Intentar leer como XML simple como fallback
-                            try:
-                                import xml.etree.ElementTree as ET
-                                content = uploaded_file.read().decode('utf-8')
-                                root = ET.fromstring(content)
-                                # Buscar coordenadas simples (muy básico)
-                                import re
-                                coords = re.findall(r'-?\d+\.\d+,-?\d+\.\d+', content)
-                                if coords:
-                                    points = []
-                                    for coord in coords:
-                                        lon, lat = map(float, coord.split(','))
-                                        points.append((lon, lat))
-                                    if len(points) >= 3:
-                                        polygon = Polygon(points)
-                                        gdf = gpd.GeoDataFrame(geometry=[polygon], crs="EPSG:4326")
-                                        st.warning("⚠️ KML leído con método básico. Para mejor precisión, convierta a GeoJSON.")
-                            except:
-                                st.error("No se pudo leer el archivo KML")
-                    
-                    elif uploaded_file.name.endswith('.geojson') or uploaded_file.name.endswith('.json'):
+                            st.error("Instala 'fastkml lxml' para soporte KML.")
+                    elif uploaded_file.name.endswith('.geojson'):
                         gdf = gpd.read_file(uploaded_file)
                     elif uploaded_file.name.endswith('.zip'):
                         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1872,11 +1786,9 @@ def main():
                                 gdf = gpd.read_file(os.path.join(tmpdir, shp_files[0]))
                     
                     if gdf is not None and not gdf.empty:
-                        # Verificar que tenga geometría válida
                         if 'geometry' not in gdf.columns:
                             st.error("El archivo no contiene geometrías válidas")
                         else:
-                            # Forzar CRS a WGS84 si no lo tiene
                             if gdf.crs is None:
                                 gdf.set_crs('EPSG:4326', inplace=True)
                             else:
@@ -1904,18 +1816,11 @@ def main():
         if st.session_state.poligono_data is not None and not st.session_state.poligono_data.empty:
             st.markdown("---")
             st.subheader("🛰️ Configuración Satelital")
-            col1, col2 = st.columns(2)
-            with col1:
-                satelite = st.selectbox(
-                    "Satélite",
-                    ["PlanetScope", "Sentinel-2"],
-                    help="PlanetScope: 3m resolución | Sentinel-2: 10-20m resolución"
-                )
-            with col2:
-                capa_base = st.selectbox(
-                    "Capa base del mapa",
-                    ["ESRI World Imagery", "PlanetScope", "Sentinel-2", "OpenTopoMap"]
-                )
+            satelite = st.selectbox(
+                "Satélite",
+                ["PlanetScope", "Sentinel-2"],
+                help="PlanetScope: 3m resolución | Sentinel-2: 10-20m resolución"
+            )
 
             st.subheader("🌿 Ecosistemas Sudamericanos")
             tipo_ecosistema = st.selectbox(
@@ -2009,7 +1914,8 @@ def main():
     ])
 
     with tab1:
-        mostrar_mapa_satelital(capa_base if 'capa_base' in locals() else "ESRI World Imagery")
+        # ✅ Sin selector de capa base: siempre ESRI
+        mostrar_mapa_satelital("ESRI World Imagery")
     with tab2:
         mostrar_dashboard_ejecutivo()
     with tab3:
@@ -2071,7 +1977,7 @@ def mostrar_mapa_satelital(capa_base="ESRI World Imagery"):
         mapa_ejemplo = st.session_state.sistema_analisis.sistema_mapas.crear_mapa_satelital(
             gdf_ejemplo,
             "Área de Ejemplo - Amazonía",
-            capa_base if 'capa_base' in locals() else "ESRI World Imagery"
+            capa_base
         )
         if mapa_ejemplo:
             mostrar_mapa_seguro(mapa_ejemplo, width=800, height=500)
