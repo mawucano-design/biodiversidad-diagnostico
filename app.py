@@ -29,6 +29,7 @@ import warnings
 import requests
 from typing import Optional, Dict, Any, List, Tuple
 warnings.filterwarnings('ignore')
+
 # Librerías geoespaciales
 import folium
 from streamlit_folium import st_folium, folium_static
@@ -53,11 +54,10 @@ try:
     )
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
-    from reportlab.graphics.shapes import Drawing
-    from reportlab.graphics.charts.barcharts import VerticalBarChart
     REPORTPDF_AVAILABLE = True
 except ImportError:
     REPORTPDF_AVAILABLE = False
+    st.warning("ReportLab no está instalado. La generación de PDFs estará limitada.")
 
 try:
     from docx import Document
@@ -65,6 +65,7 @@ try:
     REPORTDOCX_AVAILABLE = True
 except ImportError:
     REPORTDOCX_AVAILABLE = False
+    st.warning("python-docx no está instalado. La generación de DOCX estará limitada.")
 
 class GeneradorReportes:
     def __init__(self, resultados, gdf):
@@ -405,7 +406,7 @@ class SistemaMapas:
     
     def crear_mapa_calor_carbono(self, puntos_carbono):
         """Crea mapa de calor para carbono"""
-        if not puntos_carbono:
+        if not puntos_carbono or len(puntos_carbono) == 0:
             return None
         
         try:
@@ -454,7 +455,7 @@ class SistemaMapas:
                     fill=True,
                     fill_color='#10b981',
                     fill_opacity=0.7,
-                    popup=f"Carbono: {p['carbono_ton_ha']:.1f} ton C/ha<br>NDVI: {p['ndvi']:.3f}"
+                    popup=f"Carbono: {p['carbono_ton_ha']:.1f} ton C/ha<br>NDVI: {p.get('ndvi', 'N/A'):.3f}"
                 ).add_to(m)
             
             return m
@@ -464,7 +465,7 @@ class SistemaMapas:
     
     def crear_mapa_calor_ndvi(self, puntos_ndvi):
         """Crea mapa de calor para NDVI"""
-        if not puntos_ndvi:
+        if not puntos_ndvi or len(puntos_ndvi) == 0:
             return None
         
         try:
@@ -511,7 +512,7 @@ class SistemaMapas:
     
     def crear_mapa_calor_ndwi(self, puntos_ndwi):
         """Crea mapa de calor para NDWI"""
-        if not puntos_ndwi:
+        if not puntos_ndwi or len(puntos_ndwi) == 0:
             return None
         
         try:
@@ -558,7 +559,7 @@ class SistemaMapas:
     
     def crear_mapa_calor_biodiversidad(self, puntos_biodiversidad):
         """Crea mapa de calor para biodiversidad (Índice de Shannon)"""
-        if not puntos_biodiversidad:
+        if not puntos_biodiversidad or len(puntos_biodiversidad) == 0:
             return None
         
         try:
@@ -605,7 +606,7 @@ class SistemaMapas:
     
     def crear_mapa_combinado(self, puntos_carbono, puntos_ndvi, puntos_ndwi, puntos_biodiversidad):
         """Crea mapa con todas las capas de heatmap"""
-        if not puntos_carbono:
+        if not puntos_carbono or len(puntos_carbono) == 0:
             return None
         
         try:
@@ -623,7 +624,7 @@ class SistemaMapas:
             capas = {}
             
             # Capa de carbono
-            if puntos_carbono:
+            if puntos_carbono and len(puntos_carbono) > 0:
                 heat_data_carbono = [[p['lat'], p['lon'], p['carbono_ton_ha']] for p in puntos_carbono]
                 capas['carbono'] = HeatMap(
                     heat_data_carbono,
@@ -640,7 +641,7 @@ class SistemaMapas:
                 capas['carbono'].add_to(m)
             
             # Capa de NDVI
-            if puntos_ndvi:
+            if puntos_ndvi and len(puntos_ndvi) > 0:
                 heat_data_ndvi = [[p['lat'], p['lon'], p['ndvi']] for p in puntos_ndvi]
                 capas['ndvi'] = HeatMap(
                     heat_data_ndvi,
@@ -657,7 +658,7 @@ class SistemaMapas:
                 capas['ndvi'].add_to(m)
             
             # Capa de NDWI
-            if puntos_ndwi:
+            if puntos_ndwi and len(puntos_ndwi) > 0:
                 heat_data_ndwi = [[p['lat'], p['lon'], p['ndwi']] for p in puntos_ndwi]
                 capas['ndwi'] = HeatMap(
                     heat_data_ndwi,
@@ -674,7 +675,7 @@ class SistemaMapas:
                 capas['ndwi'].add_to(m)
             
             # Capa de biodiversidad
-            if puntos_biodiversidad:
+            if puntos_biodiversidad and len(puntos_biodiversidad) > 0:
                 heat_data_biodiv = [[p['lat'], p['lon'], p['indice_shannon']] for p in puntos_biodiversidad]
                 capas['biodiversidad'] = HeatMap(
                     heat_data_biodiv,
@@ -905,7 +906,13 @@ class Visualizaciones:
     def crear_grafico_barras_carbono(desglose: Dict):
         """Crea gráfico de barras para pools de carbono"""
         if not desglose:
-            return None
+            # Crear gráfico vacío
+            fig = go.Figure()
+            fig.update_layout(
+                title='No hay datos de carbono disponibles',
+                height=400
+            )
+            return fig
         
         fig = go.Figure(data=[
             go.Bar(
@@ -930,7 +937,13 @@ class Visualizaciones:
     def crear_grafico_radar_biodiversidad(shannon_data: Dict):
         """Crea gráfico radar para biodiversidad"""
         if not shannon_data:
-            return None
+            # Crear gráfico vacío
+            fig = go.Figure()
+            fig.update_layout(
+                title='No hay datos de biodiversidad disponibles',
+                height=400
+            )
+            return fig
         
         categorias = ['Shannon', 'Riqueza', 'Abundancia', 'Equitatividad', 'Conservación']
         
@@ -969,7 +982,13 @@ class Visualizaciones:
             
             return fig
         except Exception as e:
-            return None
+            # Gráfico de respaldo
+            fig = go.Figure()
+            fig.update_layout(
+                title='Error al generar gráfico de biodiversidad',
+                height=400
+            )
+            return fig
     
     @staticmethod
     def crear_grafico_comparativo(puntos_carbono, puntos_ndvi, puntos_ndwi, puntos_biodiversidad):
@@ -1241,7 +1260,6 @@ def cargar_archivo(uploaded_file):
     try:
         if uploaded_file.name.endswith('.kml'):
             # Para KML simple
-            import xml.etree.ElementTree as ET
             content = uploaded_file.read().decode('utf-8')
             
             # Buscar coordenadas
@@ -1457,8 +1475,8 @@ def mostrar_mapas_calor():
     """Muestra todos los mapas de calor disponibles"""
     st.header("🗺️ Mapas de Calor - Análisis Multivariable")
     
-    # Crear subtabs para diferentes mapas
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    # CORREGIDO: Ahora hay 6 tabs y 6 variables
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "🌍 Área de Estudio", 
         "🌳 Carbono", 
         "📈 NDVI", 
@@ -1586,8 +1604,11 @@ def mostrar_mapas_calor():
                     shannon_vals = [p['indice_shannon'] for p in st.session_state.resultados['puntos_biodiversidad']]
                     st.metric("Rango Shannon", f"{min(shannon_vals):.2f} - {max(shannon_vals):.2f}")
                 with col3:
-                    categoria = st.session_state.resultados['puntos_biodiversidad'][0]['categoria']
-                    st.metric("Categoría", categoria)
+                    if st.session_state.resultados['puntos_biodiversidad']:
+                        categoria = st.session_state.resultados['puntos_biodiversidad'][0]['categoria']
+                        st.metric("Categoría", categoria)
+                    else:
+                        st.metric("Categoría", "N/A")
             else:
                 st.warning("No se pudo generar el mapa de biodiversidad.")
         else:
@@ -1980,16 +2001,19 @@ def mostrar_comparacion():
         if all(k in res for k in ['puntos_carbono', 'puntos_ndvi', 'puntos_ndwi', 'puntos_biodiversidad']):
             # Calcular correlaciones
             try:
-                carbono_vals = [p['carbono_ton_ha'] for p in res['puntos_carbono'][:100]]
-                ndvi_vals = [p['ndvi'] for p in res['puntos_ndvi'][:100]]
-                ndwi_vals = [p['ndwi'] for p in res['puntos_ndwi'][:100]]
-                shannon_vals = [p['indice_shannon'] for p in res['puntos_biodiversidad'][:100]]
+                # Tomar hasta 100 puntos para no saturar
+                n = min(100, len(res['puntos_carbono']))
+                
+                carbono_vals = [p['carbono_ton_ha'] for p in res['puntos_carbono'][:n]]
+                ndvi_vals = [p['ndvi'] for p in res['puntos_ndvi'][:n]]
+                ndwi_vals = [p['ndwi'] for p in res['puntos_ndwi'][:n]]
+                shannon_vals = [p['indice_shannon'] for p in res['puntos_biodiversidad'][:n]]
                 
                 # Calcular coeficientes de correlación
-                corr_carbono_ndvi = np.corrcoef(carbono_vals, ndvi_vals)[0, 1]
-                corr_carbono_shannon = np.corrcoef(carbono_vals, shannon_vals)[0, 1]
-                corr_ndvi_shannon = np.corrcoef(ndvi_vals, shannon_vals)[0, 1]
-                corr_ndwi_shannon = np.corrcoef(ndwi_vals, shannon_vals)[0, 1]
+                corr_carbono_ndvi = np.corrcoef(carbono_vals, ndvi_vals)[0, 1] if len(carbono_vals) > 1 else 0
+                corr_carbono_shannon = np.corrcoef(carbono_vals, shannon_vals)[0, 1] if len(carbono_vals) > 1 else 0
+                corr_ndvi_shannon = np.corrcoef(ndvi_vals, shannon_vals)[0, 1] if len(ndvi_vals) > 1 else 0
+                corr_ndwi_shannon = np.corrcoef(ndwi_vals, shannon_vals)[0, 1] if len(ndwi_vals) > 1 else 0
                 
                 # Mostrar en métricas
                 col1, col2, col3, col4 = st.columns(4)
