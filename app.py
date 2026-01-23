@@ -44,6 +44,16 @@ import random
 from dataclasses import dataclass
 from enum import Enum
 
+# ✅ AÑADIR: Librerías para manejar KML
+try:
+    from fastkml import kml
+    from fastkml import geometry as kgeo
+    import xml.etree.ElementTree as ET
+    KML_SUPPORT = True
+except ImportError:
+    KML_SUPPORT = False
+    st.warning("⚠️ fastkml no está instalado. Para soporte completo de KML, instálelo con: pip install fastkml")
+
 # ===============================
 # 🌦️ CONECTOR CLIMÁTICO TROPICAL (NASA POWER, OPEN-METEO, WORLDCLIM)
 # ===============================
@@ -1789,7 +1799,7 @@ def main():
         # Carga de archivo con mejor manejo de errores
         uploaded_file = st.file_uploader(
             "📁 Cargar polígono de estudio",
-            type=['kml', 'geojson', 'zip'],
+            type=['kml', 'geojson', 'zip', 'json'],
             help="Formatos: KML, GeoJSON, Shapefile (ZIP)"
         )
         if uploaded_file is not None:
@@ -1797,8 +1807,61 @@ def main():
                 try:
                     gdf = None
                     if uploaded_file.name.endswith('.kml'):
-                        gdf = gpd.read_file(uploaded_file, driver='KML')
-                    elif uploaded_file.name.endswith('.geojson'):
+                        # ✅ CORRECCIÓN: Manejo mejorado de archivos KML
+                        if KML_SUPPORT:
+                            # Usar fastkml para leer KML
+                            content = uploaded_file.read().decode('utf-8')
+                            k = kml.KML()
+                            k.from_string(content)
+                            geometries = []
+                            
+                            # Extraer geometrías del KML
+                            for feature in k.features():
+                                if hasattr(feature, 'geometry'):
+                                    geometries.append(feature.geometry)
+                                elif hasattr(feature, 'features'):
+                                    for sub_feature in feature.features():
+                                        if hasattr(sub_feature, 'geometry'):
+                                            geometries.append(sub_feature.geometry)
+                            
+                            if geometries:
+                                gdf = gpd.GeoDataFrame(geometry=geometries, crs="EPSG:4326")
+                            else:
+                                st.error("No se encontraron geometrías en el archivo KML")
+                        else:
+                            st.error("""
+                            **Soporte KML no disponible.**
+                            
+                            Instale la biblioteca necesaria:
+                            ```bash
+                            pip install fastkml
+                            ```
+                            
+                            O convierta el archivo KML a GeoJSON usando:
+                            - [Online KML to GeoJSON Converter](https://mygeodata.cloud/converter/kml-to-geojson)
+                            - QGIS Desktop
+                            """)
+                            # Intentar leer como XML simple como fallback
+                            try:
+                                import xml.etree.ElementTree as ET
+                                content = uploaded_file.read().decode('utf-8')
+                                root = ET.fromstring(content)
+                                # Buscar coordenadas simples (muy básico)
+                                import re
+                                coords = re.findall(r'-?\d+\.\d+,-?\d+\.\d+', content)
+                                if coords:
+                                    points = []
+                                    for coord in coords:
+                                        lon, lat = map(float, coord.split(','))
+                                        points.append((lon, lat))
+                                    if len(points) >= 3:
+                                        polygon = Polygon(points)
+                                        gdf = gpd.GeoDataFrame(geometry=[polygon], crs="EPSG:4326")
+                                        st.warning("⚠️ KML leído con método básico. Para mejor precisión, convierta a GeoJSON.")
+                            except:
+                                st.error("No se pudo leer el archivo KML")
+                    
+                    elif uploaded_file.name.endswith('.geojson') or uploaded_file.name.endswith('.json'):
                         gdf = gpd.read_file(uploaded_file)
                     elif uploaded_file.name.endswith('.zip'):
                         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1807,6 +1870,7 @@ def main():
                             shp_files = [f for f in os.listdir(tmpdir) if f.endswith('.shp')]
                             if shp_files:
                                 gdf = gpd.read_file(os.path.join(tmpdir, shp_files[0]))
+                    
                     if gdf is not None and not gdf.empty:
                         # Verificar que tenga geometría válida
                         if 'geometry' not in gdf.columns:
