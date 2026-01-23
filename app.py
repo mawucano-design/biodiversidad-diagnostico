@@ -1903,10 +1903,10 @@ def main():
                         try:
                             # ✅ CORRECCIÓN: Uso de argumentos nombrados
                            resultados = st.session_state.sistema_analisis.analizar_area_completa(
-                           gdf=st.session_state.poligono_data,
-                           tipo_ecosistema=tipo_ecosistema,
-                           satelite=satelite,  # 👈 Nombre correcto según la firma del método
-                           n_divisiones=nivel_detalle
+                               gdf=st.session_state.poligono_data,
+                               tipo_ecosistema=tipo_ecosistema,
+                               satelite=satelite,  # 👈 Nombre correcto según la firma del método
+                               n_divisiones=nivel_detalle
                             )
                             if resultados:
                                 st.session_state.resultados = resultados
