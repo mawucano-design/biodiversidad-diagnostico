@@ -538,13 +538,8 @@ class AnalisisCarbonoVerra:
                     interseccion = poligono_principal.intersection(celda)
                     if not interseccion.is_empty:
                         # 🔥 CORRECCIÓN: Cálculo preciso de área en hectáreas
-                        # Proyectar a CRS igual-área (World Cylindrical Equal Area)
-                        if gdf.crs != "EPSG:4326":
-                            gdf_local = gdf.to_crs("EPSG:4326")
-                        else:
-                            gdf_local = gdf.copy()
                         inter_gdf = gpd.GeoDataFrame(geometry=[interseccion], crs="EPSG:4326")
-                        inter_gdf = inter_gdf.to_crs("EPSG:3857")  # o EPSG:6933 para mejor precisión en trópicos
+                        inter_gdf = inter_gdf.to_crs("EPSG:3857")  # Equal-area projection
                         area_m2 = inter_gdf.geometry.area.iloc[0]
                         area_ha = area_m2 / 10000
 
@@ -1574,7 +1569,7 @@ class SistemaAnalisisAmbiental:
             'Zona urbana consolidada': 'suelo_desnudo'
         }
 
-    def analizar_area_completa(self, gdf, tipo_ecosistema, satelite_seleccionado, n_divisiones=8):
+    def analizar_area_completa(self, gdf, tipo_ecosistema, satelite, n_divisiones=8):
         try:
             if len(gdf) > 1:
                 poligono_principal = self._unificar_poligonos(gdf)
@@ -1584,8 +1579,8 @@ class SistemaAnalisisAmbiental:
 
             bounds = poligono_principal.bounds
 
-            satelite = Satelite.PLANETSCOPE if satelite_seleccionado == "PlanetScope" else Satelite.SENTINEL2
-            imagen = self.simulador.generar_imagen_satelital(satelite)
+            satelite_enum = Satelite.PLANETSCOPE if satelite == "PlanetScope" else Satelite.SENTINEL2
+            imagen = self.simulador.generar_imagen_satelital(satelite_enum)
 
             resultados = {
                 'metadatos_imagen': {
@@ -1598,7 +1593,7 @@ class SistemaAnalisisAmbiental:
                 'areas': [],
                 'resumen': {},
                 'tipo_ecosistema': tipo_ecosistema,
-                'satelite_usado': satelite_seleccionado,
+                'satelite_usado': satelite,
                 'poligonos_unificados': True if len(gdf) > 1 else False
             }
 
@@ -1630,8 +1625,8 @@ class SistemaAnalisisAmbiental:
                             temperatura, fuente_temp = self.conector_clima.obtener_temperatura_promedio(lat_centro, lon_centro)
                             reflectancias = {}
                             for banda in imagen.bandas_disponibles[:5]:
-                                reflectancias[banda] = self.simulador.simular_reflectancia(tipo_cobertura, banda, satelite)
-                            indices = self.simulador.calcular_indices(reflectancias, satelite)
+                                reflectancias[banda] = self.simulador.simular_reflectancia(tipo_cobertura, banda, satelite_enum)
+                            indices = self.simulador.calcular_indices(reflectancias, satelite_enum)
                             ndvi = indices.get('NDVI', 0.5)
                             indice_shannon = 2.0 + (ndvi * 2.0) + (math.log10(area_ha + 1) * 0.5)
                             indice_shannon = max(0.1, min(4.0, indice_shannon + random.uniform(-0.3, 0.3)))
@@ -1901,12 +1896,12 @@ def main():
                 if st.button("🚀 Ejecutar Análisis Completo", use_container_width=True):
                     with st.spinner("Procesando datos satelitales y climáticos..."):
                         try:
-                            # ✅ CORRECCIÓN: Uso de argumentos nombrados
-                           resultados = st.session_state.sistema_analisis.analizar_area_completa(
-                               gdf=st.session_state.poligono_data,
-                               tipo_ecosistema=tipo_ecosistema,
-                               satelite=satelite,  # 👈 Nombre correcto según la firma del método
-                               n_divisiones=nivel_detalle
+                            # ✅ CORRECCIÓN FINAL: uso correcto del parámetro 'satelite'
+                            resultados = st.session_state.sistema_analisis.analizar_area_completa(
+                                gdf=st.session_state.poligono_data,
+                                tipo_ecosistema=tipo_ecosistema,
+                                satelite=satelite,  # 👈 Nombre correcto según la firma del método
+                                n_divisiones=nivel_detalle
                             )
                             if resultados:
                                 st.session_state.resultados = resultados
