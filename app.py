@@ -172,7 +172,6 @@ def mostrar_mapa_seguro(mapa, width=1000, height=600):
     except Exception as e:
         st.warning(f"Error al renderizar el mapa: {str(e)}")
         try:
-            from streamlit_folium import folium_static
             folium_static(mapa, width=width, height=height)
         except:
             st.error("No se pudo mostrar el mapa. Intente recargar la página.")
@@ -701,7 +700,7 @@ class AnalisisCarbonoVerra:
 # 🛰️ ENUMERACIONES Y CLASES DE DATOS SATELITALES
 # ===============================
 class Satelite(Enum):
-    PLANETSCOPE = "PlanetScope"  # ✅ CORREGIDO: Añadido
+    PLANETSCOPE = "PlanetScope"
     SENTINEL2 = "Sentinel-2"
     LANDSAT8 = "Landsat-8"
     MODIS = "MODIS"
@@ -818,15 +817,21 @@ class SimuladorSatelital:
             if satelite == Satelite.SENTINEL2:
                 blue = reflectancias.get('B2', 0.05)
                 indices['EVI'] = 2.5 * ((nir - red) / (nir + 6 * red - 7.5 * blue + 1))
+            else:
+                indices['EVI'] = indices['NDVI'] * 1.2
+
+            if satelite == Satelite.SENTINEL2:
                 green = reflectancias.get('B3', 0.08)
                 nir2 = reflectancias.get('B8A', nir)
                 indices['NDWI'] = (green - nir2) / (green + nir2)
-                indices['GNDVI'] = (nir - green) / (nir + green)
             else:
-                indices['EVI'] = indices['NDVI'] * 1.2
                 indices['NDWI'] = -indices['NDVI'] * 0.5
 
             indices['MSAVI'] = (2 * nir + 1 - np.sqrt((2 * nir + 1)**2 - 8 * (nir - red))) / 2
+
+            if satelite == Satelite.SENTINEL2:
+                green = reflectancias.get('B3', 0.08)
+                indices['GNDVI'] = (nir - green) / (nir + green)
 
             ndvi_val = indices['NDVI']
             if ndvi_val > 0.7:
@@ -847,7 +852,6 @@ class SimuladorSatelital:
                 'EVI': 0.3,
                 'NDWI': 0.1,
                 'MSAVI': 0.4,
-                'GNDVI': 0.3,
                 'Salud_Vegetacion': 'Moderada'
             }
         return indices
@@ -1538,14 +1542,7 @@ class SistemaAnalisisAmbiental:
 
             bounds = poligono_principal.bounds
 
-            # ✅ CORRECCIÓN: Convertir string a Enum correctamente
-            if satelite == "PlanetScope":
-                satelite_enum = Satelite.PLANETSCOPE
-            elif satelite == "Sentinel-2":
-                satelite_enum = Satelite.SENTINEL2
-            else:
-                satelite_enum = Satelite.SENTINEL2  # default
-
+            satelite_enum = Satelite.PLANETSCOPE if satelite == "PlanetScope" else Satelite.SENTINEL2
             imagen = self.simulador.generar_imagen_satelital(satelite_enum)
 
             resultados = {
@@ -1709,6 +1706,18 @@ class SistemaAnalisisAmbiental:
 # 🎨 INTERFAZ PRINCIPAL DE LA APLICACIÓN - VERSIÓN CORREGIDA
 # ===============================
 def main():
+    # Inicializar session state
+    if 'sistema_analisis' not in st.session_state:
+        st.session_state.sistema_analisis = SistemaAnalisisAmbiental()
+    if 'resultados' not in st.session_state:
+        st.session_state.resultados = None
+    if 'poligono_data' not in st.session_state:
+        st.session_state.poligono_data = None
+    if 'resultados_carbono' not in st.session_state:
+        st.session_state.resultados_carbono = None
+    if 'analisis_carbono_realizado' not in st.session_state:
+        st.session_state.analisis_carbono_realizado = False
+    
     # Título principal
     st.title("🛰️ Sistema Satelital de Análisis Ambiental - Sudamérica")
     st.markdown("### 🌎 Clasificación SIB | Datos Climáticos Reales | Verra VCS para Carbono")
@@ -1730,34 +1739,16 @@ def main():
         - Ecuaciones alométricas de Chave et al. (2014) para trópicos
         """)
 
-    # Inicializar sistemas con manejo de errores
-    try:
-        if 'sistema_analisis' not in st.session_state:
-            st.session_state.sistema_analisis = SistemaAnalisisAmbiental()
-        if 'resultados' not in st.session_state:
-            st.session_state.resultados = None
-        if 'poligono_data' not in st.session_state:
-            st.session_state.poligono_data = None
-        if 'resultados_carbono' not in st.session_state:
-            st.session_state.resultados_carbono = None
-        if 'analisis_carbono_realizado' not in st.session_state:
-            st.session_state.analisis_carbono_realizado = False
-        if 'tipo_ecosistema_seleccionado' not in st.session_state:
-            st.session_state.tipo_ecosistema_seleccionado = None
-    except Exception as e:
-        st.error(f"Error al inicializar el sistema: {str(e)}")
-        st.info("Por favor, recarga la página e intenta nuevamente.")
-        return
-
     # Sidebar
     with st.sidebar:
         st.header("⚙️ Configuración del Análisis")
-        # Carga de archivo con mejor manejo de errores
+        # Carga de archivo
         uploaded_file = st.file_uploader(
             "📁 Cargar polígono de estudio",
             type=['kml', 'geojson', 'zip'],
             help="Formatos: KML, GeoJSON, Shapefile (ZIP)"
         )
+        
         if uploaded_file is not None:
             with st.spinner("Procesando archivo..."):
                 try:
@@ -1864,8 +1855,6 @@ def main():
                 help="Clasificación adaptada para Sudamérica con énfasis en trópicos"
             )
 
-            # Guardar el tipo de ecosistema seleccionado
-            st.session_state.tipo_ecosistema_seleccionado = tipo_ecosistema
             nivel_detalle = st.slider("Nivel de detalle (divisiones)", 4, 12, 8)
 
             col1, col2 = st.columns(2)
@@ -1873,18 +1862,16 @@ def main():
                 if st.button("🚀 Ejecutar Análisis Completo", use_container_width=True):
                     with st.spinner("Procesando datos satelitales y climáticos..."):
                         try:
-                            # ✅ CORRECCIÓN FINAL: uso correcto del parámetro 'satelite'
                             resultados = st.session_state.sistema_analisis.analizar_area_completa(
                                 gdf=st.session_state.poligono_data,
                                 tipo_ecosistema=tipo_ecosistema,
-                                satelite=satelite,  # 👈 Nombre correcto según la firma del método
+                                satelite=satelite,
                                 n_divisiones=nivel_detalle
                             )
                             if resultados:
                                 st.session_state.resultados = resultados
                                 st.session_state.analisis_carbono_realizado = False
                                 st.success("✅ Análisis ambiental completado!")
-                                st.rerun()  # 🔥 AÑADIDO: actualiza la UI
                             else:
                                 st.error("No se pudieron generar resultados")
                         except Exception as e:
@@ -1905,7 +1892,6 @@ def main():
                                 st.session_state.resultados_carbono = resultados_carbono
                                 st.session_state.analisis_carbono_realizado = True
                                 st.success("✅ Análisis de carbono Verra completado!")
-                                st.rerun()  # 🔥 AÑADIDO: actualiza la UI
                             else:
                                 st.error("No se pudieron generar resultados de carbono")
                         except Exception as e:
@@ -1924,7 +1910,6 @@ def main():
     ])
 
     with tab1:
-        # ✅ Sin selector de capa base: siempre ESRI
         mostrar_mapa_satelital()
     with tab2:
         mostrar_dashboard_ejecutivo()
@@ -1983,8 +1968,19 @@ def mostrar_dashboard_ejecutivo():
             )
             if dashboard_html:
                 st.markdown(dashboard_html, unsafe_allow_html=True)
-            else:
-                st.warning("No se pudo generar el dashboard")
+            
+            # Gráficos adicionales
+            col1, col2 = st.columns(2)
+            with col1:
+                radar_fig = st.session_state.sistema_analisis.dashboard.crear_grafico_radar(st.session_state.resultados)
+                if radar_fig:
+                    st.plotly_chart(radar_fig, use_container_width=True)
+            
+            with col2:
+                barras_fig = st.session_state.sistema_analisis.dashboard.crear_grafico_barras_apiladas(st.session_state.resultados)
+                if barras_fig:
+                    st.plotly_chart(barras_fig, use_container_width=True)
+                    
         except Exception as e:
             st.error(f"Error al mostrar el dashboard: {str(e)}")
     else:
@@ -1996,6 +1992,7 @@ def mostrar_indices_vegetacion():
     if st.session_state.resultados is None:
         st.warning("Ejecuta el análisis ambiental primero")
         return
+    
     try:
         resultados = st.session_state.resultados
         areas = resultados.get('areas', [])
@@ -2047,22 +2044,41 @@ def mostrar_analisis_carbono():
     if st.session_state.resultados_carbono is None:
         st.error("No hay datos de carbono para mostrar")
         return
+    
     try:
         resultados = st.session_state.resultados_carbono
         resumen = resultados.get('resumen_carbono', {})
+        
         if resumen:
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Carbono Total", f"{resumen.get('carbono_total_ton', 0):,.0f} ton C")
-            with col2:
-                st.metric("CO₂ Equivalente", f"{resumen.get('co2_total_ton', 0):,.0f} ton CO₂e")
-            with col3:
-                st.metric("Área Total", f"{resumen.get('area_total_ha', 0):,.1f} ha")
+            # Mostrar dashboard de carbono
+            dashboard_html = st.session_state.sistema_analisis.dashboard.crear_dashboard_carbono(resultados)
+            if dashboard_html:
+                st.markdown(dashboard_html, unsafe_allow_html=True)
+            
+            # Mostrar gráficos de carbono
             col1, col2 = st.columns(2)
             with col1:
-                st.metric("Carbono Promedio", f"{resumen.get('carbono_promedio_ton_ha', 0):,.1f} ton C/ha")
+                pools_fig = st.session_state.sistema_analisis.dashboard.crear_grafico_pools_carbono(resultados)
+                if pools_fig:
+                    st.plotly_chart(pools_fig, use_container_width=True)
+            
             with col2:
-                st.metric("Precipitación", f"{resumen.get('precipitacion_promedio_mm', 0):,.0f} mm/año")
+                estratos_fig = st.session_state.sistema_analisis.dashboard.crear_grafico_estratos_vcs(resultados)
+                if estratos_fig:
+                    st.plotly_chart(estratos_fig, use_container_width=True)
+            
+            # Mostrar mapa de carbono si hay datos
+            if resultados.get('analisis_carbono'):
+                st.markdown("### 🗺️ Mapa de Distribución de Carbono")
+                gdf = st.session_state.poligono_data
+                if gdf is not None:
+                    mapa_carbono = st.session_state.sistema_analisis.sistema_mapas.crear_mapa_carbono(
+                        gdf,
+                        resultados['analisis_carbono'],
+                        "Carbono según Verra VCS"
+                    )
+                    if mapa_carbono:
+                        mostrar_mapa_seguro(mapa_carbono, width=1000, height=600)
         else:
             st.warning("No hay resumen disponible")
     except Exception as e:
@@ -2077,40 +2093,41 @@ def mostrar_reporte_verra():
     if st.session_state.resultados_carbono is None:
         st.error("No hay datos de carbono para mostrar")
         return
+    
     try:
         resultados = st.session_state.resultados_carbono
-        st.markdown("### 📊 Resumen del Proyecto")
-        if st.session_state.poligono_data is not None:
-            gdf = st.session_state.poligono_data
-            bounds = gdf.total_bounds
-            centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("**Ubicación:**")
-                st.markdown(f"- Centro: {centro[0]:.4f}°, {centro[1]:.4f}°")
-                st.markdown(f"- Extensión: {bounds[0]:.4f}° a {bounds[2]:.4f}° (long)")
-                st.markdown(f"- Extensión: {bounds[1]:.4f}° a {bounds[3]:.4f}° (lat)")
-            with col2:
-                st.markdown("**Metodología:**")
-                st.markdown("- Verra VCS VM0007")
-                st.markdown("- Datos climáticos: NASA POWER/Open-Meteo")
-                st.markdown(f"- Fecha: {datetime.now().strftime('%Y-%m-%d')}")
-
-        resumen = resultados.get('resumen_carbono', {})
-        if resumen:
-            st.markdown("### 🌳 Resultados de Carbono")
-            data = {
-                'Métrica': ['Carbono Total', 'CO₂ Equivalente', 'Área Total', 'Carbono Promedio/ha', 'Precipitación'],
-                'Valor': [
-                    f"{resumen.get('carbono_total_ton', 0):,.0f} ton C",
-                    f"{resumen.get('co2_total_ton', 0):,.0f} ton CO₂e",
-                    f"{resumen.get('area_total_ha', 0):,.1f} ha",
-                    f"{resumen.get('carbono_promedio_ton_ha', 0):,.1f} ton C/ha",
-                    f"{resumen.get('precipitacion_promedio_mm', 0):,.0f} mm/año"
-                ]
-            }
-            df = pd.DataFrame(data)
-            st.table(df)
+        
+        # Generar reporte
+        metodologia = MetodologiaVerra()
+        if resultados.get('analisis_carbono'):
+            area_total = sum(area.get('area_ha', 0) for area in resultados['analisis_carbono'])
+            if st.session_state.poligono_data is not None:
+                gdf = st.session_state.poligono_data
+                bounds = gdf.total_bounds
+                centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
+                coordenadas = f"{centro[0]:.4f}°, {centro[1]:.4f}°"
+            else:
+                coordenadas = "No disponible"
+            
+            if resultados['analisis_carbono']:
+                carbono_promedio = resultados['analisis_carbono'][0].get('carbono_por_ha', 0)
+                datos_carbono = {
+                    'carbono_total_ton_ha': carbono_promedio,
+                    'co2_equivalente_ton_ha': carbono_promedio * 3.67,
+                    'desglose': resultados['analisis_carbono'][0].get('desglose_carbono', {}),
+                    'factores_aplicados': resultados['analisis_carbono'][0].get('factores_aplicados', {})
+                }
+                
+                reporte = metodologia.generar_reporte_vcs(datos_carbono, area_total, coordenadas)
+                st.text_area("Reporte Completo Verra VCS", reporte, height=600)
+                
+                # Botón para descargar
+                st.download_button(
+                    label="📥 Descargar Reporte VCS",
+                    data=reporte,
+                    file_name=f"reporte_verra_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                    mime="text/plain"
+                )
     except Exception as e:
         st.error(f"Error al mostrar reporte Verra: {str(e)}")
 
@@ -2122,16 +2139,18 @@ def mostrar_datos_completos():
         ["Datos Ambientales", "Datos de Carbono"],
         horizontal=True
     )
+    
     try:
         if tipo_datos == "Datos Ambientales":
             if st.session_state.resultados is None:
                 st.warning("Ejecuta el análisis ambiental primero")
                 return
+            
             resultados = st.session_state.resultados
             areas = resultados.get('areas', [])
             if areas:
                 datos = []
-                for area in areas[:50]:
+                for area in areas[:50]:  # Limitar a 50 filas para rendimiento
                     datos.append({
                         'ID': area.get('id', ''),
                         'Área (ha)': area.get('area_ha', 0),
@@ -2154,11 +2173,12 @@ def mostrar_datos_completos():
             if st.session_state.resultados_carbono is None:
                 st.error("No hay datos de carbono")
                 return
+            
             resultados = st.session_state.resultados_carbono
             areas_carbono = resultados.get('analisis_carbono', [])
             if areas_carbono:
                 datos = []
-                for area in areas_carbono[:50]:
+                for area in areas_carbono[:50]:  # Limitar a 50 filas
                     datos.append({
                         'ID': area.get('id', ''),
                         'Área (ha)': area.get('area_ha', 0),
@@ -2182,10 +2202,4 @@ def mostrar_datos_completos():
 # 🚀 EJECUCIÓN PRINCIPAL
 # ===============================
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        st.error(f"Error crítico en la aplicación: {str(e)}")
-        import traceback
-        st.error(traceback.format_exc())
-        st.info("Por favor, recarga la página e intenta nuevamente.")
+    main()
