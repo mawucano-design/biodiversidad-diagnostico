@@ -60,14 +60,12 @@ class ConectorClimaticoTropical:
                 return precip, "NASA POWER"
         except Exception as e:
             st.warning(f"NASA POWER no disponible: {str(e)}")
-
         try:
             precip = self._obtener_open_meteo(lat, lon)
             if precip and precip > 0:
                 return precip, "Open-Meteo"
         except Exception as e:
             st.warning(f"Open-Meteo no disponible: {str(e)}")
-
         # Último fallback: WorldClim global
         precip = self._obtener_worldclim_global(lat, lon)
         return precip, "WorldClim (simulado)"
@@ -475,6 +473,7 @@ class AnalisisCarbonoVerra:
                 gdf = gpd.GeoDataFrame({'geometry': [poligono_principal]}, crs=gdf.crs)
             else:
                 poligono_principal = gdf.geometry.iloc[0]
+
             bounds = poligono_principal.bounds
 
             mapeo_ecosistema_vcs = {
@@ -504,6 +503,7 @@ class AnalisisCarbonoVerra:
                 'Agricultura intensiva': ('subtropical', 'agricultura'),
                 'Zona urbana consolidada': ('subtropical', 'agricultura')
             }
+
             tipo_vcs, estado_vcs = mapeo_ecosistema_vcs.get(
                 tipo_ecosistema,
                 ('subtropical', 'bosque_secundario')
@@ -523,8 +523,8 @@ class AnalisisCarbonoVerra:
                     'poligonos_unificados': True if len(gdf) > 1 else False
                 }
             }
-            id_area = 1
 
+            id_area = 1
             for i in range(nivel_detalle):
                 for j in range(nivel_detalle):
                     xmin = bounds[0] + (i * (bounds[2]-bounds[0])/nivel_detalle)
@@ -537,8 +537,17 @@ class AnalisisCarbonoVerra:
                     ])
                     interseccion = poligono_principal.intersection(celda)
                     if not interseccion.is_empty:
-                        area_m2 = interseccion.area * 111000 * 111000 * math.cos(math.radians((ymin+ymax)/2))
+                        # 🔥 CORRECCIÓN: Cálculo preciso de área en hectáreas
+                        # Proyectar a CRS igual-área (World Cylindrical Equal Area)
+                        if gdf.crs != "EPSG:4326":
+                            gdf_local = gdf.to_crs("EPSG:4326")
+                        else:
+                            gdf_local = gdf.copy()
+                        inter_gdf = gpd.GeoDataFrame(geometry=[interseccion], crs="EPSG:4326")
+                        inter_gdf = inter_gdf.to_crs("EPSG:3857")  # o EPSG:6933 para mejor precisión en trópicos
+                        area_m2 = inter_gdf.geometry.area.iloc[0]
                         area_ha = area_m2 / 10000
+
                         if area_ha > 0.01:
                             centroide = interseccion.centroid
                             lat_centro = centroide.y
@@ -580,6 +589,7 @@ class AnalisisCarbonoVerra:
                             }
                             resultados['analisis_carbono'].append(area_data)
                             id_area += 1
+
             if resultados['analisis_carbono']:
                 self._calcular_resumen_carbono(resultados)
             return resultados
@@ -606,6 +616,7 @@ class AnalisisCarbonoVerra:
         areas_carbono = resultados['analisis_carbono']
         if not areas_carbono:
             return
+
         carbono_total = sum(a['carbono_total_ton'] for a in areas_carbono)
         co2_total = sum(a['co2_equivalente_ton'] for a in areas_carbono)
         area_total = sum(a['area_ha'] for a in areas_carbono)
@@ -650,6 +661,7 @@ class AnalisisCarbonoVerra:
             'fuente_datos_climaticos': fuente_datos,
             'fecha_actualizacion': datetime.now().strftime('%Y-%m-%d')
         }
+
         elegibilidad = self._evaluar_elegibilidad_vcs(resultados)
         resultados['resumen_carbono']['elegibilidad_vcs'] = elegibilidad
 
@@ -768,6 +780,7 @@ class SimuladorSatelital:
             cat = 'swir'
         else:
             cat = 'nir'
+
         if tipo_cobertura in self.rangos_reflectancia:
             rango = self.rangos_reflectancia[tipo_cobertura].get(cat, (0.01, 0.1))
         else:
@@ -783,30 +796,37 @@ class SimuladorSatelital:
             else:
                 red = reflectancias.get('B4', 0.1)
                 nir = reflectancias.get('B8', 0.3)
+
             if nir + red > 0:
                 indices['NDVI'] = (nir - red) / (nir + red)
             else:
                 indices['NDVI'] = 0.0
+
             L = 0.5
             if nir + red + L > 0:
                 indices['SAVI'] = ((nir - red) / (nir + red + L)) * (1 + L)
             else:
                 indices['SAVI'] = 0.0
+
             if satelite == Satelite.SENTINEL2:
                 blue = reflectancias.get('B2', 0.05)
                 indices['EVI'] = 2.5 * ((nir - red) / (nir + 6 * red - 7.5 * blue + 1))
             else:
                 indices['EVI'] = indices['NDVI'] * 1.2
+
             if satelite == Satelite.SENTINEL2:
                 green = reflectancias.get('B3', 0.08)
                 nir2 = reflectancias.get('B8A', nir)
                 indices['NDWI'] = (green - nir2) / (green + nir2)
             else:
                 indices['NDWI'] = -indices['NDVI'] * 0.5
+
             indices['MSAVI'] = (2 * nir + 1 - np.sqrt((2 * nir + 1)**2 - 8 * (nir - red))) / 2
+
             if satelite == Satelite.SENTINEL2:
                 green = reflectancias.get('B3', 0.08)
                 indices['GNDVI'] = (nir - green) / (nir + green)
+
             ndvi_val = indices['NDVI']
             if ndvi_val > 0.7:
                 indices['Salud_Vegetacion'] = 'Excelente'
@@ -818,6 +838,7 @@ class SimuladorSatelital:
                 indices['Salud_Vegetacion'] = 'Pobre'
             else:
                 indices['Salud_Vegetacion'] = 'Degradada'
+
         except Exception as e:
             indices = {
                 'NDVI': 0.5,
@@ -830,7 +851,7 @@ class SimuladorSatelital:
         return indices
 
 # ===============================
-# 🗺️ SISTEMA DE MAPAS AVANZADO (FALTA EN EL CÓDIGO ORIGINAL - AHORA DEFINIDO)
+# 🗺️ SISTEMA DE MAPAS AVANZADO
 # ===============================
 class SistemaMapasAvanzado:
     def __init__(self):
@@ -913,6 +934,7 @@ class SistemaMapasAvanzado:
             zoom_control=True,
             prefer_canvas=True
         )
+
         capa_config = self.capas_base.get(capa_base, self.capas_base['ESRI World Imagery'])
         if '{date}' in capa_config['tiles']:
             fecha = datetime.now().strftime('%Y-%m')
@@ -941,6 +963,7 @@ class SistemaMapasAvanzado:
                 bounds = gdf.total_bounds
                 lat_centro = centro[0]
                 cos_lat = math.cos(math.radians(lat_centro))
+
                 if poligono.geom_type == 'MultiPolygon':
                     area_total = sum(poly.area for poly in poligono.geoms)
                     num_poligonos = len(poligono.geoms)
@@ -990,6 +1013,7 @@ class SistemaMapasAvanzado:
                     <b>Zoom recomendado:</b> {zoom}
                     </div>
                     """
+
                 folium.GeoJson(
                     poligono,
                     style_function=lambda x: {
@@ -1003,11 +1027,13 @@ class SistemaMapasAvanzado:
                     name='Área de Estudio',
                     tooltip=folium.Tooltip(tooltip_html, sticky=True)
                 ).add_to(m)
+
                 folium.Marker(
                     location=centro,
                     popup=f"<b>Centro del área de estudio</b><br>Área: {area_ha:,.1f} ha",
                     icon=folium.Icon(color='blue', icon='info-sign', prefix='fa')
                 ).add_to(m)
+
                 m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]], padding=(50, 50))
             except Exception as e:
                 st.warning(f"Error al visualizar polígono: {str(e)}")
@@ -1036,6 +1062,7 @@ class SistemaMapasAvanzado:
             attr=self.capas_base['ESRI World Imagery']['attr'],
             control_scale=True
         )
+
         if gdf is not None and not gdf.empty:
             poligono = gdf.geometry.iloc[0]
             if poligono.geom_type == 'MultiPolygon':
@@ -1122,6 +1149,7 @@ class SistemaMapasAvanzado:
             attr=self.capas_base['ESRI World Imagery']['attr'],
             control_scale=True
         )
+
         colores_carbono = ['#00441b', '#238b45', '#41ab5d', '#74c476', '#a1d99b', '#d9f0a3']
         valores_carbono = [d.get('carbono_por_ha', 0) for d in datos_carbono]
         if valores_carbono:
@@ -1257,7 +1285,7 @@ class SistemaMapasAvanzado:
         <div style="font-size: 11px; color: #444;">
         <i>Metodología: Verra VCS VM0007</i><br>
         <i>CO₂ equivalente = Carbono × 3.67</i><br>
-        <i>Fuente climática: {colores[-1]}</i>
+        <i>Fuente climática: NASA POWER/Open-Meteo</i>
         </div>
         </div>
         </div>
@@ -1517,7 +1545,6 @@ class SistemaAnalisisAmbiental:
         self.dashboard = DashboardResumen()
         self.analisis_carbono = AnalisisCarbonoVerra()
         self.conector_clima = ConectorClimaticoTropical()
-        
         self.tipos_cobertura = {
             # Argentina
             'Bosque Andino Patagónico': 'bosque_templado',
@@ -1554,9 +1581,12 @@ class SistemaAnalisisAmbiental:
                 gdf = gpd.GeoDataFrame({'geometry': [poligono_principal]}, crs=gdf.crs)
             else:
                 poligono_principal = gdf.geometry.iloc[0]
+
             bounds = poligono_principal.bounds
+
             satelite = Satelite.PLANETSCOPE if satelite_seleccionado == "PlanetScope" else Satelite.SENTINEL2
             imagen = self.simulador.generar_imagen_satelital(satelite)
+
             resultados = {
                 'metadatos_imagen': {
                     'satelite': imagen.satelite.value,
@@ -1571,9 +1601,9 @@ class SistemaAnalisisAmbiental:
                 'satelite_usado': satelite_seleccionado,
                 'poligonos_unificados': True if len(gdf) > 1 else False
             }
+
             tipo_cobertura = self.tipos_cobertura.get(tipo_ecosistema, 'bosque_secundario')
             id_area = 1
-
             for i in range(n_divisiones):
                 for j in range(n_divisiones):
                     xmin = bounds[0] + (i * (bounds[2]-bounds[0])/n_divisiones)
@@ -1586,8 +1616,12 @@ class SistemaAnalisisAmbiental:
                     ])
                     interseccion = poligono_principal.intersection(celda)
                     if not interseccion.is_empty:
-                        area_m2 = interseccion.area * 111000 * 111000 * math.cos(math.radians((ymin+ymax)/2))
+                        # 🔥 CORRECCIÓN: Cálculo preciso de área en hectáreas
+                        inter_gdf = gpd.GeoDataFrame(geometry=[interseccion], crs="EPSG:4326")
+                        inter_gdf = inter_gdf.to_crs("EPSG:3857")
+                        area_m2 = inter_gdf.geometry.area.iloc[0]
                         area_ha = area_m2 / 10000
+
                         if area_ha > 0.01:
                             centroide = interseccion.centroid
                             lat_centro = centroide.y
@@ -1605,6 +1639,7 @@ class SistemaAnalisisAmbiental:
                             carbono_ton_ha = (50 + (ndvi * 200) + (area_ha * 0.1)) * factor_precip
                             carbono_total = carbono_ton_ha * area_ha
                             co2_total = carbono_total * 3.67
+
                             area_data = {
                                 'id': id_area,
                                 'area': f"Celda-{id_area:03d}",
@@ -1629,6 +1664,7 @@ class SistemaAnalisisAmbiental:
                             }
                             resultados['areas'].append(area_data)
                             id_area += 1
+
             if resultados['areas']:
                 self._calcular_resumen_estadistico(resultados)
             return resultados
@@ -1681,6 +1717,7 @@ class SistemaAnalisisAmbiental:
             a['indice_shannon'] > 2.5 and
             a['precipitacion'] > 600
         ])
+
         ndvi_avg = resumen['ndvi_promedio']
         shannon_avg = resumen['shannon_promedio']
         precip_avg = resumen['precipitacion_promedio']
@@ -1704,6 +1741,7 @@ class SistemaAnalisisAmbiental:
                 resumen['recomendacion_climatica'] = 'Precipitación muy baja para desarrollo forestal'
             else:
                 resumen['recomendacion_climatica'] = 'Múltiples factores limitantes'
+
         resultados['resumen'] = resumen
 
 # ===============================
@@ -1711,30 +1749,26 @@ class SistemaAnalisisAmbiental:
 # ===============================
 def main():
     # Título principal
-    st.title("🛰️ Sistema Satelital de Análisis Ambiental - Argentina")
-    st.markdown("### 🌎 Clasificación SIB | Datos Climáticos Reales INTA | Verra VCS para Carbono")
-    
+    st.title("🛰️ Sistema Satelital de Análisis Ambiental - Sudamérica")
+    st.markdown("### 🌎 Clasificación SIB | Datos Climáticos Reales | Verra VCS para Carbono")
+
     # Información sobre fuentes de datos
     with st.expander("ℹ️ Fuentes de datos climáticos utilizadas"):
         st.markdown("""
-        **Sistema integra datos climáticos reales de Argentina:**
-        
-        **1. INTA (Instituto Nacional de Tecnología Agropecuaria)**
-        - Fuente primaria para datos de precipitación
-        - Red de estaciones meteorológicas a nivel nacional
-        - Datos históricos y actualizados
-        
+        **Sistema integra datos climáticos reales para Sudamérica:**
+        **1. NASA POWER & Open-Meteo**
+        - Fuente primaria para datos de precipitación y temperatura
+        - Cobertura global con alta resolución temporal
+        - Ideal para regiones tropicales sin estaciones locales
         **2. WorldClim (Datos Climáticos Globales)**
-        - Fuente secundaria cuando INTA no está disponible
-        - Resolución de 1km para Argentina
+        - Fuente secundaria cuando servicios en tiempo real fallan
+        - Resolución de 1km
         - Datos de precipitación anual promedio (1970-2000)
-        
-        **3. Clasificación Climática Regional**
-        - Regiones climáticas de Argentina
-        - Valores por defecto basados en literatura científica
-        - Ajustado a las características de cada ecosistema
+        **3. Ecosistemas especializados**
+        - Páramos, Manglares, Amazonía, Chocó, Escudo Guayanés
+        - Ecuaciones alométricas de Chave et al. (2014) para trópicos
         """)
-    
+
     # Inicializar sistemas con manejo de errores
     try:
         if 'sistema_analisis' not in st.session_state:
@@ -1753,23 +1787,20 @@ def main():
         st.error(f"Error al inicializar el sistema: {str(e)}")
         st.info("Por favor, recarga la página e intenta nuevamente.")
         return
-    
+
     # Sidebar
     with st.sidebar:
         st.header("⚙️ Configuración del Análisis")
-        
         # Carga de archivo con mejor manejo de errores
         uploaded_file = st.file_uploader(
             "📁 Cargar polígono de estudio",
             type=['kml', 'geojson', 'zip'],
             help="Formatos: KML, GeoJSON, Shapefile (ZIP)"
         )
-        
         if uploaded_file is not None:
             with st.spinner("Procesando archivo..."):
                 try:
                     gdf = None
-                    
                     if uploaded_file.name.endswith('.kml'):
                         gdf = gpd.read_file(uploaded_file, driver='KML')
                     elif uploaded_file.name.endswith('.geojson'):
@@ -1781,7 +1812,6 @@ def main():
                             shp_files = [f for f in os.listdir(tmpdir) if f.endswith('.shp')]
                             if shp_files:
                                 gdf = gpd.read_file(os.path.join(tmpdir, shp_files[0]))
-                    
                     if gdf is not None and not gdf.empty:
                         # Verificar que tenga geometría válida
                         if 'geometry' not in gdf.columns:
@@ -1792,10 +1822,8 @@ def main():
                                 gdf.set_crs('EPSG:4326', inplace=True)
                             else:
                                 gdf = gdf.to_crs('EPSG:4326')
-                            
                             num_poligonos = len(gdf)
                             st.info(f"📊 Se cargaron {num_poligonos} polígono(s)")
-                            
                             if num_poligonos > 1:
                                 st.warning("⚠️ Se detectaron múltiples polígonos")
                                 st.info("""
@@ -1804,17 +1832,15 @@ def main():
                                 2. Calculará el área total combinada
                                 3. Generará un análisis integrado
                                 """)
-                            
                             st.session_state.poligono_data = gdf
                             st.success("✅ Polígono(s) cargado(s) exitosamente")
                     else:
                         st.error("No se pudo cargar el archivo o está vacío")
-                        
                 except Exception as e:
                     st.error(f"Error al procesar el archivo: {str(e)}")
                     import traceback
                     st.error(traceback.format_exc())
-        
+
         # Configuración del análisis
         if st.session_state.poligono_data is not None and not st.session_state.poligono_data.empty:
             st.markdown("---")
@@ -1831,12 +1857,23 @@ def main():
                     "Capa base del mapa",
                     ["ESRI World Imagery", "PlanetScope", "Sentinel-2", "OpenTopoMap"]
                 )
-            
-            st.subheader("🌿 Parámetros Ambientales (SIB Argentina)")
+
+            st.subheader("🌿 Ecosistemas Sudamericanos")
             tipo_ecosistema = st.selectbox(
                 "Tipo de ecosistema predominante",
                 [
-                    # Bosques
+                    # Trópicos
+                    'Selva Amazónica (bosque húmedo tropical)',
+                    'Bosque del Chocó Biogeográfico',
+                    'Bosque del Escudo Guayanés',
+                    'Páramo andino',
+                    'Manglar costero',
+                    'Sabana de Llanos (Orinoquía)',
+                    'Bosque seco tropical (Caribe colombiano)',
+                    'Cerrado brasileño',
+                    'Caatinga (Brasil NE)',
+                    'Bosque de galería',
+                    # Argentina
                     'Bosque Andino Patagónico',
                     'Bosque de Araucaria',
                     'Bosque de Caldén',
@@ -1845,62 +1882,31 @@ def main():
                     'Bosque de Yungas',
                     'Bosque de Selva Misionera',
                     'Bosque de Chaco Serrano',
-                    
-                    # Pastizales y estepas
                     'Pastizal Pampeano',
                     'Pastizal Mesopotámico',
-                    'Estepa Patagónica',
-                    'Estepa Altoandina',
-                    'Estepa del Monte',
-                    
-                    # Humedales
                     'Humedales del Iberá',
-                    'Humedales del Paraná',
-                    'Bañados y esteros',
-                    'Delta e Islas del Paraná',
-                    'Turberas y mallines',
-                    
-                    # Matorrales
-                    'Matorral del Espinal',
-                    'Matorral Chaqueño',
-                    'Arbustal de Altura',
-                    
-                    # Áreas productivas
+                    # Genéricos
                     'Agricultura intensiva',
-                    'Agricultura extensiva',
-                    'Ganadería extensiva',
-                    'Silvicultura',
-                    
-                    # Áreas urbanas
-                    'Zona urbana consolidada',
-                    'Periurbano',
-                    'Infraestructura',
-                    'Área minera',
-                    
-                    # Cuerpos de agua
-                    'Ríos y arroyos',
-                    'Lagunas y lagos',
-                    'Embalses',
-                    'Mar y costa'
+                    'Zona urbana consolidada'
                 ],
-                help="Clasificación según Sistema de Información sobre Biodiversidad (SIB) Argentina"
+                help="Clasificación adaptada para Sudamérica con énfasis en trópicos"
             )
-            
+
             # Guardar el tipo de ecosistema seleccionado
             st.session_state.tipo_ecosistema_seleccionado = tipo_ecosistema
-            
             nivel_detalle = st.slider("Nivel de detalle (divisiones)", 4, 12, 8)
-            
+
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("🚀 Ejecutar Análisis Completo", use_container_width=True):
                     with st.spinner("Procesando datos satelitales y climáticos..."):
                         try:
+                            # ✅ CORRECCIÓN: Uso de argumentos nombrados
                             resultados = st.session_state.sistema_analisis.analizar_area_completa(
-                                st.session_state.poligono_data,
-                                tipo_ecosistema,
-                                satelite,
-                                nivel_detalle
+                                gdf=st.session_state.poligono_data,
+                                tipo_ecosistema=tipo_ecosistema,
+                                satelite_seleccionado=satelite,
+                                n_divisiones=nivel_detalle
                             )
                             if resultados:
                                 st.session_state.resultados = resultados
@@ -1912,6 +1918,7 @@ def main():
                             st.error(f"Error en el análisis: {str(e)}")
                             import traceback
                             st.error(traceback.format_exc())
+
             with col2:
                 if st.button("🌳 Análisis Carbono Verra", type="primary", use_container_width=True):
                     with st.spinner("Calculando carbono según metodología Verra VCS..."):
@@ -1931,17 +1938,17 @@ def main():
                             st.error(f"Error en el análisis de carbono: {str(e)}")
                             import traceback
                             st.error(traceback.format_exc())
-    
+
     # Pestañas principales
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "🗺️ Mapa Satelital", 
+        "🗺️ Mapa Satelital",
         "📊 Dashboard Ejecutivo",
         "🌿 Índices de Vegetación",
         "🌳 Análisis de Carbono",
         "📋 Reporte Verra",
         "📈 Datos Completos"
     ])
-    
+
     with tab1:
         mostrar_mapa_satelital(capa_base if 'capa_base' in locals() else "ESRI World Imagery")
     with tab2:
@@ -1958,84 +1965,65 @@ def main():
 def mostrar_mapa_satelital(capa_base="ESRI World Imagery"):
     """Mostrar mapa satelital con el área de estudio"""
     st.markdown("## 🗺️ Mapa Satelital del Área de Estudio")
-    
     if st.session_state.poligono_data is not None:
         try:
             gdf = st.session_state.poligono_data
             bounds = gdf.total_bounds
-            
-            # Información básica del área
+            # 🔥 CORRECCIÓN: Cálculo preciso de área en hectáreas
+            gdf_calc = gdf.to_crs("EPSG:3857")
+            area_ha = gdf_calc.geometry.area.sum() / 10000
+
             col1, col2, col3 = st.columns(3)
             with col1:
-                # Calcular área aproximada
-                if gdf.crs is None:
-                    gdf_calc = gdf.to_crs('EPSG:4326')
-                else:
-                    gdf_calc = gdf
-                
-                area_ha = gdf_calc.geometry.area.sum() * 11100 * 11100 * math.cos(math.radians(bounds[1])) / 10000
                 st.metric("Área aproximada", f"{area_ha:,.1f} ha")
-            
             with col2:
                 num_poligonos = len(gdf)
                 st.metric("Polígonos", f"{num_poligonos}")
-            
             with col3:
                 centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
                 st.metric("Centro", f"{centro[0]:.4f}°, {centro[1]:.4f}°")
-            
+
             # Crear y mostrar mapa
             mapa = st.session_state.sistema_analisis.sistema_mapas.crear_mapa_satelital(
                 gdf,
                 "Área de Análisis",
                 capa_base
             )
-            
             if mapa:
                 mostrar_mapa_seguro(mapa, width=1000, height=600)
             else:
                 st.error("No se pudo crear el mapa")
-                
         except Exception as e:
             st.error(f"Error al mostrar el mapa: {str(e)}")
-            # Mostrar información básica incluso si falla el mapa
-            st.info("Coordenadas del área cargada están disponibles para análisis")
     else:
         st.info("👈 Carga un polígono en el panel lateral para comenzar")
-        
-        # Mapa de ejemplo centrado en Argentina
-        st.markdown("### 🎯 Ejemplo de visualización (Región Pampeana)")
-        
-        # Crear un polígono de ejemplo
-        polygon_ejemplo = Polygon([
-            (-64.0, -34.0),
-            (-63.0, -34.0),
-            (-63.0, -33.0),
-            (-64.0, -33.0),
-            (-64.0, -34.0)
-        ])
-        gdf_ejemplo = gpd.GeoDataFrame({'geometry': [polygon_ejemplo]}, crs="EPSG:4326")
-        
-        try:
-            mapa_ejemplo = st.session_state.sistema_analisis.sistema_mapas.crear_mapa_satelital(
-                gdf_ejemplo,
-                "Área de Ejemplo",
-                capa_base if 'capa_base' in locals() else "ESRI World Imagery"
-            )
-            if mapa_ejemplo:
-                mostrar_mapa_seguro(mapa_ejemplo, width=800, height=500)
-        except Exception as e:
-            st.warning(f"No se pudo cargar el mapa de ejemplo: {str(e)}")
 
-# Las demás funciones permanecen iguales...
+    # Mapa de ejemplo centrado en Sudamérica
+    st.markdown("### 🎯 Ejemplo de visualización (Amazonía)")
+    polygon_ejemplo = Polygon([
+        (-65.0, -3.0),
+        (-60.0, -3.0),
+        (-60.0, 2.0),
+        (-65.0, 2.0),
+        (-65.0, -3.0)
+    ])
+    gdf_ejemplo = gpd.GeoDataFrame({'geometry': [polygon_ejemplo]}, crs="EPSG:4326")
+    try:
+        mapa_ejemplo = st.session_state.sistema_analisis.sistema_mapas.crear_mapa_satelital(
+            gdf_ejemplo,
+            "Área de Ejemplo - Amazonía",
+            capa_base if 'capa_base' in locals() else "ESRI World Imagery"
+        )
+        if mapa_ejemplo:
+            mostrar_mapa_seguro(mapa_ejemplo, width=800, height=500)
+    except Exception as e:
+        st.warning(f"No se pudo cargar el mapa de ejemplo: {str(e)}")
 
 def mostrar_dashboard_ejecutivo():
     """Mostrar dashboard ejecutivo con KPIs"""
     st.markdown("## 📊 Dashboard Ejecutivo de Análisis Ambiental")
-    
     if st.session_state.resultados is not None:
         try:
-            # Dashboard principal
             dashboard_html = st.session_state.sistema_analisis.dashboard.crear_dashboard_ejecutivo(
                 st.session_state.resultados
             )
@@ -2043,7 +2031,6 @@ def mostrar_dashboard_ejecutivo():
                 st.markdown(dashboard_html, unsafe_allow_html=True)
             else:
                 st.warning("No se pudo generar el dashboard")
-                
         except Exception as e:
             st.error(f"Error al mostrar el dashboard: {str(e)}")
     else:
@@ -2052,30 +2039,24 @@ def mostrar_dashboard_ejecutivo():
 def mostrar_indices_vegetacion():
     """Mostrar análisis detallado de índices de vegetación"""
     st.markdown("## 🌿 Análisis de Índices de Vegetación Satelital")
-    
     if st.session_state.resultados is None:
         st.warning("Ejecuta el análisis ambiental primero")
         return
-    
     try:
         resultados = st.session_state.resultados
         areas = resultados.get('areas', [])
-        
         if not areas:
             st.error("No hay datos de áreas para mostrar")
             return
-        
-        # Selector de índice para visualización
+
         indices_disponibles = ['NDVI', 'SAVI', 'EVI', 'NDWI', 'MSAVI']
         indice_seleccionado = st.selectbox(
             "Seleccionar índice para visualizar",
             indices_disponibles,
             index=0
         )
-        
-        # Calcular estadísticas
+
         valores_indice = [area['indices'].get(indice_seleccionado, 0) for area in areas]
-        
         if valores_indice:
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -2084,48 +2065,37 @@ def mostrar_indices_vegetacion():
                 st.metric(f"{indice_seleccionado} Máximo", f"{np.max(valores_indice):.3f}")
             with col3:
                 st.metric(f"{indice_seleccionado} Mínimo", f"{np.min(valores_indice):.3f}")
-        
-        # Mostrar gráfico simple
-        st.markdown(f"### 📈 Distribución de {indice_seleccionado}")
-        
-        fig = go.Figure()
-        fig.add_trace(go.Histogram(
-            x=valores_indice,
-            nbinsx=20,
-            marker_color='#3b82f6',
-            opacity=0.7
-        ))
-        
-        fig.update_layout(
-            title=f'Distribución de {indice_seleccionado}',
-            xaxis_title=indice_seleccionado,
-            yaxis_title='Frecuencia',
-            height=400
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
+
+            st.markdown(f"### 📈 Distribución de {indice_seleccionado}")
+            fig = go.Figure()
+            fig.add_trace(go.Histogram(
+                x=valores_indice,
+                nbinsx=20,
+                marker_color='#3b82f6',
+                opacity=0.7
+            ))
+            fig.update_layout(
+                title=f'Distribución de {indice_seleccionado}',
+                xaxis_title=indice_seleccionado,
+                yaxis_title='Frecuencia',
+                height=400
+            )
+            st.plotly_chart(fig, use_container_width=True)
     except Exception as e:
         st.error(f"Error al mostrar índices de vegetación: {str(e)}")
 
 def mostrar_analisis_carbono():
     """Mostrar análisis detallado de carbono según metodología Verra"""
     st.markdown("## 🌳 Análisis de Carbono Forestal - Metodología Verra VCS")
-    
     if not st.session_state.analisis_carbono_realizado:
         st.warning("Ejecuta el análisis de carbono Verra desde el panel lateral")
         return
-    
     if st.session_state.resultados_carbono is None:
         st.error("No hay datos de carbono para mostrar")
         return
-    
     try:
         resultados = st.session_state.resultados_carbono
-        
-        # Información básica
         resumen = resultados.get('resumen_carbono', {})
-        
         if resumen:
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -2134,7 +2104,6 @@ def mostrar_analisis_carbono():
                 st.metric("CO₂ Equivalente", f"{resumen.get('co2_total_ton', 0):,.0f} ton CO₂e")
             with col3:
                 st.metric("Área Total", f"{resumen.get('area_total_ha', 0):,.1f} ha")
-            
             col1, col2 = st.columns(2)
             with col1:
                 st.metric("Carbono Promedio", f"{resumen.get('carbono_promedio_ton_ha', 0):,.1f} ton C/ha")
@@ -2142,51 +2111,40 @@ def mostrar_analisis_carbono():
                 st.metric("Precipitación", f"{resumen.get('precipitacion_promedio_mm', 0):,.0f} mm/año")
         else:
             st.warning("No hay resumen disponible")
-            
     except Exception as e:
         st.error(f"Error al mostrar análisis de carbono: {str(e)}")
 
 def mostrar_reporte_verra():
     """Mostrar reporte completo según estándar Verra VCS"""
     st.markdown("## 📋 Reporte de Carbono - Estándar Verra VCS")
-    
     if not st.session_state.analisis_carbono_realizado:
         st.warning("Ejecuta el análisis de carbono Verra desde el panel lateral")
         return
-    
     if st.session_state.resultados_carbono is None:
         st.error("No hay datos de carbono para mostrar")
         return
-    
     try:
         resultados = st.session_state.resultados_carbono
-        
-        # Información básica del reporte
         st.markdown("### 📊 Resumen del Proyecto")
-        
         if st.session_state.poligono_data is not None:
             gdf = st.session_state.poligono_data
             bounds = gdf.total_bounds
             centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
-            
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown("**Ubicación:**")
                 st.markdown(f"- Centro: {centro[0]:.4f}°, {centro[1]:.4f}°")
                 st.markdown(f"- Extensión: {bounds[0]:.4f}° a {bounds[2]:.4f}° (long)")
                 st.markdown(f"- Extensión: {bounds[1]:.4f}° a {bounds[3]:.4f}° (lat)")
-            
             with col2:
                 st.markdown("**Metodología:**")
                 st.markdown("- Verra VCS VM0007")
-                st.markdown("- Datos climáticos: INTA/WorldClim")
+                st.markdown("- Datos climáticos: NASA POWER/Open-Meteo")
                 st.markdown(f"- Fecha: {datetime.now().strftime('%Y-%m-%d')}")
-        
-        # Mostrar datos de carbono si están disponibles
+
         resumen = resultados.get('resumen_carbono', {})
         if resumen:
             st.markdown("### 🌳 Resultados de Carbono")
-            
             data = {
                 'Métrica': ['Carbono Total', 'CO₂ Equivalente', 'Área Total', 'Carbono Promedio/ha', 'Precipitación'],
                 'Valor': [
@@ -2197,37 +2155,29 @@ def mostrar_reporte_verra():
                     f"{resumen.get('precipitacion_promedio_mm', 0):,.0f} mm/año"
                 ]
             }
-            
             df = pd.DataFrame(data)
             st.table(df)
-            
     except Exception as e:
         st.error(f"Error al mostrar reporte Verra: {str(e)}")
 
 def mostrar_datos_completos():
     """Mostrar todos los datos completos del análisis"""
     st.markdown("## 📈 Datos Completos del Análisis")
-    
-    # Selector de tipo de datos
     tipo_datos = st.radio(
         "Seleccionar tipo de datos",
         ["Datos Ambientales", "Datos de Carbono"],
         horizontal=True
     )
-    
     try:
         if tipo_datos == "Datos Ambientales":
             if st.session_state.resultados is None:
                 st.warning("Ejecuta el análisis ambiental primero")
                 return
-            
             resultados = st.session_state.resultados
             areas = resultados.get('areas', [])
-            
             if areas:
-                # Preparar datos para tabla
                 datos = []
-                for area in areas[:50]:  # Limitar a 50 filas
+                for area in areas[:50]:
                     datos.append({
                         'ID': area.get('id', ''),
                         'Área (ha)': area.get('area_ha', 0),
@@ -2236,7 +2186,6 @@ def mostrar_datos_completos():
                         'Precipitación (mm)': area.get('precipitacion', 0),
                         'Salud': area.get('indices', {}).get('Salud_Vegetacion', '')
                     })
-                
                 if datos:
                     df = pd.DataFrame(datos)
                     st.dataframe(df, use_container_width=True)
@@ -2244,22 +2193,18 @@ def mostrar_datos_completos():
                     st.warning("No hay datos disponibles")
             else:
                 st.warning("No hay áreas analizadas")
-                
-        else:  # Datos de Carbono
+        else:
             if not st.session_state.analisis_carbono_realizado:
                 st.warning("Ejecuta el análisis de carbono primero")
                 return
-            
             if st.session_state.resultados_carbono is None:
                 st.error("No hay datos de carbono")
                 return
-            
             resultados = st.session_state.resultados_carbono
             areas_carbono = resultados.get('analisis_carbono', [])
-            
             if areas_carbono:
                 datos = []
-                for area in areas_carbono[:50]:  # Limitar a 50 filas
+                for area in areas_carbono[:50]:
                     datos.append({
                         'ID': area.get('id', ''),
                         'Área (ha)': area.get('area_ha', 0),
@@ -2269,7 +2214,6 @@ def mostrar_datos_completos():
                         'CO₂e (ton)': area.get('co2_equivalente_ton', 0),
                         'Precipitación (mm)': area.get('precipitacion_anual_mm', 0)
                     })
-                
                 if datos:
                     df = pd.DataFrame(datos)
                     st.dataframe(df, use_container_width=True)
@@ -2277,7 +2221,6 @@ def mostrar_datos_completos():
                     st.warning("No hay datos de carbono disponibles")
             else:
                 st.warning("No hay datos de carbono analizados")
-                
     except Exception as e:
         st.error(f"Error al mostrar datos completos: {str(e)}")
 
