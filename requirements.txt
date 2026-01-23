@@ -4,11 +4,11 @@ numpy
 matplotlib
 seaborn
 plotly
-geopandas
-folium
+geopandas==0.13.2  # Versión específica para mayor estabilidad
+folium==0.14.0
 streamlit-folium
-shapely
-pyproj
-branca
+shapely==2.0.1
+pyproj==3.6.1
+branca==0.6.0
 requests
-python-docx
+python-docx==0.8.11
