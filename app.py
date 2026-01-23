@@ -910,7 +910,7 @@ class SistemaMapasAvanzado:
         except Exception:
             return [-34.0, -64.0], 6
 
-    def crear_mapa_satelital(self, gdf, titulo="Área de Estudio", capa_base="ESRI World Imagery"):
+    def crear_mapa_satelital(self, gdf, titulo="Área de Estudio"):
         centro, zoom = self.calcular_zoom_automatico(gdf)
         mapa_id = f"map_{int(datetime.now().timestamp() * 1000)}"
         m = folium.Map(
@@ -1239,7 +1239,6 @@ class SistemaMapasAvanzado:
         <i>Metodología: Verra VCS VM0007</i><br>
         <i>CO₂ equivalente = Carbono × 3.67</i><br>
         <i>Fuente climática: NASA POWER/Open-Meteo</i>
-        </div>
         </div>
         </div>
         '''
@@ -1865,11 +1864,12 @@ def main():
                 if st.button("🚀 Ejecutar Análisis Completo", use_container_width=True):
                     with st.spinner("Procesando datos satelitales y climáticos..."):
                         try:
-                            # ✅ CORRECCIÓN FINAL: uso correcto del parámetro 'satelite'
+                            # ✅ CORRECCIÓN: Convertir string a Enum
+                            satelite_enum = Satelite.PLANETSCOPE if satelite == "PlanetScope" else Satelite.SENTINEL2
                             resultados = st.session_state.sistema_analisis.analizar_area_completa(
                                 gdf=st.session_state.poligono_data,
                                 tipo_ecosistema=tipo_ecosistema,
-                                satelite=satelite,  # 👈 Nombre correcto según la firma del método
+                                satelite=satelite_enum,  # 👈 Usar el Enum
                                 n_divisiones=nivel_detalle
                             )
                             if resultados:
@@ -1914,8 +1914,7 @@ def main():
     ])
 
     with tab1:
-        # ✅ Sin selector de capa base: siempre ESRI
-        mostrar_mapa_satelital("ESRI World Imagery")
+        mostrar_mapa_satelital()
     with tab2:
         mostrar_dashboard_ejecutivo()
     with tab3:
@@ -1927,7 +1926,7 @@ def main():
     with tab6:
         mostrar_datos_completos()
 
-def mostrar_mapa_satelital(capa_base="ESRI World Imagery"):
+def mostrar_mapa_satelital():
     """Mostrar mapa satelital con el área de estudio"""
     st.markdown("## 🗺️ Mapa Satelital del Área de Estudio")
     if st.session_state.poligono_data is not None:
@@ -1951,8 +1950,7 @@ def mostrar_mapa_satelital(capa_base="ESRI World Imagery"):
             # Crear y mostrar mapa
             mapa = st.session_state.sistema_analisis.sistema_mapas.crear_mapa_satelital(
                 gdf,
-                "Área de Análisis",
-                capa_base
+                "Área de Análisis"
             )
             if mapa:
                 mostrar_mapa_seguro(mapa, width=1000, height=600)
@@ -1962,27 +1960,6 @@ def mostrar_mapa_satelital(capa_base="ESRI World Imagery"):
             st.error(f"Error al mostrar el mapa: {str(e)}")
     else:
         st.info("👈 Carga un polígono en el panel lateral para comenzar")
-
-    # Mapa de ejemplo centrado en Sudamérica
-    st.markdown("### 🎯 Ejemplo de visualización (Amazonía)")
-    polygon_ejemplo = Polygon([
-        (-65.0, -3.0),
-        (-60.0, -3.0),
-        (-60.0, 2.0),
-        (-65.0, 2.0),
-        (-65.0, -3.0)
-    ])
-    gdf_ejemplo = gpd.GeoDataFrame({'geometry': [polygon_ejemplo]}, crs="EPSG:4326")
-    try:
-        mapa_ejemplo = st.session_state.sistema_analisis.sistema_mapas.crear_mapa_satelital(
-            gdf_ejemplo,
-            "Área de Ejemplo - Amazonía",
-            capa_base
-        )
-        if mapa_ejemplo:
-            mostrar_mapa_seguro(mapa_ejemplo, width=800, height=500)
-    except Exception as e:
-        st.warning(f"No se pudo cargar el mapa de ejemplo: {str(e)}")
 
 def mostrar_dashboard_ejecutivo():
     """Mostrar dashboard ejecutivo con KPIs"""
