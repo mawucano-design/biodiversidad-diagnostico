@@ -1656,14 +1656,14 @@ class GeneradorReportes:
             tabla_resumen.cell(0, 1).text = 'Valor'
             tabla_resumen.cell(0, 2).text = 'Interpretación'
             
-            # Datos
+            # Datos - CORREGIDO: Comillas correctamente cerradas
             datos = [
                 ('Área total', f"{res.get('area_total_ha', 0):,.1f} ha", 'Superficie del área de estudio'),
-                ('Carbono total almacenado', f"{res.get('carbono_total_ton', 0):,.0f} ton C', 'Carbono almacenado en el área"),
-                ('CO₂ equivalente', f"{res.get('co2_total_ton', 0):,.0f} ton CO₂e', 'Potencial de créditos de carbono'),
-                ('Índice de Shannon promedio', f"{res.get('shannon_promedio', 0):.3f}', 'Nivel de biodiversidad'),
-                ('NDVI promedio', f"{res.get('ndvi_promedio', 0):.3f}', 'Salud de la vegetación'),
-                ('NDWI promedio', f"{res.get('ndwi_promedio', 0):.3f}', 'Contenido de agua'),
+                ('Carbono total almacenado', f"{res.get('carbono_total_ton', 0):,.0f} ton C", 'Carbono almacenado en el área'),
+                ('CO₂ equivalente', f"{res.get('co2_total_ton', 0):,.0f} ton CO₂e", 'Potencial de créditos de carbono'),
+                ('Índice de Shannon promedio', f"{res.get('shannon_promedio', 0):.3f}", 'Nivel de biodiversidad'),
+                ('NDVI promedio', f"{res.get('ndvi_promedio', 0):.3f}", 'Salud de la vegetación'),
+                ('NDWI promedio', f"{res.get('ndwi_promedio', 0):.3f}", 'Contenido de agua'),
                 ('Tipo de ecosistema', res.get('tipo_ecosistema', 'N/A'), 'Ecosistema predominante'),
                 ('Puntos de muestreo', str(res.get('num_puntos', 0)), 'Muestras analizadas')
             ]
@@ -1724,9 +1724,9 @@ class GeneradorReportes:
                 tabla_biodiv.cell(0, 2).text = 'Interpretación'
                 
                 datos_biodiv = [
-                    ('Índice de Shannon', f"{biodiv.get('indice_shannon', 0):.3f}', biodiv.get('categoria', 'N/A')),
+                    ('Índice de Shannon', f"{biodiv.get('indice_shannon', 0):.3f}", biodiv.get('categoria', 'N/A')),
                     ('Riqueza de especies', str(biodiv.get('riqueza_especies', 0)), 'Número estimado de especies'),
-                    ('Abundancia total', f"{biodiv.get('abundancia_total', 0):,}', 'Individuos estimados'),
+                    ('Abundancia total', f"{biodiv.get('abundancia_total', 0):,}", 'Individuos estimados'),
                     ('Categoría', biodiv.get('categoria', 'N/A'), 'Clasificación según Shannon')
                 ]
                 
@@ -1791,7 +1791,6 @@ class GeneradorReportes:
         except Exception as e:
             st.error(f"Error generando GeoJSON: {str(e)}")
             return json.dumps({"error": str(e)})
-
 # ===== FUNCIONES AUXILIARES - CORREGIDAS PARA EPSG:4326 =====
 def validar_y_corregir_crs(gdf):
     if gdf is None or len(gdf) == 0:
