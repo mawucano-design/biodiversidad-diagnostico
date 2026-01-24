@@ -297,9 +297,9 @@ class SistemaMapas:
                 style_function=lambda x: {
                     'fillColor': '#3b82f6',
                     'color': '#1d4ed8',
-                    'weight': 4,  # Borde más grueso
+                    'weight': 4,
                     'fillOpacity': 0.2,
-                    'dashArray': '5, 5'  # Línea punteada
+                    'dashArray': '5, 5'
                 },
                 highlight_function=lambda x: {
                     'weight': 6,
@@ -428,12 +428,12 @@ class SistemaMapas:
             
             # Gradiente para NDVI (rojo = bajo, verde = alto)
             gradient_ndvi = {
-                0.0: '#8b0000',  # Rojo oscuro
-                0.2: '#ff4500',  # Rojo anaranjado
-                0.4: '#ffd700',  # Amarillo
-                0.6: '#9acd32',  # Amarillo verdoso
-                0.8: '#32cd32',  # Verde lima
-                1.0: '#006400'   # Verde oscuro
+                0.0: '#8b0000',
+                0.2: '#ff4500',
+                0.4: '#ffd700',
+                0.6: '#9acd32',
+                0.8: '#32cd32',
+                1.0: '#006400'
             }
             
             # Agregar heatmap
@@ -499,12 +499,12 @@ class SistemaMapas:
             
             # Gradiente para NDWI (marrón = seco, azul = húmedo)
             gradient_ndwi = {
-                0.0: '#8b4513',  # Marrón
-                0.2: '#d2691e',  # Marrón chocolate
-                0.4: '#f4a460',  # Arena
-                0.6: '#87ceeb',  # Azul claro
-                0.8: '#1e90ff',  # Azul dodger
-                1.0: '#00008b'   # Azul oscuro
+                0.0: '#8b4513',
+                0.2: '#d2691e',
+                0.4: '#f4a460',
+                0.6: '#87ceeb',
+                0.8: '#1e90ff',
+                1.0: '#00008b'
             }
             
             # Agregar heatmap
@@ -570,12 +570,12 @@ class SistemaMapas:
             
             # Gradiente para biodiversidad
             gradient_biodiv = {
-                0.0: '#991b1b',   # Rojo oscuro (muy baja)
-                0.2: '#ef4444',   # Rojo (baja)
-                0.4: '#f59e0b',   # Naranja (moderada)
-                0.6: '#3b82f6',   # Azul (alta)
-                0.8: '#8b5cf6',   # Púrpura (muy alta)
-                1.0: '#10b981'    # Verde (excelente)
+                0.0: '#991b1b',
+                0.2: '#ef4444',
+                0.4: '#f59e0b',
+                0.6: '#3b82f6',
+                0.8: '#8b5cf6',
+                1.0: '#10b981'
             }
             
             # Agregar heatmap
@@ -703,7 +703,7 @@ class SistemaMapas:
                         0.0: '#991b1b', 0.2: '#ef4444', 0.4: '#f59e0b',
                         0.6: '#3b82f6', 0.8: '#8b5cf6', 1.0: '#10b981'
                     },
-                    show=True  # Mostrar esta capa por defecto
+                    show=True
                 )
                 capas['biodiversidad'].add_to(m)
             
@@ -723,6 +723,8 @@ class SistemaMapas:
         except Exception as e:
             st.warning(f"Error al crear mapa combinado: {str(e)}")
             return None
+    
+    # Las funciones de leyenda permanecen igual...
     
     def _agregar_leyenda_carbono(self, mapa):
         """Agrega leyenda para el mapa de carbono"""
