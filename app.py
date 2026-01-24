@@ -34,7 +34,7 @@ warnings.filterwarnings('ignore')
 # Librerías geoespaciales
 import folium
 from streamlit_folium import st_folium, folium_static
-from folium.plugins import Fullscreen, MousePosition, HeatMap
+from folium.plugins import Fullscreen, MousePosition, HeatMap, FitBounds
 import geopandas as gpd
 from shapely.geometry import Polygon, Point, shape, MultiPolygon
 from shapely.ops import unary_union
@@ -45,16 +45,21 @@ import matplotlib.cm as cm
 import random
 
 # ===============================
-# 📄 GENERADOR DE REPORTES COMPLETOS
+# 📄 GENERADOR DE REPORTES COMPLETOS MEJORADO
 # ===============================
 try:
     from reportlab.lib import colors
-    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.pagesizes import A4, letter, landscape
     from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+        SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle,
+        PageBreak, KeepTogether, PageTemplate, Frame, NextPageTemplate,
+        BaseDocTemplate, FrameBreak
     )
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.units import inch
+    from reportlab.lib.units import inch, cm
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.utils import ImageReader
     REPORTPDF_AVAILABLE = True
 except ImportError:
     REPORTPDF_AVAILABLE = False
@@ -62,7 +67,10 @@ except ImportError:
 
 try:
     from docx import Document
-    from docx.shared import Inches
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+    from docx.enum.style import WD_STYLE_TYPE
     REPORTDOCX_AVAILABLE = True
 except ImportError:
     REPORTDOCX_AVAILABLE = False
@@ -236,56 +244,93 @@ class AnalisisBiodiversidad:
         }
 
 # ===============================
-# 🗺️ SISTEMA DE MAPAS COMPLETO CON TODOS LOS HEATMAPS
+# 🗺️ SISTEMA DE MAPAS COMPLETO CON ZOOM AUTOMÁTICO
 # ===============================
 class SistemaMapas:
-    """Sistema de mapas completo con todos los heatmaps"""
+    """Sistema de mapas completo con zoom automático a los polígonos"""
     def __init__(self):
         self.capa_base = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
     
-    def crear_mapa_area(self, gdf):
-        """Crea mapa básico con el área de estudio"""
+    def crear_mapa_area(self, gdf, zoom_auto=True):
+        """Crea mapa básico con el área de estudio con zoom automático"""
         if gdf is None or gdf.empty:
             return None
         
         try:
-            # Calcular centro y zoom
+            # Calcular centro y bounds
             bounds = gdf.total_bounds
             centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
+            
+            # Calcular zoom basado en el tamaño del polígono
+            if zoom_auto:
+                width = bounds[2] - bounds[0]
+                height = bounds[3] - bounds[1]
+                
+                # Determinar zoom basado en la extensión
+                if max(width, height) > 10:
+                    zoom_start = 6
+                elif max(width, height) > 5:
+                    zoom_start = 8
+                elif max(width, height) > 2:
+                    zoom_start = 10
+                elif max(width, height) > 1:
+                    zoom_start = 12
+                elif max(width, height) > 0.5:
+                    zoom_start = 14
+                else:
+                    zoom_start = 16
+            else:
+                zoom_start = 12
             
             # Crear mapa
             m = folium.Map(
                 location=centro,
-                zoom_start=12,
+                zoom_start=zoom_start,
                 tiles=self.capa_base,
                 attr='Esri, Maxar, Earthstar Geographics',
                 control_scale=True
             )
             
-            # Agregar polígono
+            # Agregar polígono con borde destacado
             folium.GeoJson(
                 gdf.geometry.iloc[0],
                 style_function=lambda x: {
                     'fillColor': '#3b82f6',
                     'color': '#1d4ed8',
-                    'weight': 3,
-                    'fillOpacity': 0.2
+                    'weight': 4,  # Borde más grueso
+                    'fillOpacity': 0.2,
+                    'dashArray': '5, 5'  # Línea punteada
+                },
+                highlight_function=lambda x: {
+                    'weight': 6,
+                    'color': '#1e40af',
+                    'fillOpacity': 0.3
                 }
             ).add_to(m)
+            
+            # Ajustar límites del mapa al polígono
+            sw = [bounds[1], bounds[0]]
+            ne = [bounds[3], bounds[2]]
+            m.fit_bounds([sw, ne])
             
             return m
         except Exception as e:
             st.warning(f"Error al crear mapa: {str(e)}")
             return None
     
-    def crear_mapa_calor_carbono(self, puntos_carbono):
-        """Crea mapa de calor para carbono"""
+    def crear_mapa_calor_carbono(self, puntos_carbono, gdf_area=None):
+        """Crea mapa de calor para carbono con zoom automático"""
         if not puntos_carbono or len(puntos_carbono) == 0:
             return None
         
         try:
-            # Calcular centro del primer punto
-            centro = [puntos_carbono[0]['lat'], puntos_carbono[0]['lon']]
+            # Calcular centro y bounds
+            if gdf_area is not None and not gdf_area.empty:
+                bounds = gdf_area.total_bounds
+                centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
+            else:
+                centro = [puntos_carbono[0]['lat'], puntos_carbono[0]['lon']]
+                bounds = None
             
             m = folium.Map(
                 location=centro,
@@ -293,6 +338,19 @@ class SistemaMapas:
                 tiles=self.capa_base,
                 attr='Esri, Maxar, Earthstar Geographics'
             )
+            
+            # Si hay polígono de área, agregarlo primero
+            if gdf_area is not None and not gdf_area.empty:
+                folium.GeoJson(
+                    gdf_area.geometry.iloc[0],
+                    style_function=lambda x: {
+                        'fillColor': '#3b82f6',
+                        'color': '#1d4ed8',
+                        'weight': 3,
+                        'fillOpacity': 0.1,
+                        'dashArray': '5, 5'
+                    }
+                ).add_to(m)
             
             # Preparar datos para heatmap
             heat_data = [[p['lat'], p['lon'], p['carbono_ton_ha']] for p in puntos_carbono]
@@ -320,31 +378,30 @@ class SistemaMapas:
             # Agregar leyenda
             self._agregar_leyenda_carbono(m)
             
-            # Agregar algunos marcadores para referencia
-            for p in puntos_carbono[:10]:  # Limitar a 10 marcadores
-                folium.CircleMarker(
-                    location=[p['lat'], p['lon']],
-                    radius=5,
-                    color='#065f46',
-                    fill=True,
-                    fill_color='#10b981',
-                    fill_opacity=0.7,
-                    popup=f"Carbono: {p['carbono_ton_ha']:.1f} ton C/ha<br>NDVI: {p.get('ndvi', 'N/A'):.3f}"
-                ).add_to(m)
+            # Ajustar zoom a los datos si hay área
+            if gdf_area is not None and not gdf_area.empty:
+                sw = [bounds[1], bounds[0]]
+                ne = [bounds[3], bounds[2]]
+                m.fit_bounds([sw, ne])
             
             return m
         except Exception as e:
             st.warning(f"Error al crear mapa de carbono: {str(e)}")
             return None
     
-    def crear_mapa_calor_ndvi(self, puntos_ndvi):
-        """Crea mapa de calor para NDVI"""
+    def crear_mapa_calor_ndvi(self, puntos_ndvi, gdf_area=None):
+        """Crea mapa de calor para NDVI con zoom automático"""
         if not puntos_ndvi or len(puntos_ndvi) == 0:
             return None
         
         try:
-            # Calcular centro
-            centro = [puntos_ndvi[0]['lat'], puntos_ndvi[0]['lon']]
+            # Calcular centro y bounds
+            if gdf_area is not None and not gdf_area.empty:
+                bounds = gdf_area.total_bounds
+                centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
+            else:
+                centro = [puntos_ndvi[0]['lat'], puntos_ndvi[0]['lon']]
+                bounds = None
             
             m = folium.Map(
                 location=centro,
@@ -352,6 +409,19 @@ class SistemaMapas:
                 tiles=self.capa_base,
                 attr='Esri, Maxar, Earthstar Geographics'
             )
+            
+            # Si hay polígono de área, agregarlo primero
+            if gdf_area is not None and not gdf_area.empty:
+                folium.GeoJson(
+                    gdf_area.geometry.iloc[0],
+                    style_function=lambda x: {
+                        'fillColor': '#3b82f6',
+                        'color': '#1d4ed8',
+                        'weight': 3,
+                        'fillOpacity': 0.1,
+                        'dashArray': '5, 5'
+                    }
+                ).add_to(m)
             
             # Preparar datos para heatmap
             heat_data = [[p['lat'], p['lon'], p['ndvi']] for p in puntos_ndvi]
@@ -379,19 +449,30 @@ class SistemaMapas:
             # Agregar leyenda
             self._agregar_leyenda_ndvi(m)
             
+            # Ajustar zoom a los datos si hay área
+            if gdf_area is not None and not gdf_area.empty:
+                sw = [bounds[1], bounds[0]]
+                ne = [bounds[3], bounds[2]]
+                m.fit_bounds([sw, ne])
+            
             return m
         except Exception as e:
             st.warning(f"Error al crear mapa de NDVI: {str(e)}")
             return None
     
-    def crear_mapa_calor_ndwi(self, puntos_ndwi):
-        """Crea mapa de calor para NDWI"""
+    def crear_mapa_calor_ndwi(self, puntos_ndwi, gdf_area=None):
+        """Crea mapa de calor para NDWI con zoom automático"""
         if not puntos_ndwi or len(puntos_ndwi) == 0:
             return None
         
         try:
-            # Calcular centro
-            centro = [puntos_ndwi[0]['lat'], puntos_ndwi[0]['lon']]
+            # Calcular centro y bounds
+            if gdf_area is not None and not gdf_area.empty:
+                bounds = gdf_area.total_bounds
+                centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
+            else:
+                centro = [puntos_ndwi[0]['lat'], puntos_ndwi[0]['lon']]
+                bounds = None
             
             m = folium.Map(
                 location=centro,
@@ -399,6 +480,19 @@ class SistemaMapas:
                 tiles=self.capa_base,
                 attr='Esri, Maxar, Earthstar Geographics'
             )
+            
+            # Si hay polígono de área, agregarlo primero
+            if gdf_area is not None and not gdf_area.empty:
+                folium.GeoJson(
+                    gdf_area.geometry.iloc[0],
+                    style_function=lambda x: {
+                        'fillColor': '#3b82f6',
+                        'color': '#1d4ed8',
+                        'weight': 3,
+                        'fillOpacity': 0.1,
+                        'dashArray': '5, 5'
+                    }
+                ).add_to(m)
             
             # Preparar datos para heatmap
             heat_data = [[p['lat'], p['lon'], p['ndwi']] for p in puntos_ndwi]
@@ -426,19 +520,30 @@ class SistemaMapas:
             # Agregar leyenda
             self._agregar_leyenda_ndwi(m)
             
+            # Ajustar zoom a los datos si hay área
+            if gdf_area is not None and not gdf_area.empty:
+                sw = [bounds[1], bounds[0]]
+                ne = [bounds[3], bounds[2]]
+                m.fit_bounds([sw, ne])
+            
             return m
         except Exception as e:
             st.warning(f"Error al crear mapa de NDWI: {str(e)}")
             return None
     
-    def crear_mapa_calor_biodiversidad(self, puntos_biodiversidad):
-        """Crea mapa de calor para biodiversidad (Índice de Shannon)"""
+    def crear_mapa_calor_biodiversidad(self, puntos_biodiversidad, gdf_area=None):
+        """Crea mapa de calor para biodiversidad con zoom automático"""
         if not puntos_biodiversidad or len(puntos_biodiversidad) == 0:
             return None
         
         try:
-            # Calcular centro
-            centro = [puntos_biodiversidad[0]['lat'], puntos_biodiversidad[0]['lon']]
+            # Calcular centro y bounds
+            if gdf_area is not None and not gdf_area.empty:
+                bounds = gdf_area.total_bounds
+                centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
+            else:
+                centro = [puntos_biodiversidad[0]['lat'], puntos_biodiversidad[0]['lon']]
+                bounds = None
             
             m = folium.Map(
                 location=centro,
@@ -446,6 +551,19 @@ class SistemaMapas:
                 tiles=self.capa_base,
                 attr='Esri, Maxar, Earthstar Geographics'
             )
+            
+            # Si hay polígono de área, agregarlo primero
+            if gdf_area is not None and not gdf_area.empty:
+                folium.GeoJson(
+                    gdf_area.geometry.iloc[0],
+                    style_function=lambda x: {
+                        'fillColor': '#3b82f6',
+                        'color': '#1d4ed8',
+                        'weight': 3,
+                        'fillOpacity': 0.1,
+                        'dashArray': '5, 5'
+                    }
+                ).add_to(m)
             
             # Preparar datos para heatmap
             heat_data = [[p['lat'], p['lon'], p['indice_shannon']] for p in puntos_biodiversidad]
@@ -473,19 +591,30 @@ class SistemaMapas:
             # Agregar leyenda
             self._agregar_leyenda_biodiversidad(m)
             
+            # Ajustar zoom a los datos si hay área
+            if gdf_area is not None and not gdf_area.empty:
+                sw = [bounds[1], bounds[0]]
+                ne = [bounds[3], bounds[2]]
+                m.fit_bounds([sw, ne])
+            
             return m
         except Exception as e:
             st.warning(f"Error al crear mapa de biodiversidad: {str(e)}")
             return None
     
-    def crear_mapa_combinado(self, puntos_carbono, puntos_ndvi, puntos_ndwi, puntos_biodiversidad):
-        """Crea mapa con todas las capas de heatmap"""
+    def crear_mapa_combinado(self, puntos_carbono, puntos_ndvi, puntos_ndwi, puntos_biodiversidad, gdf_area=None):
+        """Crea mapa con todas las capas de heatmap con zoom automático"""
         if not puntos_carbono or len(puntos_carbono) == 0:
             return None
         
         try:
-            # Calcular centro
-            centro = [puntos_carbono[0]['lat'], puntos_carbono[0]['lon']]
+            # Calcular centro y bounds
+            if gdf_area is not None and not gdf_area.empty:
+                bounds = gdf_area.total_bounds
+                centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
+            else:
+                centro = [puntos_carbono[0]['lat'], puntos_carbono[0]['lon']]
+                bounds = None
             
             m = folium.Map(
                 location=centro,
@@ -493,6 +622,19 @@ class SistemaMapas:
                 tiles=self.capa_base,
                 attr='Esri, Maxar, Earthstar Geographics'
             )
+            
+            # Si hay polígono de área, agregarlo primero
+            if gdf_area is not None and not gdf_area.empty:
+                folium.GeoJson(
+                    gdf_area.geometry.iloc[0],
+                    style_function=lambda x: {
+                        'fillColor': '#3b82f6',
+                        'color': '#1d4ed8',
+                        'weight': 3,
+                        'fillOpacity': 0.1,
+                        'dashArray': '5, 5'
+                    }
+                ).add_to(m)
             
             # Agregar capas de heatmap (inicialmente ocultas)
             capas = {}
@@ -571,6 +713,12 @@ class SistemaMapas:
             # Agregar leyenda combinada
             self._agregar_leyenda_combinada(m)
             
+            # Ajustar zoom a los datos si hay área
+            if gdf_area is not None and not gdf_area.empty:
+                sw = [bounds[1], bounds[0]]
+                ne = [bounds[3], bounds[2]]
+                m.fit_bounds([sw, ne])
+            
             return m
         except Exception as e:
             st.warning(f"Error al crear mapa combinado: {str(e)}")
@@ -603,7 +751,7 @@ class SistemaMapas:
                     </div>
                 </div>
                 <div style="font-size: 12px; color: #666;">
-                    <div><span style="color: #065f46; font-weight: bold;">■</span> Puntos verdes: Muestreo</div>
+                    <div><span style="color: #065f46; font-weight: bold;">■</span> Contorno azul: Área de estudio</div>
                     <div><span style="color: #3b82f6; font-weight: bold;">■</span> Heatmap: Intensidad de carbono</div>
                 </div>
             </div>
@@ -639,6 +787,7 @@ class SistemaMapas:
                     </div>
                 </div>
                 <div style="font-size: 12px; color: #666;">
+                    <div><span style="color: #1d4ed8; font-weight: bold;">■</span> Contorno azul: Área de estudio</div>
                     <div><span style="color: #8b0000; font-weight: bold;">■</span> Rojo: Vegetación escasa/muerta</div>
                     <div><span style="color: #32cd32; font-weight: bold;">■</span> Verde: Vegetación densa/sana</div>
                 </div>
@@ -674,6 +823,7 @@ class SistemaMapas:
                     </div>
                 </div>
                 <div style="font-size: 12px; color: #666;">
+                    <div><span style="color: #1d4ed8; font-weight: bold;">■</span> Contorno azul: Área de estudio</div>
                     <div><span style="color: #8b4513; font-weight: bold;">■</span> Marrón: Superficie seca</div>
                     <div><span style="color: #1e90ff; font-weight: bold;">■</span> Azul: Presencia de agua</div>
                 </div>
@@ -710,6 +860,7 @@ class SistemaMapas:
                     </div>
                 </div>
                 <div style="font-size: 12px; color: #666;">
+                    <div><span style="color: #1d4ed8; font-weight: bold;">■</span> Contorno azul: Área de estudio</div>
                     <div><span style="color: #991b1b; font-weight: bold;">■</span> Muy Baja: < 0.5</div>
                     <div><span style="color: #ef4444; font-weight: bold;">■</span> Baja: 0.5 - 1.5</div>
                     <div><span style="color: #f59e0b; font-weight: bold;">■</span> Moderada: 1.5 - 2.5</div>
@@ -760,6 +911,7 @@ class SistemaMapas:
                 </div>
                 <div style="font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 10px;">
                     <div><strong>Instrucciones:</strong></div>
+                    <div><span style="color: #1d4ed8; font-weight: bold;">■</span> Contorno azul: Área de estudio</div>
                     <div>• Use el control en la esquina superior derecha para cambiar entre capas</div>
                     <div>• Haga clic en los puntos para ver detalles</div>
                     <div>• Zoom con la rueda del mouse</div>
@@ -788,13 +940,26 @@ class Visualizaciones:
             )
             return fig
         
+        # Crear descripciones para los pools
+        descripciones = {
+            'AGB': 'Biomasa Aérea Viva',
+            'BGB': 'Biomasa de Raíces',
+            'DW': 'Madera Muerta',
+            'LI': 'Hojarasca',
+            'SOC': 'Carbono Orgánico del Suelo'
+        }
+        
+        # Preparar etiquetas
+        etiquetas = [f"{descripciones.get(k, k)}<br>({k})" for k in desglose.keys()]
+        
         fig = go.Figure(data=[
             go.Bar(
-                x=list(desglose.keys()),
+                x=etiquetas,
                 y=list(desglose.values()),
                 marker_color=['#238b45', '#41ab5d', '#74c476', '#a1d99b', '#d9f0a3'],
-                text=[f"{v:.1f}" for v in desglose.values()],
-                textposition='auto'
+                text=[f"{v:.1f} ton C/ha" for v in desglose.values()],
+                textposition='auto',
+                hovertemplate='<b>%{x}</b><br>Valor: %{y:.1f} ton C/ha<extra></extra>'
             )
         ])
         
@@ -802,7 +967,8 @@ class Visualizaciones:
             title='Distribución de Carbono por Pools',
             xaxis_title='Pool de Carbono',
             yaxis_title='Ton C/ha',
-            height=400
+            height=400,
+            hovermode='x unified'
         )
         
         return fig
@@ -990,12 +1156,13 @@ class Visualizaciones:
         return html
 
 # ===============================
-# 📄 GENERADOR DE REPORTES COMPLETOS
+# 📄 GENERADOR DE REPORTES COMPLETOS MEJORADO
 # ===============================
 class GeneradorReportes:
-    def __init__(self, resultados, gdf):
+    def __init__(self, resultados, gdf, sistema_mapas=None):
         self.resultados = resultados
         self.gdf = gdf
+        self.sistema_mapas = sistema_mapas
         self.buffer_pdf = BytesIO()
         self.buffer_docx = BytesIO()
         
@@ -1008,6 +1175,35 @@ class GeneradorReportes:
             return BytesIO(img_bytes)
         except Exception as e:
             st.warning(f"No se pudo convertir el gráfico a PNG: {str(e)}")
+            return None
+    
+    def _mapa_to_png(self, mapa, width=800, height=600):
+        """Convierte un mapa de Folium a PNG (simulación)"""
+        try:
+            if mapa is None:
+                return None
+            
+            # En una implementación real, usaríamos selenium o map screenshot API
+            # Por ahora, creamos una imagen de placeholder
+            from PIL import Image, ImageDraw, ImageFont
+            import io
+            
+            # Crear imagen de placeholder
+            img = Image.new('RGB', (width, height), color='white')
+            draw = ImageDraw.Draw(img)
+            
+            # Dibujar texto
+            draw.text((width//2 - 100, height//2 - 20), "Mapa interactivo", fill='black')
+            draw.text((width//2 - 150, height//2 + 10), "Disponible en la aplicación web", fill='gray')
+            
+            # Guardar en BytesIO
+            img_byte_arr = io.BytesIO()
+            img.save(img_byte_arr, format='PNG')
+            img_byte_arr.seek(0)
+            
+            return img_byte_arr
+        except Exception as e:
+            st.warning(f"No se pudo convertir el mapa a PNG: {str(e)}")
             return None
 
     def _crear_graficos(self):
@@ -1027,76 +1223,553 @@ class GeneradorReportes:
             if len(res['puntos_biodiversidad']) > 0:
                 fig_biodiv = vis.crear_grafico_radar_biodiversidad(res['puntos_biodiversidad'][0])
                 graficos['biodiv'] = self._fig_to_png(fig_biodiv)
+        
+        # Gráfico comparativo
+        if all(k in res for k in ['puntos_carbono', 'puntos_ndvi', 'puntos_ndwi', 'puntos_biodiversidad']):
+            fig_comparativo = vis.crear_grafico_comparativo(
+                res['puntos_carbono'],
+                res['puntos_ndvi'],
+                res['puntos_ndwi'],
+                res['puntos_biodiversidad']
+            )
+            if fig_comparativo:
+                graficos['comparativo'] = self._fig_to_png(fig_comparativo)
 
         return graficos
 
     def generar_pdf(self):
-        """Genera reporte en PDF"""
+        """Genera reporte completo en PDF con todas las secciones"""
         if not REPORTPDF_AVAILABLE:
             st.error("ReportLab no está instalado. No se puede generar PDF.")
             return None
         
         try:
-            doc = SimpleDocTemplate(self.buffer_pdf, pagesize=A4)
+            # Crear documento
+            doc = SimpleDocTemplate(
+                self.buffer_pdf,
+                pagesize=A4,
+                rightMargin=72,
+                leftMargin=72,
+                topMargin=72,
+                bottomMargin=72
+            )
+            
             story = []
             styles = getSampleStyleSheet()
-
-            # Título
-            title_style = ParagraphStyle(
-                'CustomTitle',
+            
+            # Estilos personalizados
+            titulo_style = ParagraphStyle(
+                'TituloPrincipal',
                 parent=styles['Heading1'],
                 fontSize=24,
+                textColor=colors.HexColor('#0a7e5a'),
                 spaceAfter=30,
-                alignment=1
+                alignment=TA_CENTER
             )
-            story.append(Paragraph("Informe Ambiental - Carbono y Biodiversidad", title_style))
+            
+            subtitulo_style = ParagraphStyle(
+                'Subtitulo',
+                parent=styles['Heading2'],
+                fontSize=18,
+                textColor=colors.HexColor('#065f46'),
+                spaceAfter=12,
+                spaceBefore=20
+            )
+            
+            seccion_style = ParagraphStyle(
+                'Seccion',
+                parent=styles['Heading3'],
+                fontSize=14,
+                textColor=colors.HexColor('#1d4ed8'),
+                spaceAfter=10,
+                spaceBefore=15
+            )
+            
+            # ===== PORTADA =====
+            story.append(Paragraph("INFORME AMBIENTAL COMPLETO", titulo_style))
             story.append(Spacer(1, 12))
-
-            # Resumen ejecutivo
+            story.append(Paragraph("Sistema Satelital de Análisis Ambiental", styles['Title']))
+            story.append(Spacer(1, 6))
+            story.append(Paragraph("Metodología Verra VCS + Índice de Shannon", styles['Heading2']))
+            story.append(Spacer(1, 24))
+            story.append(Paragraph(f"Fecha de generación: {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles['Normal']))
+            story.append(Spacer(1, 36))
+            
+            # ===== RESUMEN EJECUTIVO =====
+            story.append(Paragraph("RESUMEN EJECUTIVO", subtitulo_style))
+            
             res = self.resultados
-            resumen = f"""
-            <b>Área total:</b> {res.get('area_total_ha', 0):,.1f} ha<br/>
-            <b>Carbono total almacenado:</b> {res.get('carbono_total_ton', 0):,.0f} ton C<br/>
-            <b>CO₂ equivalente:</b> {res.get('co2_total_ton', 0):,.0f} ton CO₂e<br/>
-            <b>Índice de Shannon promedio:</b> {res.get('shannon_promedio', 0):.3f}<br/>
-            <b>Ecosistema:</b> {res.get('tipo_ecosistema', 'N/A')}<br/>
-            <b>Puntos de muestreo:</b> {res.get('num_puntos', 0)}
-            """
-            story.append(Paragraph("Resumen Ejecutivo", styles['Heading2']))
-            story.append(Paragraph(resumen, styles['Normal']))
+            datos_resumen = [
+                ["Métrica", "Valor", "Interpretación"],
+                ["Área total", f"{res.get('area_total_ha', 0):,.1f} ha", "Superficie del área de estudio"],
+                ["Carbono total almacenado", f"{res.get('carbono_total_ton', 0):,.0f} ton C", "Carbono almacenado en el área"],
+                ["CO₂ equivalente", f"{res.get('co2_total_ton', 0):,.0f} ton CO₂e", "Potencial de créditos de carbono"],
+                ["Índice de Shannon promedio", f"{res.get('shannon_promedio', 0):.3f}", "Nivel de biodiversidad"],
+                ["NDVI promedio", f"{res.get('ndvi_promedio', 0):.3f}", "Salud de la vegetación"],
+                ["NDWI promedio", f"{res.get('ndwi_promedio', 0):.3f}", "Contenido de agua"],
+                ["Tipo de ecosistema", res.get('tipo_ecosistema', 'N/A'), "Ecosistema predominante"],
+                ["Puntos de muestreo", str(res.get('num_puntos', 0)), "Muestras analizadas"]
+            ]
+            
+            tabla_resumen = Table(datos_resumen, colWidths=[150, 120, 200])
+            tabla_resumen.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#065f46')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 11),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f0f9ff')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#cbd5e1')),
+                ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ]))
+            
+            story.append(tabla_resumen)
             story.append(Spacer(1, 20))
-
+            
+            # ===== ANÁLISIS DE CARBONO =====
+            story.append(PageBreak())
+            story.append(Paragraph("ANÁLISIS DE CARBONO", subtitulo_style))
+            story.append(Paragraph("Metodología Verra VCS para Proyectos REDD+", seccion_style))
+            
+            # Tabla de pools de carbono
+            if res.get('desglose_promedio'):
+                story.append(Paragraph("Distribución de Carbono por Pools", seccion_style))
+                
+                descripciones = {
+                    'AGB': 'Biomasa Aérea Viva (árboles, arbustos)',
+                    'BGB': 'Biomasa de Raíces (sistema radical)',
+                    'DW': 'Madera Muerta (troncos caídos, ramas)',
+                    'LI': 'Hojarasca (material orgánico superficial)',
+                    'SOC': 'Carbono Orgánico del Suelo (0-30 cm)'
+                }
+                
+                datos_carbono = [["Pool", "Descripción", "Ton C/ha", "Porcentaje"]]
+                total = sum(res['desglose_promedio'].values())
+                
+                for pool, valor in res['desglose_promedio'].items():
+                    porcentaje = (valor / total * 100) if total > 0 else 0
+                    datos_carbono.append([
+                        pool,
+                        descripciones.get(pool, pool),
+                        f"{valor:.2f}",
+                        f"{porcentaje:.1f}%"
+                    ])
+                
+                tabla_carbono = Table(datos_carbono, colWidths=[60, 180, 70, 70])
+                tabla_carbono.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0a7e5a')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                    ('ALIGN', (2, 1), (3, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f0fdf4')),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#d1fae5')),
+                ]))
+                
+                story.append(tabla_carbono)
+                story.append(Spacer(1, 15))
+            
+            # Valor económico estimado
+            valor_economico = res.get('co2_total_ton', 0) * 15
+            story.append(Paragraph("Valoración Económica", seccion_style))
+            
+            datos_valor = [
+                ["Concepto", "Valor", "Observaciones"],
+                ["CO₂ equivalente total", f"{res.get('co2_total_ton', 0):,.0f} ton CO₂e", "Emisiones evitadas"],
+                ["Precio referencial carbono", "$15 USD/ton CO₂", "Precio mercado voluntario"],
+                ["Valor económico estimado", f"${valor_economico:,.0f} USD", "Valor potencial del proyecto"],
+                ["Créditos potenciales", f"{res.get('co2_total_ton', 0)/1000:,.0f} mil", "Unidades comercializables"]
+            ]
+            
+            tabla_valor = Table(datos_valor, colWidths=[120, 100, 180])
+            tabla_valor.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3b82f6')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                ('ALIGN', (1, 1), (1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#eff6ff')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#dbeafe')),
+            ]))
+            
+            story.append(tabla_valor)
+            story.append(Spacer(1, 20))
+            
+            # ===== ANÁLISIS DE BIODIVERSIDAD =====
+            story.append(PageBreak())
+            story.append(Paragraph("ANÁLISIS DE BIODIVERSIDAD", subtitulo_style))
+            story.append(Paragraph("Índice de Shannon para Diversidad Biológica", seccion_style))
+            
+            if res.get('puntos_biodiversidad') and len(res['puntos_biodiversidad']) > 0:
+                biodiv = res['puntos_biodiversidad'][0]
+                
+                # Tabla de biodiversidad
+                datos_biodiv = [
+                    ["Métrica", "Valor", "Interpretación"],
+                    ["Índice de Shannon", f"{biodiv.get('indice_shannon', 0):.3f}", biodiv.get('categoria', 'N/A')],
+                    ["Riqueza de especies", str(biodiv.get('riqueza_especies', 0)), "Número estimado de especies"],
+                    ["Abundancia total", f"{biodiv.get('abundancia_total', 0):,}", "Individuos estimados"],
+                    ["Categoría", biodiv.get('categoria', 'N/A'), "Clasificación según Shannon"]
+                ]
+                
+                tabla_biodiv = Table(datos_biodiv, colWidths=[120, 100, 180])
+                tabla_biodiv.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#8b5cf6')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                    ('ALIGN', (1, 1), (1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#faf5ff')),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e9d5ff')),
+                ]))
+                
+                story.append(tabla_biodiv)
+                story.append(Spacer(1, 15))
+            
+            # Escala del Índice de Shannon
+            story.append(Paragraph("Escala del Índice de Shannon", seccion_style))
+            
+            escala_shannon = [
+                ["Rango", "Categoría", "Interpretación"],
+                ["> 3.5", "Muy Alta", "Ecosistema con alta diversidad y equitatividad"],
+                ["2.5 - 3.5", "Alta", "Buena diversidad, estructura equilibrada"],
+                ["1.5 - 2.5", "Moderada", "Diversidad media, posible perturbación"],
+                ["0.5 - 1.5", "Baja", "Diversidad reducida, perturbación significativa"],
+                ["< 0.5", "Muy Baja", "Diversidad muy baja, ecosistema degradado"]
+            ]
+            
+            tabla_escala = Table(escala_shannon, colWidths=[80, 80, 220])
+            tabla_escala.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f59e0b')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                ('ALIGN', (0, 1), (1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#fffbeb')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#fde68a')),
+            ]))
+            
+            story.append(tabla_escala)
+            story.append(Spacer(1, 20))
+            
+            # ===== ANÁLISIS DE ÍNDICES ESPECTRALES =====
+            story.append(PageBreak())
+            story.append(Paragraph("ANÁLISIS DE ÍNDICES ESPECTRALES", subtitulo_style))
+            
+            # Tabla de índices
+            datos_indices = [
+                ["Índice", "Valor promedio", "Rango típico", "Interpretación"],
+                ["NDVI", f"{res.get('ndvi_promedio', 0):.3f}", "-1.0 a +1.0", "Salud y densidad de vegetación"],
+                ["NDWI", f"{res.get('ndwi_promedio', 0):.3f}", "-1.0 a +1.0", "Contenido de agua en vegetación/suelo"]
+            ]
+            
+            tabla_indices = Table(datos_indices, colWidths=[80, 80, 80, 140])
+            tabla_indices.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#10b981')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                ('ALIGN', (1, 1), (2, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f0fdf4')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#bbf7d0')),
+            ]))
+            
+            story.append(tabla_indices)
+            story.append(Spacer(1, 15))
+            
+            # Interpretación NDVI
+            story.append(Paragraph("Interpretación del NDVI", seccion_style))
+            
+            interpretacion_ndvi = [
+                ["Valor NDVI", "Estado de la vegetación", "Características"],
+                ["> 0.6", "Muy saludable/densa", "Bosques maduros, vegetación exuberante"],
+                ["0.3 - 0.6", "Moderada/saludable", "Vegetación en desarrollo, pastizales"],
+                ["0.1 - 0.3", "Escasa/degradada", "Vegetación rala, posible estrés"],
+                ["< 0.1", "Muy escasa/muerta", "Suelo desnudo, áreas urbanas, agua"]
+            ]
+            
+            tabla_ndvi = Table(interpretacion_ndvi, colWidths=[80, 100, 120])
+            tabla_ndvi.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#059669')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                ('ALIGN', (0, 1), (0, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#ecfdf5')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#a7f3d0')),
+            ]))
+            
+            story.append(tabla_ndvi)
+            story.append(Spacer(1, 20))
+            
+            # ===== RECOMENDACIONES =====
+            story.append(PageBreak())
+            story.append(Paragraph("RECOMENDACIONES Y CONCLUSIONES", subtitulo_style))
+            
+            # Recomendaciones generales
+            story.append(Paragraph("Recomendaciones para Proyecto VCS/REDD+", seccion_style))
+            
+            recomendaciones_vcs = [
+                "1. **Validación y Verificación**: Contratar un validador acreditado por Verra",
+                "2. **Monitoreo**: Establecer parcelas permanentes de muestreo (mínimo 10% del área)",
+                "3. **Línea Base**: Desarrollar escenario de referencia (baseline) robusto",
+                "4. **Adicionalidad**: Demostrar que el proyecto es adicional al business-as-usual",
+                "5. **Permanencia**: Implementar medidas para garantizar almacenamiento a largo plazo",
+                "6. **MRV**: Sistema de Monitoreo, Reporte y Verificación transparente",
+                "7. **Participación comunitaria**: Involucrar a las comunidades locales en el proyecto",
+                "8. **Plan de manejo**: Desarrollar plan integral de manejo forestal sostenible"
+            ]
+            
+            for rec in recomendaciones_vcs:
+                story.append(Paragraph(rec, styles['Normal']))
+                story.append(Spacer(1, 5))
+            
+            story.append(Spacer(1, 15))
+            
+            # Recomendaciones según biodiversidad
+            categoria_biodiv = biodiv.get('categoria', 'N/A') if res.get('puntos_biodiversidad') else 'N/A'
+            story.append(Paragraph(f"Recomendaciones para Biodiversidad ({categoria_biodiv})", seccion_style))
+            
+            if categoria_biodiv in ["Muy Baja", "Baja"]:
+                rec_biodiv = [
+                    "• **Restauración activa**: Plantación de especies nativas diversificadas",
+                    "• **Control de amenazas**: Manejo integral de incendios y especies invasoras",
+                    "• **Conectividad**: Establecimiento de corredores biológicos",
+                    "• **Protección estricta**: Delimitación de zonas núcleo de conservación",
+                    "• **Monitoreo intensivo**: Seguimiento de indicadores clave cada 6 meses"
+                ]
+            elif categoria_biodiv == "Moderada":
+                rec_biodiv = [
+                    "• **Manejo sostenible**: Implementar prácticas de bajo impacto",
+                    "• **Protección selectiva**: Identificar y proteger áreas críticas",
+                    "• **Investigación**: Estudios de dinámica poblacional de especies clave",
+                    "• **Educación ambiental**: Programas de concienciación local",
+                    "• **Monitoreo regular**: Evaluación anual de biodiversidad"
+                ]
+            else:
+                rec_biodiv = [
+                    "• **Conservación preventiva**: Mantenimiento del estado actual",
+                    "• **Investigación científica**: Estudio de patrones de biodiversidad",
+                    "• **Uso sostenible**: Planificación de actividades económicas compatibles",
+                    "• **Turismo científico**: Desarrollo de investigación participativa",
+                    "• **Monitoreo continuo**: Sistema de alerta temprana para cambios"
+                ]
+            
+            for rec in rec_biodiv:
+                story.append(Paragraph(rec, styles['Normal']))
+                story.append(Spacer(1, 5))
+            
+            story.append(Spacer(1, 20))
+            
+            # ===== CONCLUSIONES FINALES =====
+            story.append(Paragraph("CONCLUSIONES", subtitulo_style))
+            
+            conclusiones = [
+                f"El área de estudio de {res.get('area_total_ha', 0):,.1f} hectáreas presenta un almacenamiento significativo de carbono, con un total de {res.get('carbono_total_ton', 0):,.0f} ton C.",
+                f"El índice de Shannon de {res.get('shannon_promedio', 0):.3f} indica un nivel de biodiversidad {categoria_biodiv.lower()}, lo que sugiere oportunidades para medidas de conservación específicas.",
+                f"Los valores promedio de NDVI ({res.get('ndvi_promedio', 0):.3f}) y NDWI ({res.get('ndwi_promedio', 0):.3f}) reflejan condiciones adecuadas de salud vegetal y disponibilidad hídrica.",
+                "El proyecto presenta potencial para desarrollo bajo estándares VCS/REDD+, contribuyendo tanto a la mitigación climática como a la conservación de biodiversidad.",
+                "Se recomienda profundizar el análisis con datos satelitales reales y validación de campo para optimizar el diseño del proyecto."
+            ]
+            
+            for i, conc in enumerate(conclusiones, 1):
+                story.append(Paragraph(f"{i}. {conc}", styles['Normal']))
+                story.append(Spacer(1, 8))
+            
+            # Pie de página
+            story.append(PageBreak())
+            story.append(Paragraph("--- FIN DEL INFORME ---", ParagraphStyle(
+                'Pie',
+                parent=styles['Normal'],
+                fontSize=10,
+                textColor=colors.gray,
+                alignment=TA_CENTER,
+                spaceBefore=50
+            )))
+            
+            story.append(Paragraph("Sistema Satelital de Análisis Ambiental - Versión 1.0", ParagraphStyle(
+                'Firma',
+                parent=styles['Normal'],
+                fontSize=9,
+                textColor=colors.gray,
+                alignment=TA_CENTER
+            )))
+            
+            # Construir documento
             doc.build(story)
             self.buffer_pdf.seek(0)
             return self.buffer_pdf
+            
         except Exception as e:
             st.error(f"Error generando PDF: {str(e)}")
+            import traceback
+            st.error(traceback.format_exc())
             return None
 
     def generar_docx(self):
-        """Genera reporte en DOCX"""
+        """Genera reporte completo en DOCX"""
         if not REPORTDOCX_AVAILABLE:
             st.error("python-docx no está instalado. No se puede generar DOCX.")
             return None
         
         try:
             doc = Document()
-            doc.add_heading('Informe Ambiental - Carbono y Biodiversidad', 0)
+            
+            # Configurar estilos
+            style = doc.styles['Normal']
+            style.font.name = 'Arial'
+            style.font.size = Pt(11)
+            
+            # Título
+            title = doc.add_heading('INFORME AMBIENTAL COMPLETO', 0)
+            title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            subtitle = doc.add_heading('Sistema Satelital de Análisis Ambiental', 1)
+            subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            doc.add_paragraph(f"Fecha de generación: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
             doc.add_paragraph()
-
-            # Resumen
+            
+            # Resumen ejecutivo
+            doc.add_heading('RESUMEN EJECUTIVO', level=1)
+            
             res = self.resultados
-            doc.add_heading('Resumen Ejecutivo', level=1)
-            doc.add_paragraph(f"Área total: {res.get('area_total_ha', 0):,.1f} ha")
-            doc.add_paragraph(f"Carbono total almacenado: {res.get('carbono_total_ton', 0):,.0f} ton C")
-            doc.add_paragraph(f"CO₂ equivalente: {res.get('co2_total_ton', 0):,.0f} ton CO₂e")
-            doc.add_paragraph(f"Índice de Shannon promedio: {res.get('shannon_promedio', 0):.3f}")
-            doc.add_paragraph(f"Ecosistema: {res.get('tipo_ecosistema', 'N/A')}")
-            doc.add_paragraph(f"Puntos de muestreo: {res.get('num_puntos', 0)}")
-
+            tabla_resumen = doc.add_table(rows=9, cols=3)
+            tabla_resumen.style = 'Light Shading'
+            
+            # Encabezados
+            tabla_resumen.cell(0, 0).text = 'Métrica'
+            tabla_resumen.cell(0, 1).text = 'Valor'
+            tabla_resumen.cell(0, 2).text = 'Interpretación'
+            
+            # Datos
+            datos = [
+                ('Área total', f"{res.get('area_total_ha', 0):,.1f} ha", 'Superficie del área de estudio'),
+                ('Carbono total almacenado', f"{res.get('carbono_total_ton', 0):,.0f} ton C', 'Carbono almacenado en el área"),
+                ('CO₂ equivalente', f"{res.get('co2_total_ton', 0):,.0f} ton CO₂e', 'Potencial de créditos de carbono'),
+                ('Índice de Shannon promedio', f"{res.get('shannon_promedio', 0):.3f}', 'Nivel de biodiversidad'),
+                ('NDVI promedio', f"{res.get('ndvi_promedio', 0):.3f}', 'Salud de la vegetación'),
+                ('NDWI promedio', f"{res.get('ndwi_promedio', 0):.3f}', 'Contenido de agua'),
+                ('Tipo de ecosistema', res.get('tipo_ecosistema', 'N/A'), 'Ecosistema predominante'),
+                ('Puntos de muestreo', str(res.get('num_puntos', 0)), 'Muestras analizadas')
+            ]
+            
+            for i, (metrica, valor, interpretacion) in enumerate(datos, 1):
+                tabla_resumen.cell(i, 0).text = metrica
+                tabla_resumen.cell(i, 1).text = valor
+                tabla_resumen.cell(i, 2).text = interpretacion
+            
+            doc.add_paragraph()
+            
+            # Análisis de carbono
+            doc.add_heading('ANÁLISIS DE CARBONO', level=1)
+            doc.add_heading('Metodología Verra VCS para Proyectos REDD+', level=2)
+            
+            if res.get('desglose_promedio'):
+                doc.add_heading('Distribución de Carbono por Pools', level=3)
+                
+                tabla_carbono = doc.add_table(rows=6, cols=4)
+                tabla_carbono.style = 'Light Shading'
+                
+                # Encabezados
+                tabla_carbono.cell(0, 0).text = 'Pool'
+                tabla_carbono.cell(0, 1).text = 'Descripción'
+                tabla_carbono.cell(0, 2).text = 'Ton C/ha'
+                tabla_carbono.cell(0, 3).text = 'Porcentaje'
+                
+                descripciones = {
+                    'AGB': 'Biomasa Aérea Viva',
+                    'BGB': 'Biomasa de Raíces',
+                    'DW': 'Madera Muerta',
+                    'LI': 'Hojarasca',
+                    'SOC': 'Carbono Orgánico del Suelo'
+                }
+                
+                total = sum(res['desglose_promedio'].values())
+                for i, (pool, valor) in enumerate(res['desglose_promedio'].items(), 1):
+                    tabla_carbono.cell(i, 0).text = pool
+                    tabla_carbono.cell(i, 1).text = descripciones.get(pool, pool)
+                    tabla_carbono.cell(i, 2).text = f"{valor:.2f}"
+                    porcentaje = (valor / total * 100) if total > 0 else 0
+                    tabla_carbono.cell(i, 3).text = f"{porcentaje:.1f}%"
+            
+            doc.add_page_break()
+            
+            # Análisis de biodiversidad
+            doc.add_heading('ANÁLISIS DE BIODIVERSIDAD', level=1)
+            doc.add_heading('Índice de Shannon para Diversidad Biológica', level=2)
+            
+            if res.get('puntos_biodiversidad') and len(res['puntos_biodiversidad']) > 0:
+                biodiv = res['puntos_biodiversidad'][0]
+                
+                tabla_biodiv = doc.add_table(rows=5, cols=3)
+                tabla_biodiv.style = 'Light Shading'
+                
+                tabla_biodiv.cell(0, 0).text = 'Métrica'
+                tabla_biodiv.cell(0, 1).text = 'Valor'
+                tabla_biodiv.cell(0, 2).text = 'Interpretación'
+                
+                datos_biodiv = [
+                    ('Índice de Shannon', f"{biodiv.get('indice_shannon', 0):.3f}', biodiv.get('categoria', 'N/A')),
+                    ('Riqueza de especies', str(biodiv.get('riqueza_especies', 0)), 'Número estimado de especies'),
+                    ('Abundancia total', f"{biodiv.get('abundancia_total', 0):,}', 'Individuos estimados'),
+                    ('Categoría', biodiv.get('categoria', 'N/A'), 'Clasificación según Shannon')
+                ]
+                
+                for i, (metrica, valor, interpretacion) in enumerate(datos_biodiv, 1):
+                    tabla_biodiv.cell(i, 0).text = metrica
+                    tabla_biodiv.cell(i, 1).text = valor
+                    tabla_biodiv.cell(i, 2).text = interpretacion
+            
+            doc.add_page_break()
+            
+            # Recomendaciones
+            doc.add_heading('RECOMENDACIONES Y CONCLUSIONES', level=1)
+            doc.add_heading('Recomendaciones para Proyecto VCS/REDD+', level=2)
+            
+            recomendaciones = [
+                "1. Validación y Verificación: Contratar un validador acreditado por Verra",
+                "2. Monitoreo: Establecer parcelas permanentes de muestreo",
+                "3. Línea Base: Desarrollar escenario de referencia robusto",
+                "4. Adicionalidad: Demostrar que el proyecto es adicional",
+                "5. Permanencia: Implementar medidas de garantía a largo plazo",
+                "6. MRV: Sistema de Monitoreo, Reporte y Verificación transparente"
+            ]
+            
+            for rec in recomendaciones:
+                doc.add_paragraph(rec)
+            
+            # Conclusiones
+            doc.add_heading('CONCLUSIONES', level=2)
+            
+            conclusiones = [
+                f"El área presenta un almacenamiento significativo de carbono ({res.get('carbono_total_ton', 0):,.0f} ton C).",
+                f"El índice de Shannon ({res.get('shannon_promedio', 0):.3f}) indica oportunidades para conservación.",
+                "El proyecto tiene potencial para desarrollo bajo estándares VCS/REDD+.",
+                "Se recomienda validación con datos satelitales reales y campo."
+            ]
+            
+            for i, conc in enumerate(conclusiones, 1):
+                doc.add_paragraph(f"{i}. {conc}")
+            
             doc.save(self.buffer_docx)
             self.buffer_docx.seek(0)
             return self.buffer_docx
+            
         except Exception as e:
             st.error(f"Error generando DOCX: {str(e)}")
             return None
@@ -1118,150 +1791,6 @@ class GeneradorReportes:
         except Exception as e:
             st.error(f"Error generando GeoJSON: {str(e)}")
             return json.dumps({"error": str(e)})
-
-# ===============================
-# 🎨 INTERFAZ PRINCIPAL SIMPLIFICADA
-# ===============================
-def main():
-    """Función principal de la aplicación"""
-    
-    # Inicializar session state
-    if 'poligono_data' not in st.session_state:
-        st.session_state.poligono_data = None
-    if 'resultados' not in st.session_state:
-        st.session_state.resultados = None
-    if 'mapa' not in st.session_state:
-        st.session_state.mapa = None
-    
-    # Título principal
-    st.title("🌎 Sistema Satelital de Análisis Ambiental")
-    st.markdown("### Metodología Verra VCS + Índice de Shannon + Análisis Multiespectral")
-    
-    # Sidebar
-    with st.sidebar:
-        st.header("📁 Carga de Datos")
-        
-        # Cargar archivo
-        uploaded_file = st.file_uploader(
-            "Cargar polígono (KML, GeoJSON, SHP, KMZ)",
-            type=['kml', 'geojson', 'zip', 'kmz'],
-            help="Suba un archivo con el polígono de estudio"
-        )
-        
-        if uploaded_file is not None:
-            with st.spinner("Procesando archivo..."):
-                try:
-                    gdf = cargar_archivo_parcela(uploaded_file)
-                    if gdf is not None:
-                        st.session_state.poligono_data = gdf
-                        st.success(f"✅ Polígono cargado correctamente")
-                        
-                        # Calcular área
-                        area_ha = calcular_superficie(gdf)
-                        st.info(f"📍 Área calculada: {area_ha:,.1f} ha")
-                        
-                        # Mostrar información del polígono
-                        with st.expander("📐 Información del polígono"):
-                            bounds = gdf.total_bounds
-                            st.write(f"**Límites:**")
-                            st.write(f"Noroeste: {bounds[3]:.4f}°N, {bounds[0]:.4f}°W")
-                            st.write(f"Sureste: {bounds[1]:.4f}°N, {bounds[2]:.4f}°W")
-                            st.write(f"**CRS:** {gdf.crs}")
-                        
-                        # Crear mapa inicial
-                        sistema_mapas = SistemaMapas()
-                        st.session_state.mapa = sistema_mapas.crear_mapa_area(gdf)
-                        
-                except Exception as e:
-                    st.error(f"Error al cargar archivo: {str(e)}")
-        
-        if st.session_state.poligono_data is not None:
-            st.header("⚙️ Configuración")
-            
-            tipo_ecosistema = st.selectbox(
-                "Tipo de ecosistema",
-                ['amazonia', 'choco', 'andes', 'pampa', 'seco'],
-                help="Seleccione el tipo de ecosistema predominante"
-            )
-            
-            num_puntos = st.slider(
-                "Número de puntos de muestreo",
-                min_value=10,
-                max_value=200,
-                value=50,
-                help="Cantidad de puntos para análisis"
-            )
-            
-            if st.button("🚀 Ejecutar Análisis Completo", type="primary", use_container_width=True):
-                with st.spinner("Analizando carbono, biodiversidad e índices espectrales..."):
-                    try:
-                        resultados = ejecutar_analisis_completo(
-                            st.session_state.poligono_data,
-                            tipo_ecosistema,
-                            num_puntos
-                        )
-                        st.session_state.resultados = resultados
-                        st.success("✅ Análisis completado!")
-                        
-                    except Exception as e:
-                        st.error(f"Error en el análisis: {str(e)}")
-    
-    # Contenido principal
-    if st.session_state.poligono_data is None:
-        st.info("👈 Cargue un polígono en el panel lateral para comenzar")
-        
-        # Mostrar información de la aplicación
-        with st.expander("📋 Información del Sistema"):
-            st.markdown("""
-            ### Sistema Integrado de Análisis Ambiental Satelital
-            
-            **Características principales:**
-            
-            1. **🌳 Metodología Verra VCS** para cálculo de carbono forestal
-            2. **🦋 Índice de Shannon** para análisis de biodiversidad
-            3. **📈 NDVI** (Índice de Vegetación de Diferencia Normalizada)
-            4. **💧 NDWI** (Índice de Agua de Diferencia Normalizada)
-            5. **🗺️ Mapas de calor** interactivos para todas las variables
-            6. **📊 Visualizaciones comparativas** y análisis correlacionales
-            
-            **Variables analizadas:**
-            - **Carbono almacenado** (ton C/ha)
-            - **Biodiversidad** (Índice de Shannon)
-            - **Salud vegetal** (NDVI: -1 a +1)
-            - **Contenido de agua** (NDWI: -1 a +1)
-            
-            **Áreas de aplicación:**
-            - Proyectos REDD+ y créditos de carbono
-            - Monitoreo de conservación de biodiversidad
-            - Detección de estrés hídrico en vegetación
-            - Identificación de áreas prioritarias para conservación
-            - Estudios de impacto ambiental integrales
-            """)
-    
-    else:
-        # Mostrar pestañas
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "🗺️ Mapas de Calor", 
-            "📊 Dashboard", 
-            "🌳 Carbono", 
-            "🦋 Biodiversidad",
-            "📈 Comparación"
-        ])
-        
-        with tab1:
-            mostrar_mapas_calor()
-        
-        with tab2:
-            mostrar_dashboard()
-        
-        with tab3:
-            mostrar_carbono()
-        
-        with tab4:
-            mostrar_biodiversidad()
-        
-        with tab5:
-            mostrar_comparacion()
 
 # ===== FUNCIONES AUXILIARES - CORREGIDAS PARA EPSG:4326 =====
 def validar_y_corregir_crs(gdf):
@@ -1458,7 +1987,6 @@ def cargar_archivo_parcela(uploaded_file):
         elif uploaded_file.name.endswith(('.kml', '.kmz')):
             gdf = cargar_kml(uploaded_file)
         elif uploaded_file.name.endswith('.geojson'):
-            # Para GeoJSON
             gdf = gpd.read_file(uploaded_file)
             gdf = validar_y_corregir_crs(gdf)
         else:
@@ -1487,6 +2015,154 @@ def cargar_archivo_parcela(uploaded_file):
         import traceback
         st.error(f"Detalle: {traceback.format_exc()}")
         return None
+
+# ===============================
+# 🎨 INTERFAZ PRINCIPAL SIMPLIFICADA
+# ===============================
+def main():
+    """Función principal de la aplicación"""
+    
+    # Inicializar session state
+    if 'poligono_data' not in st.session_state:
+        st.session_state.poligono_data = None
+    if 'resultados' not in st.session_state:
+        st.session_state.resultados = None
+    if 'mapa' not in st.session_state:
+        st.session_state.mapa = None
+    
+    # Título principal
+    st.title("🌎 Sistema Satelital de Análisis Ambiental")
+    st.markdown("### Metodología Verra VCS + Índice de Shannon + Análisis Multiespectral")
+    
+    # Sidebar
+    with st.sidebar:
+        st.header("📁 Carga de Datos")
+        
+        # Cargar archivo
+        uploaded_file = st.file_uploader(
+            "Cargar polígono (KML, GeoJSON, SHP, KMZ)",
+            type=['kml', 'geojson', 'zip', 'kmz'],
+            help="Suba un archivo con el polígono de estudio"
+        )
+        
+        if uploaded_file is not None:
+            with st.spinner("Procesando archivo..."):
+                try:
+                    gdf = cargar_archivo_parcela(uploaded_file)
+                    if gdf is not None:
+                        st.session_state.poligono_data = gdf
+                        st.success(f"✅ Polígono cargado correctamente")
+                        
+                        # Calcular área
+                        area_ha = calcular_superficie(gdf)
+                        st.info(f"📍 Área calculada: {area_ha:,.1f} ha")
+                        
+                        # Mostrar información del polígono
+                        with st.expander("📐 Información del polígono"):
+                            bounds = gdf.total_bounds
+                            st.write(f"**Límites:**")
+                            st.write(f"Noroeste: {bounds[3]:.4f}°N, {bounds[0]:.4f}°W")
+                            st.write(f"Sureste: {bounds[1]:.4f}°N, {bounds[2]:.4f}°W")
+                            st.write(f"**CRS:** {gdf.crs}")
+                        
+                        # Crear mapa inicial con zoom automático
+                        sistema_mapas = SistemaMapas()
+                        st.session_state.mapa = sistema_mapas.crear_mapa_area(gdf, zoom_auto=True)
+                        
+                except Exception as e:
+                    st.error(f"Error al cargar archivo: {str(e)}")
+        
+        if st.session_state.poligono_data is not None:
+            st.header("⚙️ Configuración")
+            
+            tipo_ecosistema = st.selectbox(
+                "Tipo de ecosistema",
+                ['amazonia', 'choco', 'andes', 'pampa', 'seco'],
+                help="Seleccione el tipo de ecosistema predominante"
+            )
+            
+            num_puntos = st.slider(
+                "Número de puntos de muestreo",
+                min_value=10,
+                max_value=200,
+                value=50,
+                help="Cantidad de puntos para análisis"
+            )
+            
+            if st.button("🚀 Ejecutar Análisis Completo", type="primary", use_container_width=True):
+                with st.spinner("Analizando carbono, biodiversidad e índices espectrales..."):
+                    try:
+                        resultados = ejecutar_analisis_completo(
+                            st.session_state.poligono_data,
+                            tipo_ecosistema,
+                            num_puntos
+                        )
+                        st.session_state.resultados = resultados
+                        st.success("✅ Análisis completado!")
+                        
+                    except Exception as e:
+                        st.error(f"Error en el análisis: {str(e)}")
+    
+    # Contenido principal
+    if st.session_state.poligono_data is None:
+        st.info("👈 Cargue un polígono en el panel lateral para comenzar")
+        
+        # Mostrar información de la aplicación
+        with st.expander("📋 Información del Sistema"):
+            st.markdown("""
+            ### Sistema Integrado de Análisis Ambiental Satelital
+            
+            **Características principales:**
+            
+            1. **🌳 Metodología Verra VCS** para cálculo de carbono forestal
+            2. **🦋 Índice de Shannon** para análisis de biodiversidad
+            3. **📈 NDVI** (Índice de Vegetación de Diferencia Normalizada)
+            4. **💧 NDWI** (Índice de Agua de Diferencia Normalizada)
+            5. **🗺️ Mapas de calor** interactivos para todas las variables
+            6. **📊 Visualizaciones comparativas** y análisis correlacionales
+            
+            **Variables analizadas:**
+            - **Carbono almacenado** (ton C/ha)
+            - **Biodiversidad** (Índice de Shannon)
+            - **Salud vegetal** (NDVI: -1 a +1)
+            - **Contenido de agua** (NDWI: -1 a +1)
+            
+            **Áreas de aplicación:**
+            - Proyectos REDD+ y créditos de carbono
+            - Monitoreo de conservación de biodiversidad
+            - Detección de estrés hídrico en vegetación
+            - Identificación de áreas prioritarias para conservación
+            - Estudios de impacto ambiental integrales
+            """)
+    
+    else:
+        # Mostrar pestañas
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+            "🗺️ Mapas de Calor", 
+            "📊 Dashboard", 
+            "🌳 Carbono", 
+            "🦋 Biodiversidad",
+            "📈 Comparación",
+            "📥 Informe"
+        ])
+        
+        with tab1:
+            mostrar_mapas_calor()
+        
+        with tab2:
+            mostrar_dashboard()
+        
+        with tab3:
+            mostrar_carbono()
+        
+        with tab4:
+            mostrar_biodiversidad()
+        
+        with tab5:
+            mostrar_comparacion()
+        
+        with tab6:
+            mostrar_informe()
 
 def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos):
     """Ejecuta análisis completo de carbono, biodiversidad e índices espectrales"""
@@ -1534,7 +2210,6 @@ def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos):
                 ndvi = 0.5 + random.uniform(-0.2, 0.3)
                 
                 # Generar NDWI basado en precipitación y ubicación
-                # NDWI típicamente entre -1 y 1, positivo indica presencia de agua
                 base_ndwi = 0.1
                 if datos_clima['precipitacion'] > 2000:
                     base_ndwi += 0.3
@@ -1542,7 +2217,7 @@ def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos):
                     base_ndwi -= 0.2
                 
                 ndwi = base_ndwi + random.uniform(-0.2, 0.2)
-                ndwi = max(-0.5, min(0.8, ndwi))  # Mantener en rango razonable
+                ndwi = max(-0.5, min(0.8, ndwi))
                 
                 # Calcular carbono
                 carbono_info = verra.calcular_carbono_hectarea(ndvi, tipo_ecosistema, datos_clima['precipitacion'])
@@ -1630,10 +2305,9 @@ def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos):
 # 🗺️ FUNCIONES DE VISUALIZACIÓN
 # ===============================
 def mostrar_mapas_calor():
-    """Muestra todos los mapas de calor disponibles"""
+    """Muestra todos los mapas de calor disponibles con zoom automático"""
     st.header("🗺️ Mapas de Calor - Análisis Multivariable")
     
-    # CORREGIDO: Ahora hay 6 tabs y 6 variables
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "🌍 Área de Estudio", 
         "🌳 Carbono", 
@@ -1647,7 +2321,7 @@ def mostrar_mapas_calor():
         st.subheader("Área de Estudio")
         if st.session_state.mapa:
             folium_static(st.session_state.mapa, width=1000, height=600)
-            st.info("Mapa base con el polígono del área de estudio")
+            st.info("Mapa base con el polígono del área de estudio. El zoom se ajusta automáticamente al área.")
         else:
             st.info("No hay mapa para mostrar")
     
@@ -1656,7 +2330,8 @@ def mostrar_mapas_calor():
         if st.session_state.resultados and 'puntos_carbono' in st.session_state.resultados:
             sistema_mapas = SistemaMapas()
             mapa_carbono = sistema_mapas.crear_mapa_calor_carbono(
-                st.session_state.resultados['puntos_carbono']
+                st.session_state.resultados['puntos_carbono'],
+                st.session_state.poligono_data
             )
             
             if mapa_carbono:
@@ -1682,7 +2357,8 @@ def mostrar_mapas_calor():
         if st.session_state.resultados and 'puntos_ndvi' in st.session_state.resultados:
             sistema_mapas = SistemaMapas()
             mapa_ndvi = sistema_mapas.crear_mapa_calor_ndvi(
-                st.session_state.resultados['puntos_ndvi']
+                st.session_state.resultados['puntos_ndvi'],
+                st.session_state.poligono_data
             )
             
             if mapa_ndvi:
@@ -1696,7 +2372,6 @@ def mostrar_mapas_calor():
                     ndvi_vals = [p['ndvi'] for p in st.session_state.resultados['puntos_ndvi']]
                     st.metric("Rango NDVI", f"{min(ndvi_vals):.2f} - {max(ndvi_vals):.2f}")
                 with col3:
-                    # Interpretación NDVI
                     ndvi_avg = st.session_state.resultados.get('ndvi_promedio', 0)
                     if ndvi_avg > 0.6:
                         interpretacion = "🌿 Vegetación densa"
@@ -1715,7 +2390,8 @@ def mostrar_mapas_calor():
         if st.session_state.resultados and 'puntos_ndwi' in st.session_state.resultados:
             sistema_mapas = SistemaMapas()
             mapa_ndwi = sistema_mapas.crear_mapa_calor_ndwi(
-                st.session_state.resultados['puntos_ndwi']
+                st.session_state.resultados['puntos_ndwi'],
+                st.session_state.poligono_data
             )
             
             if mapa_ndwi:
@@ -1729,7 +2405,6 @@ def mostrar_mapas_calor():
                     ndwi_vals = [p['ndwi'] for p in st.session_state.resultados['puntos_ndwi']]
                     st.metric("Rango NDWI", f"{min(ndwi_vals):.2f} - {max(ndwi_vals):.2f}")
                 with col3:
-                    # Interpretación NDWI
                     ndwi_avg = st.session_state.resultados.get('ndwi_promedio', 0)
                     if ndwi_avg > 0.2:
                         interpretacion = "💧 Húmedo"
@@ -1748,7 +2423,8 @@ def mostrar_mapas_calor():
         if st.session_state.resultados and 'puntos_biodiversidad' in st.session_state.resultados:
             sistema_mapas = SistemaMapas()
             mapa_biodiv = sistema_mapas.crear_mapa_calor_biodiversidad(
-                st.session_state.resultados['puntos_biodiversidad']
+                st.session_state.resultados['puntos_biodiversidad'],
+                st.session_state.poligono_data
             )
             
             if mapa_biodiv:
@@ -1780,7 +2456,8 @@ def mostrar_mapas_calor():
                 st.session_state.resultados.get('puntos_carbono', []),
                 st.session_state.resultados.get('puntos_ndvi', []),
                 st.session_state.resultados.get('puntos_ndwi', []),
-                st.session_state.resultados.get('puntos_biodiversidad', [])
+                st.session_state.resultados.get('puntos_biodiversidad', []),
+                st.session_state.poligono_data
             )
             
             if mapa_combinado:
@@ -1868,52 +2545,6 @@ def mostrar_dashboard():
         
         df = pd.DataFrame(data)
         st.dataframe(df, use_container_width=True, hide_index=True)
-        
-        # Botones de descarga
-        st.subheader("📥 Descargar Informe Completo")
-        
-        if st.session_state.resultados and st.session_state.poligono_data is not None:
-            generador = GeneradorReportes(st.session_state.resultados, st.session_state.poligono_data)
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                if REPORTPDF_AVAILABLE:
-                    pdf_buffer = generador.generar_pdf()
-                    if pdf_buffer:
-                        st.download_button(
-                            label="📄 Descargar PDF",
-                            data=pdf_buffer,
-                            file_name="informe_ambiental.pdf",
-                            mime="application/pdf"
-                        )
-                else:
-                    st.info("PDF no disponible (instale ReportLab)")
-            
-            with col2:
-                if REPORTDOCX_AVAILABLE:
-                    docx_buffer = generador.generar_docx()
-                    if docx_buffer:
-                        st.download_button(
-                            label="📘 Descargar DOCX",
-                            data=docx_buffer,
-                            file_name="informe_ambiental.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        )
-                else:
-                    st.info("DOCX no disponible (instale python-docx)")
-            
-            with col3:
-                geojson_str = generador.generar_geojson()
-                if geojson_str:
-                    st.download_button(
-                        label="🌍 Descargar GeoJSON",
-                        data=geojson_str,
-                        file_name="area_analisis.geojson",
-                        mime="application/geo+json"
-                    )
-        else:
-            st.info("No hay datos para generar informes")
         
     else:
         st.info("Ejecute el análisis primero para ver el dashboard")
@@ -2262,6 +2893,129 @@ def mostrar_comparacion():
     
     else:
         st.info("Ejecute el análisis primero para ver las comparaciones")
+
+def mostrar_informe():
+    """Muestra sección de descarga de informe completo"""
+    st.header("📥 Informe Completo del Análisis")
+    
+    if st.session_state.resultados and st.session_state.poligono_data is not None:
+        st.markdown("### Generar informe completo con todos los análisis")
+        st.info("""
+        El informe incluirá:
+        - Portada y resumen ejecutivo
+        - Métricas clave (KPI)
+        - Análisis completo de carbono con metodología Verra VCS
+        - Análisis de biodiversidad con Índice de Shannon
+        - Evaluación de índices espectrales (NDVI, NDWI)
+        - Tablas detalladas y recomendaciones
+        - Conclusiones y valoración económica
+        """)
+        
+        # Sistema de mapas para el informe
+        sistema_mapas = SistemaMapas()
+        
+        # Crear generador de reportes
+        generador = GeneradorReportes(
+            st.session_state.resultados, 
+            st.session_state.poligono_data,
+            sistema_mapas
+        )
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if REPORTPDF_AVAILABLE:
+                st.markdown("#### 📄 Informe en PDF")
+                st.markdown("Documento profesional con formato optimizado para impresión")
+                if st.button("Generar y Descargar PDF", use_container_width=True):
+                    with st.spinner("Generando informe PDF..."):
+                        pdf_buffer = generador.generar_pdf()
+                        if pdf_buffer:
+                            st.download_button(
+                                label="⬇️ Descargar PDF",
+                                data=pdf_buffer,
+                                file_name=f"informe_ambiental_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True
+                            )
+                        else:
+                            st.error("No se pudo generar el PDF")
+            else:
+                st.info("PDF no disponible (instale ReportLab)")
+        
+        with col2:
+            if REPORTDOCX_AVAILABLE:
+                st.markdown("#### 📘 Informe en Word")
+                st.markdown("Documento editable para personalización adicional")
+                if st.button("Generar y Descargar DOCX", use_container_width=True):
+                    with st.spinner("Generando informe DOCX..."):
+                        docx_buffer = generador.generar_docx()
+                        if docx_buffer:
+                            st.download_button(
+                                label="⬇️ Descargar DOCX",
+                                data=docx_buffer,
+                                file_name=f"informe_ambiental_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                use_container_width=True
+                            )
+                        else:
+                            st.error("No se pudo generar el DOCX")
+            else:
+                st.info("DOCX no disponible (instale python-docx)")
+        
+        with col3:
+            st.markdown("#### 🌍 Datos Geoespaciales")
+            st.markdown("Polígono de estudio con atributos calculados")
+            if st.button("Generar GeoJSON", use_container_width=True):
+                with st.spinner("Generando GeoJSON..."):
+                    geojson_str = generador.generar_geojson()
+                    if geojson_str:
+                        st.download_button(
+                            label="⬇️ Descargar GeoJSON",
+                            data=geojson_str,
+                            file_name=f"area_estudio_{datetime.now().strftime('%Y%m%d_%H%M')}.geojson",
+                            mime="application/geo+json",
+                            use_container_width=True
+                        )
+                    else:
+                        st.error("No se pudo generar el GeoJSON")
+        
+        # Vista previa del informe
+        st.markdown("---")
+        st.subheader("📋 Vista Previa del Contenido del Informe")
+        
+        res = st.session_state.resultados
+        
+        with st.expander("📊 Resumen Ejecutivo (Vista Previa)"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Área Total", f"{res.get('area_total_ha', 0):,.1f} ha")
+                st.metric("Carbono Total", f"{res.get('carbono_total_ton', 0):,.0f} ton C")
+                st.metric("CO₂ Equivalente", f"{res.get('co2_total_ton', 0):,.0f} ton CO₂e")
+            with col2:
+                st.metric("Índice Shannon", f"{res.get('shannon_promedio', 0):.3f}")
+                st.metric("NDVI Promedio", f"{res.get('ndvi_promedio', 0):.3f}")
+                st.metric("NDWI Promedio", f"{res.get('ndwi_promedio', 0):.3f}")
+        
+        with st.expander("🌳 Análisis de Carbono (Vista Previa)"):
+            if res.get('desglose_promedio'):
+                df_pools = pd.DataFrame({
+                    'Pool': list(res['desglose_promedio'].keys()),
+                    'Ton C/ha': list(res['desglose_promedio'].values())
+                })
+                st.dataframe(df_pools, use_container_width=True)
+        
+        with st.expander("💎 Valoración Económica (Vista Previa)"):
+            valor_economico = res.get('co2_total_ton', 0) * 15
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("CO₂ Total", f"{res.get('co2_total_ton', 0):,.0f} ton")
+            with col2:
+                st.metric("Precio Referencial", "$15 USD/ton")
+            with col3:
+                st.metric("Valor Estimado", f"${valor_economico:,.0f} USD")
+    else:
+        st.info("Ejecute el análisis primero para generar el informe")
 
 # ===============================
 # 🚀 EJECUCIÓN PRINCIPAL
