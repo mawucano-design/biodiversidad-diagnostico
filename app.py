@@ -34,7 +34,7 @@ warnings.filterwarnings('ignore')
 # Librerías geoespaciales
 import folium
 from streamlit_folium import st_folium, folium_static
-from folium.plugins import Fullscreen, MousePosition, HeatMap, FitBounds
+from folium.plugins import Fullscreen, MousePosition, HeatMap
 import geopandas as gpd
 from shapely.geometry import Polygon, Point, shape, MultiPolygon
 from shapely.ops import unary_union
