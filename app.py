@@ -45,276 +45,6 @@ import matplotlib.cm as cm
 import random
 
 # ===============================
-# 🖼️ EXPORTADOR DE MAPAS A PNG
-# ===============================
-class ExportadorMapas:
-    """Clase para exportar mapas a PNG usando Plotly como alternativa"""
-    
-    @staticmethod
-    def crear_mapa_plotly_con_leyenda(puntos, variable_nombre, columna_valor, colormap, gdf_area=None):
-        """
-        Crea un mapa de Plotly con leyenda para exportar como PNG
-        
-        Args:
-            puntos: Lista de puntos con coordenadas y valores
-            variable_nombre: Nombre de la variable (para título y leyenda)
-            columna_valor: Nombre de la columna con los valores
-            colormap: Esquema de colores de Plotly
-            gdf_area: GeoDataFrame con el área de estudio (opcional)
-        
-        Returns:
-            Figura de Plotly
-        """
-        if not puntos or len(puntos) == 0:
-            return None
-        
-        try:
-            # Preparar datos
-            lats = [p['lat'] for p in puntos]
-            lons = [p['lon'] for p in puntos]
-            valores = [p[columna_valor] for p in puntos]
-            
-            # Crear figura
-            fig = go.Figure()
-            
-            # Si hay área de estudio, agregarla como contorno
-            if gdf_area is not None and not gdf_area.empty:
-                try:
-                    # Obtener coordenadas del polígono
-                    polygon = gdf_area.geometry.iloc[0]
-                    if polygon.geom_type == 'Polygon':
-                        coords = list(polygon.exterior.coords)
-                        lons_poly = [coord[0] for coord in coords]
-                        lats_poly = [coord[1] for coord in coords]
-                        
-                        fig.add_trace(go.Scattergeo(
-                            lon=lons_poly,
-                            lat=lats_poly,
-                            mode='lines',
-                            line=dict(width=3, color='#1d4ed8'),
-                            fill='none',
-                            name='Área de estudio',
-                            hoverinfo='skip'
-                        ))
-                except:
-                    pass
-            
-            # Añadir puntos con heatmap
-            fig.add_trace(go.Densitymapbox(
-                lat=lats,
-                lon=lons,
-                z=valores,
-                radius=20,
-                colorscale=colormap,
-                zmin=min(valores) if valores else 0,
-                zmax=max(valores) if valores else 1,
-                colorbar=dict(
-                    title=dict(
-                        text=variable_nombre,
-                        font=dict(size=14)
-                    ),
-                    thickness=20,
-                    len=0.8,
-                    x=0.02,
-                    y=0.5
-                ),
-                hoverinfo='lat+lon+z',
-                hovertemplate='<b>Lat:</b> %{lat:.4f}<br>' +
-                              '<b>Lon:</b> %{lon:.4f}<br>' +
-                              f'<b>{variable_nombre}:</b> %{{z:.2f}}<extra></extra>'
-            ))
-            
-            # Configurar layout del mapa
-            fig.update_layout(
-                mapbox_style="satellite-streets",  # Estilo satelital
-                mapbox_center=dict(
-                    lat=np.mean(lats) if lats else 0,
-                    lon=np.mean(lons) if lons else 0
-                ),
-                mapbox_zoom=10,
-                title=dict(
-                    text=f"Mapa de {variable_nombre}",
-                    font=dict(size=20, color='#065f46'),
-                    x=0.5,
-                    xanchor='center'
-                ),
-                height=700,
-                margin=dict(l=0, r=0, t=50, b=0),
-                showlegend=True,
-                legend=dict(
-                    yanchor="top",
-                    y=0.99,
-                    xanchor="left",
-                    x=0.01,
-                    bgcolor="rgba(255, 255, 255, 0.8)",
-                    bordercolor="#333",
-                    borderwidth=1
-                )
-            )
-            
-            # Añadir leyenda explicativa
-            fig.add_annotation(
-                text=f"<b>Leyenda:</b><br>• Colores más claros = valores más bajos<br>• Colores más oscuros = valores más altos",
-                xref="paper",
-                yref="paper",
-                x=0.02,
-                y=0.02,
-                showarrow=False,
-                bgcolor="rgba(255, 255, 255, 0.9)",
-                bordercolor="#333",
-                borderwidth=1,
-                borderpad=10,
-                font=dict(size=12, color="#333")
-            )
-            
-            return fig
-            
-        except Exception as e:
-            st.warning(f"Error al crear mapa Plotly: {str(e)}")
-            return None
-    
-    @staticmethod
-    def crear_mapa_plotly_combinado(puntos_carbono, puntos_ndvi, puntos_ndwi, puntos_biodiversidad, gdf_area=None):
-        """Crea mapa combinado con múltiples variables usando subplots"""
-        try:
-            # Crear subplots
-            fig = make_subplots(
-                rows=2, cols=2,
-                subplot_titles=('🌳 Carbono (ton C/ha)', '📈 NDVI', 
-                              '💧 NDWI', '🦋 Índice de Shannon'),
-                specs=[[{'type': 'densitymapbox'}, {'type': 'densitymapbox'}],
-                       [{'type': 'densitymapbox'}, {'type': 'densitymapbox'}]],
-                vertical_spacing=0.1,
-                horizontal_spacing=0.1
-            )
-            
-            # Funciones auxiliares para agregar mapas
-            def agregar_mapa_subplot(fig, puntos, columna_valor, variable_nombre, colormap, row, col):
-                if puntos and len(puntos) > 0:
-                    lats = [p['lat'] for p in puntos[:100]]  # Limitar puntos para rendimiento
-                    lons = [p['lon'] for p in puntos[:100]]
-                    valores = [p[columna_valor] for p in puntos[:100]]
-                    
-                    fig.add_trace(go.Densitymapbox(
-                        lat=lats,
-                        lon=lons,
-                        z=valores,
-                        radius=15,
-                        colorscale=colormap,
-                        colorbar=dict(
-                            title=variable_nombre,
-                            thickness=10,
-                            len=0.4
-                        ),
-                        showscale=True
-                    ), row=row, col=col)
-            
-            # Agregar cada mapa
-            agregar_mapa_subplot(fig, puntos_carbono, 'carbono_ton_ha', 'Carbono', 'Viridis', 1, 1)
-            agregar_mapa_subplot(fig, puntos_ndvi, 'ndvi', 'NDVI', 'RdYlGn', 1, 2)
-            agregar_mapa_subplot(fig, puntos_ndwi, 'ndwi', 'NDWI', 'Blues', 2, 1)
-            
-            if puntos_biodiversidad and len(puntos_biodiversidad) > 0:
-                puntos_biodiv_formatted = []
-                for p in puntos_biodiversidad[:100]:
-                    puntos_biodiv_formatted.append({
-                        'lat': p['lat'],
-                        'lon': p['lon'],
-                        'indice_shannon': p['indice_shannon']
-                    })
-                agregar_mapa_subplot(fig, puntos_biodiv_formatted, 'indice_shannon', 'Shannon', 'Plasma', 2, 2)
-            
-            # Configurar layout
-            fig.update_layout(
-                mapbox_style="carto-positron",
-                mapbox=dict(center=dict(lat=0, lon=-60), zoom=3),
-                height=900,
-                title_text="Mapa Combinado - Todas las Variables",
-                showlegend=False
-            )
-            
-            # Actualizar cada subplot
-            for i in range(1, 3):
-                for j in range(1, 3):
-                    fig.update_mapboxes(
-                        center=dict(lat=0, lon=-60),
-                        zoom=3,
-                        row=i, col=j
-                    )
-            
-            return fig
-            
-        except Exception as e:
-            st.warning(f"Error al crear mapa combinado Plotly: {str(e)}")
-            return None
-    
-    @staticmethod
-    def generar_reporte_visual(resultados, gdf_area):
-        """Genera un reporte visual con todos los mapas y gráficos"""
-        try:
-            # Crear figura principal
-            fig = go.Figure()
-            
-            # Título
-            fig.add_annotation(
-                text="<b>REPORTE VISUAL - ANÁLISIS AMBIENTAL</b>",
-                xref="paper",
-                yref="paper",
-                x=0.5,
-                y=1.05,
-                showarrow=False,
-                font=dict(size=24, color="#065f46")
-            )
-            
-            # Información del área
-            area_info = f"""
-            <b>Área de estudio:</b> {resultados.get('area_total_ha', 0):,.1f} ha<br>
-            <b>Carbono total:</b> {resultados.get('carbono_total_ton', 0):,.0f} ton C<br>
-            <b>CO₂ equivalente:</b> {resultados.get('co2_total_ton', 0):,.0f} ton<br>
-            <b>Índice Shannon:</b> {resultados.get('shannon_promedio', 0):.3f}<br>
-            <b>NDVI promedio:</b> {resultados.get('ndvi_promedio', 0):.3f}<br>
-            <b>NDWI promedio:</b> {resultados.get('ndwi_promedio', 0):.3f}
-            """
-            
-            fig.add_annotation(
-                text=area_info,
-                xref="paper",
-                yref="paper",
-                x=0.02,
-                y=0.95,
-                showarrow=False,
-                align="left",
-                bgcolor="rgba(255, 255, 255, 0.9)",
-                bordercolor="#065f46",
-                borderwidth=2,
-                borderpad=10,
-                font=dict(size=12, color="#333")
-            )
-            
-            # Fecha de generación
-            fig.add_annotation(
-                text=f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-                xref="paper",
-                yref="paper",
-                x=0.98,
-                y=0.02,
-                showarrow=False,
-                font=dict(size=10, color="#666")
-            )
-            
-            fig.update_layout(
-                height=800,
-                plot_bgcolor='white',
-                showlegend=False
-            )
-            
-            return fig
-            
-        except Exception as e:
-            st.warning(f"Error al generar reporte visual: {str(e)}")
-            return None
-
-# ===============================
 # 📄 GENERADOR DE REPORTES COMPLETOS MEJORADO
 # ===============================
 try:
@@ -645,8 +375,8 @@ class SistemaMapas:
                 gradient=gradient_carbono
             ).add_to(m)
             
-            # Agregar leyenda mejorada
-            self._agregar_leyenda_carbono_mejorada(m)
+            # Agregar leyenda
+            self._agregar_leyenda_carbono(m)
             
             # Ajustar zoom a los datos si hay área
             if gdf_area is not None and not gdf_area.empty:
@@ -716,8 +446,8 @@ class SistemaMapas:
                 gradient=gradient_ndvi
             ).add_to(m)
             
-            # Agregar leyenda mejorada
-            self._agregar_leyenda_ndvi_mejorada(m)
+            # Agregar leyenda
+            self._agregar_leyenda_ndvi(m)
             
             # Ajustar zoom a los datos si hay área
             if gdf_area is not None and not gdf_area.empty:
@@ -787,8 +517,8 @@ class SistemaMapas:
                 gradient=gradient_ndwi
             ).add_to(m)
             
-            # Agregar leyenda mejorada
-            self._agregar_leyenda_ndwi_mejorada(m)
+            # Agregar leyenda
+            self._agregar_leyenda_ndwi(m)
             
             # Ajustar zoom a los datos si hay área
             if gdf_area is not None and not gdf_area.empty:
@@ -858,8 +588,8 @@ class SistemaMapas:
                 gradient=gradient_biodiv
             ).add_to(m)
             
-            # Agregar leyenda mejorada
-            self._agregar_leyenda_biodiversidad_mejorada(m)
+            # Agregar leyenda
+            self._agregar_leyenda_biodiversidad(m)
             
             # Ajustar zoom a los datos si hay área
             if gdf_area is not None and not gdf_area.empty:
@@ -980,8 +710,8 @@ class SistemaMapas:
             # Control de capas
             folium.LayerControl().add_to(m)
             
-            # Agregar leyenda combinada mejorada
-            self._agregar_leyenda_combinada_mejorada(m)
+            # Agregar leyenda combinada
+            self._agregar_leyenda_combinada(m)
             
             # Ajustar zoom a los datos si hay área
             if gdf_area is not None and not gdf_area.empty:
@@ -994,49 +724,37 @@ class SistemaMapas:
             st.warning(f"Error al crear mapa combinado: {str(e)}")
             return None
     
-    # ===== LEYENDAS MEJORADAS =====
+    # Las funciones de leyenda permanecen igual...
     
-    def _agregar_leyenda_carbono_mejorada(self, mapa):
-        """Agrega leyenda mejorada para carbono"""
+    def _agregar_leyenda_carbono(self, mapa):
+        """Agrega leyenda para el mapa de carbono"""
         try:
             leyenda_html = '''
             <div style="position: fixed; 
                 bottom: 50px; 
                 left: 50px; 
-                width: 350px;
-                background-color: rgba(255, 255, 255, 0.95);
-                border: 3px solid #065f46;
+                width: 250px;
+                background-color: white;
+                border: 2px solid #065f46;
                 z-index: 9999;
-                padding: 15px;
-                border-radius: 10px;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-                font-family: Arial, sans-serif;
-                font-size: 13px;">
-                <h4 style="margin: 0 0 15px 0; color: #065f46; border-bottom: 2px solid #065f46; padding-bottom: 8px;">
-                🌳 Densidad de Carbono (ton C/ha)
+                padding: 10px;
+                border-radius: 5px;
+                box-shadow: 0 0 10px rgba(0,0,0,0.2);
+                font-family: Arial;">
+                <h4 style="margin-top: 0; color: #065f46; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
+                🌳 Carbono (ton C/ha)
                 </h4>
-                
-                <div style="margin: 15px 0;">
-                    <div style="height: 25px; background: linear-gradient(90deg, blue 0%, cyan 20%, lime 40%, yellow 60%, orange 80%, red 100%); 
-                        border: 2px solid #333; border-radius: 4px; margin-bottom: 8px;"></div>
-                    <div style="display: flex; justify-content: space-between; margin-top: 5px; font-weight: bold;">
-                        <span style="color: blue;">Bajo<br>(< 50)</span>
-                        <span style="color: lime;">Medio<br>(50-100)</span>
-                        <span style="color: red;">Alto<br>(> 100)</span>
+                <div style="margin: 10px 0;">
+                    <div style="height: 20px; background: linear-gradient(90deg, blue, cyan, lime, yellow, orange, red); border: 1px solid #666;"></div>
+                    <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px;">
+                        <span>Bajo</span>
+                        <span>Medio</span>
+                        <span>Alto</span>
                     </div>
                 </div>
-                
-                <div style="background: #f0fdf4; padding: 12px; border-radius: 6px; margin: 15px 0; border-left: 4px solid #065f46;">
-                    <strong style="color: #065f46;">📊 Interpretación:</strong><br>
-                    <div style="margin-top: 8px;">
-                        <span style="color: blue; font-weight: bold;">• Azul:</span> Carbono bajo (bosque joven/degradado)<br>
-                        <span style="color: lime; font-weight: bold;">• Verde:</span> Carbono medio (bosque secundario)<br>
-                        <span style="color: red; font-weight: bold;">• Rojo:</span> Carbono alto (bosque primario maduro)
-                    </div>
-                </div>
-                
-                <div style="font-size: 11px; color: #666; border-top: 1px solid #ddd; padding-top: 10px;">
-                    <strong>💡 Metodología Verra VCS:</strong> Incluye 5 pools de carbono: biomasa aérea, raíces, madera muerta, hojarasca y suelo.
+                <div style="font-size: 12px; color: #666;">
+                    <div><span style="color: #065f46; font-weight: bold;">■</span> Contorno azul: Área de estudio</div>
+                    <div><span style="color: #3b82f6; font-weight: bold;">■</span> Heatmap: Intensidad de carbono</div>
                 </div>
             </div>
             '''
@@ -1044,50 +762,36 @@ class SistemaMapas:
         except:
             pass
     
-    def _agregar_leyenda_ndvi_mejorada(self, mapa):
-        """Agrega leyenda mejorada para NDVI"""
+    def _agregar_leyenda_ndvi(self, mapa):
+        """Agrega leyenda para el mapa de NDVI"""
         try:
             leyenda_html = '''
             <div style="position: fixed; 
                 bottom: 50px; 
                 left: 50px; 
-                width: 350px;
-                background-color: rgba(255, 255, 255, 0.95);
-                border: 3px solid #32cd32;
+                width: 250px;
+                background-color: white;
+                border: 2px solid #32cd32;
                 z-index: 9999;
-                padding: 15px;
-                border-radius: 10px;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-                font-family: Arial, sans-serif;
-                font-size: 13px;">
-                <h4 style="margin: 0 0 15px 0; color: #32cd32; border-bottom: 2px solid #32cd32; padding-bottom: 8px;">
-                📈 Índice NDVI (Salud Vegetal)
+                padding: 10px;
+                border-radius: 5px;
+                box-shadow: 0 0 10px rgba(0,0,0,0.2);
+                font-family: Arial;">
+                <h4 style="margin-top: 0; color: #32cd32; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
+                📈 NDVI (Índice de Vegetación)
                 </h4>
-                
-                <div style="margin: 15px 0;">
-                    <div style="height: 25px; background: linear-gradient(90deg, #8b0000 0%, #ff4500 20%, #ffd700 40%, #9acd32 60%, #32cd32 80%, #006400 100%); 
-                        border: 2px solid #333; border-radius: 4px; margin-bottom: 8px;"></div>
-                    <div style="display: flex; justify-content: space-between; margin-top: 5px; font-weight: bold;">
-                        <span style="color: #8b0000;">-1.0</span>
-                        <span style="color: #ffd700;">0.0</span>
-                        <span style="color: #006400;">+1.0</span>
+                <div style="margin: 10px 0;">
+                    <div style="height: 20px; background: linear-gradient(90deg, #8b0000, #ff4500, #ffd700, #9acd32, #32cd32, #006400); border: 1px solid #666;"></div>
+                    <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px;">
+                        <span>-1.0</span>
+                        <span>0.0</span>
+                        <span>+1.0</span>
                     </div>
                 </div>
-                
-                <div style="background: #f0fdf4; padding: 12px; border-radius: 6px; margin: 15px 0; border-left: 4px solid #32cd32;">
-                    <strong style="color: #32cd32;">🌿 Interpretación:</strong><br>
-                    <div style="margin-top: 8px;">
-                        <span style="color: #8b0000; font-weight: bold;">• Rojo oscuro:</span> Sin vegetación/suelo<br>
-                        <span style="color: #ff4500; font-weight: bold;">• Naranja:</span> Vegetación muy escasa<br>
-                        <span style="color: #ffd700; font-weight: bold;">• Amarillo:</span> Pastizales/secano<br>
-                        <span style="color: #9acd32; font-weight: bold;">• Verde claro:</span> Vegetación moderada<br>
-                        <span style="color: #32cd32; font-weight: bold;">• Verde:</span> Vegetación densa<br>
-                        <span style="color: #006400; font-weight: bold;">• Verde oscuro:</span> Bosque tropical
-                    </div>
-                </div>
-                
-                <div style="font-size: 11px; color: #666; border-top: 1px solid #ddd; padding-top: 10px;">
-                    <strong>📊 Escala:</strong> -1.0 (sin vegetación) a +1.0 (vegetación muy densa). Valores > 0.6 indican bosque maduro.
+                <div style="font-size: 12px; color: #666;">
+                    <div><span style="color: #1d4ed8; font-weight: bold;">■</span> Contorno azul: Área de estudio</div>
+                    <div><span style="color: #8b0000; font-weight: bold;">■</span> Rojo: Vegetación escasa/muerta</div>
+                    <div><span style="color: #32cd32; font-weight: bold;">■</span> Verde: Vegetación densa/sana</div>
                 </div>
             </div>
             '''
@@ -1095,50 +799,35 @@ class SistemaMapas:
         except:
             pass
     
-    def _agregar_leyenda_ndwi_mejorada(self, mapa):
-        """Agrega leyenda mejorada para NDWI"""
+    def _agregar_leyenda_ndwi(self, mapa):
+        """Agrega leyenda para el mapa de NDWI"""
         try:
             leyenda_html = '''
             <div style="position: fixed; 
                 bottom: 50px; 
                 left: 50px; 
-                width: 350px;
-                background-color: rgba(255, 255, 255, 0.95);
-                border: 3px solid #1e90ff;
+                width: 250px;
+                background-color: white;
+                border: 2px solid #1e90ff;
                 z-index: 9999;
-                padding: 15px;
-                border-radius: 10px;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-                font-family: Arial, sans-serif;
-                font-size: 13px;">
-                <h4 style="margin: 0 0 15px 0; color: #1e90ff; border-bottom: 2px solid #1e90ff; padding-bottom: 8px;">
-                💧 Índice NDWI (Contenido de Agua)
+                padding: 10px;
+                border-radius: 5px;
+                box-shadow: 0 0 10px rgba(0,0,0,0.2);
+                font-family: Arial;">
+                <h4 style="margin-top: 0; color: #1e90ff; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
+                💧 NDWI (Índice de Agua)
                 </h4>
-                
-                <div style="margin: 15px 0;">
-                    <div style="height: 25px; background: linear-gradient(90deg, #8b4513 0%, #d2691e 20%, #f4a460 40%, #87ceeb 60%, #1e90ff 80%, #00008b 100%); 
-                        border: 2px solid #333; border-radius: 4px; margin-bottom: 8px;"></div>
-                    <div style="display: flex; justify-content: space-between; margin-top: 5px; font-weight: bold;">
-                        <span style="color: #8b4513;">Seco</span>
-                        <span style="color: #87ceeb;">Moderado</span>
-                        <span style="color: #00008b;">Húmedo</span>
+                <div style="margin: 10px 0;">
+                    <div style="height: 20px; background: linear-gradient(90deg, #8b4513, #d2691e, #f4a460, #87ceeb, #1e90ff, #00008b); border: 1px solid #666;"></div>
+                    <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px;">
+                        <span>Seco</span>
+                        <span>Húmedo</span>
                     </div>
                 </div>
-                
-                <div style="background: #f0f9ff; padding: 12px; border-radius: 6px; margin: 15px 0; border-left: 4px solid #1e90ff;">
-                    <strong style="color: #1e90ff;">💦 Interpretación:</strong><br>
-                    <div style="margin-top: 8px;">
-                        <span style="color: #8b4513; font-weight: bold;">• Marrón:</span> Superficie seca<br>
-                        <span style="color: #d2691e; font-weight: bold;">• Naranja:</span> Poca humedad<br>
-                        <span style="color: #f4a460; font-weight: bold;">• Beige:</span> Humedad media<br>
-                        <span style="color: #87ceeb; font-weight: bold;">• Azul claro:</span> Humedad alta<br>
-                        <span style="color: #1e90ff; font-weight: bold;">• Azul:</span> Cuerpos de agua<br>
-                        <span style="color: #00008b; font-weight: bold;">• Azul oscuro:</span> Agua profunda
-                    </div>
-                </div>
-                
-                <div style="font-size: 11px; color: #666; border-top: 1px solid #ddd; padding-top: 10px;">
-                    <strong>🌧️ Uso:</strong> Detecta estrés hídrico en vegetación, humedad del suelo y presencia de cuerpos de agua.
+                <div style="font-size: 12px; color: #666;">
+                    <div><span style="color: #1d4ed8; font-weight: bold;">■</span> Contorno azul: Área de estudio</div>
+                    <div><span style="color: #8b4513; font-weight: bold;">■</span> Marrón: Superficie seca</div>
+                    <div><span style="color: #1e90ff; font-weight: bold;">■</span> Azul: Presencia de agua</div>
                 </div>
             </div>
             '''
@@ -1146,49 +835,39 @@ class SistemaMapas:
         except:
             pass
     
-    def _agregar_leyenda_biodiversidad_mejorada(self, mapa):
-        """Agrega leyenda mejorada para biodiversidad"""
+    def _agregar_leyenda_biodiversidad(self, mapa):
+        """Agrega leyenda para el mapa de biodiversidad"""
         try:
             leyenda_html = '''
             <div style="position: fixed; 
                 bottom: 50px; 
                 left: 50px; 
-                width: 380px;
-                background-color: rgba(255, 255, 255, 0.95);
-                border: 3px solid #8b5cf6;
+                width: 280px;
+                background-color: white;
+                border: 2px solid #8b5cf6;
                 z-index: 9999;
-                padding: 15px;
-                border-radius: 10px;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-                font-family: Arial, sans-serif;
-                font-size: 13px;">
-                <h4 style="margin: 0 0 15px 0; color: #8b5cf6; border-bottom: 2px solid #8b5cf6; padding-bottom: 8px;">
-                🦋 Índice de Shannon (Biodiversidad)
+                padding: 10px;
+                border-radius: 5px;
+                box-shadow: 0 0 10px rgba(0,0,0,0.2);
+                font-family: Arial;">
+                <h4 style="margin-top: 0; color: #8b5cf6; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
+                🦋 Índice de Shannon
                 </h4>
-                
-                <div style="margin: 15px 0;">
-                    <div style="height: 25px; background: linear-gradient(90deg, #991b1b 0%, #ef4444 20%, #f59e0b 40%, #3b82f6 60%, #8b5cf6 80%, #10b981 100%); 
-                        border: 2px solid #333; border-radius: 4px; margin-bottom: 8px;"></div>
-                    <div style="display: flex; justify-content: space-between; margin-top: 5px; font-weight: bold;">
-                        <span style="color: #991b1b;">0.0</span>
-                        <span style="color: #f59e0b;">2.0</span>
-                        <span style="color: #10b981;">4.0+</span>
+                <div style="margin: 10px 0;">
+                    <div style="height: 20px; background: linear-gradient(90deg, #991b1b, #ef4444, #f59e0b, #3b82f6, #8b5cf6, #10b981); border: 1px solid #666;"></div>
+                    <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px;">
+                        <span>0.0</span>
+                        <span>2.0</span>
+                        <span>4.0</span>
                     </div>
                 </div>
-                
-                <div style="background: #faf5ff; padding: 12px; border-radius: 6px; margin: 15px 0; border-left: 4px solid #8b5cf6;">
-                    <strong style="color: #8b5cf6;">📊 Categorías:</strong><br>
-                    <div style="margin-top: 8px;">
-                        <div><span style="color: #991b1b; font-weight: bold;">• Muy Baja:</span> < 0.5 (ecosistema degradado)</div>
-                        <div><span style="color: #ef4444; font-weight: bold;">• Baja:</span> 0.5-1.5 (diversidad reducida)</div>
-                        <div><span style="color: #f59e0b; font-weight: bold;">• Moderada:</span> 1.5-2.5 (diversidad media)</div>
-                        <div><span style="color: #3b82f6; font-weight: bold;">• Alta:</span> 2.5-3.5 (buena diversidad)</div>
-                        <div><span style="color: #10b981; font-weight: bold;">• Muy Alta:</span> > 3.5 (alta diversidad y equitatividad)</div>
-                    </div>
-                </div>
-                
-                <div style="font-size: 11px; color: #666; border-top: 1px solid #ddd; padding-top: 10px;">
-                    <strong>📈 Fórmula Shannon:</strong> H = -Σ(pᵢ × ln(pᵢ)), donde pᵢ es la proporción de individuos de la especie i.
+                <div style="font-size: 12px; color: #666;">
+                    <div><span style="color: #1d4ed8; font-weight: bold;">■</span> Contorno azul: Área de estudio</div>
+                    <div><span style="color: #991b1b; font-weight: bold;">■</span> Muy Baja: < 0.5</div>
+                    <div><span style="color: #ef4444; font-weight: bold;">■</span> Baja: 0.5 - 1.5</div>
+                    <div><span style="color: #f59e0b; font-weight: bold;">■</span> Moderada: 1.5 - 2.5</div>
+                    <div><span style="color: #3b82f6; font-weight: bold;">■</span> Alta: 2.5 - 3.5</div>
+                    <div><span style="color: #10b981; font-weight: bold;">■</span> Muy Alta: > 3.5</div>
                 </div>
             </div>
             '''
@@ -1196,60 +875,48 @@ class SistemaMapas:
         except:
             pass
     
-    def _agregar_leyenda_combinada_mejorada(self, mapa):
-        """Agrega leyenda combinada mejorada"""
+    def _agregar_leyenda_combinada(self, mapa):
+        """Agrega leyenda combinada"""
         try:
             leyenda_html = '''
             <div style="position: fixed; 
                 bottom: 50px; 
                 left: 50px; 
-                width: 400px;
-                background-color: rgba(255, 255, 255, 0.97);
-                border: 3px solid #3b82f6;
+                width: 320px;
+                background-color: white;
+                border: 2px solid #3b82f6;
                 z-index: 9999;
-                padding: 15px;
-                border-radius: 10px;
-                box-shadow: 0 4px 16px rgba(0,0,0,0.3);
-                font-family: Arial, sans-serif;
-                font-size: 13px;">
-                <h4 style="margin: 0 0 15px 0; color: #3b82f6; border-bottom: 2px solid #3b82f6; padding-bottom: 8px;">
-                🗺️ Mapa Combinado - Capas Disponibles
+                padding: 10px;
+                border-radius: 5px;
+                box-shadow: 0 0 10px rgba(0,0,0,0.2);
+                font-family: Arial;">
+                <h4 style="margin-top: 0; color: #3b82f6; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
+                🗺️ Capas del Mapa
                 </h4>
-                
-                <div style="margin: 15px 0;">
-                    <div style="display: flex; align-items: center; margin-bottom: 10px; padding: 8px; background: #f0f9ff; border-radius: 5px;">
-                        <div style="width: 25px; height: 25px; background: linear-gradient(90deg, blue, cyan, lime, yellow, orange, red); margin-right: 12px; border: 2px solid #333; border-radius: 3px;"></div>
-                        <div><strong>🌳 Carbono:</strong> Densidad de carbono almacenado (ton C/ha)</div>
+                <div style="margin: 10px 0;">
+                    <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                        <div style="width: 20px; height: 20px; background: linear-gradient(90deg, blue, cyan, lime, yellow, orange, red); margin-right: 10px; border: 1px solid #666;"></div>
+                        <div>🌳 Carbono (ton C/ha)</div>
                     </div>
-                    
-                    <div style="display: flex; align-items: center; margin-bottom: 10px; padding: 8px; background: #f0fdf4; border-radius: 5px;">
-                        <div style="width: 25px; height: 25px; background: linear-gradient(90deg, #8b0000, #ff4500, #ffd700, #9acd32, #32cd32, #006400); margin-right: 12px; border: 2px solid #333; border-radius: 3px;"></div>
-                        <div><strong>📈 NDVI:</strong> Salud y densidad de vegetación (-1 a +1)</div>
+                    <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                        <div style="width: 20px; height: 20px; background: linear-gradient(90deg, #8b0000, #ff4500, #ffd700, #9acd32, #32cd32, #006400); margin-right: 10px; border: 1px solid #666;"></div>
+                        <div>📈 NDVI</div>
                     </div>
-                    
-                    <div style="display: flex; align-items: center; margin-bottom: 10px; padding: 8px; background: #f0f9ff; border-radius: 5px;">
-                        <div style="width: 25px; height: 25px; background: linear-gradient(90deg, #8b4513, #d2691e, #f4a460, #87ceeb, #1e90ff, #00008b); margin-right: 12px; border: 2px solid #333; border-radius: 3px;"></div>
-                        <div><strong>💧 NDWI:</strong> Contenido de agua en vegetación/suelo</div>
+                    <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                        <div style="width: 20px; height: 20px; background: linear-gradient(90deg, #8b4513, #d2691e, #f4a460, #87ceeb, #1e90ff, #00008b); margin-right: 10px; border: 1px solid #666;"></div>
+                        <div>💧 NDWI</div>
                     </div>
-                    
-                    <div style="display: flex; align-items: center; padding: 8px; background: #faf5ff; border-radius: 5px;">
-                        <div style="width: 25px; height: 25px; background: linear-gradient(90deg, #991b1b, #ef4444, #f59e0b, #3b82f6, #8b5cf6, #10b981); margin-right: 12px; border: 2px solid #333; border-radius: 3px;"></div>
-                        <div><strong>🦋 Biodiversidad:</strong> Índice de Shannon (0 a 4+)</div>
+                    <div style="display: flex; align-items: center;">
+                        <div style="width: 20px; height: 20px; background: linear-gradient(90deg, #991b1b, #ef4444, #f59e0b, #3b82f6, #8b5cf6, #10b981); margin-right: 10px; border: 1px solid #666;"></div>
+                        <div>🦋 Índice de Shannon</div>
                     </div>
                 </div>
-                
-                <div style="background: #f8fafc; padding: 12px; border-radius: 6px; margin: 15px 0; border-left: 4px solid #3b82f6;">
-                    <strong style="color: #3b82f6;">🎯 Instrucciones:</strong><br>
-                    <div style="margin-top: 8px; font-size: 12px;">
-                        1. Use el control en la esquina <strong>superior derecha</strong> para cambiar capas<br>
-                        2. Haga <strong>clic en los puntos</strong> para ver detalles<br>
-                        3. <strong>Zoom</strong> con la rueda del mouse<br>
-                        4. <strong>Descargue imágenes</strong> con los botones debajo del mapa
-                    </div>
-                </div>
-                
-                <div style="font-size: 11px; color: #666; border-top: 1px solid #ddd; padding-top: 10px;">
-                    <strong>💡 Consejo:</strong> Active solo 1-2 capas a la vez para mejor visualización.
+                <div style="font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 10px;">
+                    <div><strong>Instrucciones:</strong></div>
+                    <div><span style="color: #1d4ed8; font-weight: bold;">■</span> Contorno azul: Área de estudio</div>
+                    <div>• Use el control en la esquina superior derecha para cambiar entre capas</div>
+                    <div>• Haga clic en los puntos para ver detalles</div>
+                    <div>• Zoom con la rueda del mouse</div>
                 </div>
             </div>
             '''
@@ -1502,14 +1169,38 @@ class GeneradorReportes:
         self.buffer_docx = BytesIO()
         
     def _fig_to_png(self, fig):
-        """Convierte un gráfico Plotly a PNG en BytesIO"""
+        """Convierte un gráfico Plotly a PNG en BytesIO - Versión simplificada para Streamlit Cloud"""
         try:
             if fig is None:
                 return None
-            img_bytes = fig.to_image(format="png", width=800, height=500, scale=2)
-            return BytesIO(img_bytes)
+            
+            # SOLUCIÓN: En lugar de usar fig.to_image() que requiere Kaleido,
+            # creamos una imagen placeholder simple usando PIL
+            from PIL import Image, ImageDraw
+            import io
+            
+            # Crear imagen placeholder para el PDF
+            width, height = 800, 500
+            img = Image.new('RGB', (width, height), color='white')
+            draw = ImageDraw.Draw(img)
+            
+            # Dibujar texto informativo
+            draw.text((width//2 - 200, height//2 - 20), 
+                     "Gráfico interactivo disponible", fill='black')
+            draw.text((width//2 - 250, height//2 + 10), 
+                     "Consulte la aplicación web para visualización completa", fill='gray')
+            
+            # Dibujar un borde
+            draw.rectangle([10, 10, width-10, height-10], outline='gray', width=2)
+            
+            # Guardar en BytesIO
+            img_byte_arr = io.BytesIO()
+            img.save(img_byte_arr, format='PNG')
+            img_byte_arr.seek(0)
+            
+            return img_byte_arr
         except Exception as e:
-            st.warning(f"No se pudo convertir el gráfico a PNG: {str(e)}")
+            st.warning(f"No se pudo crear imagen del gráfico: {str(e)}")
             return None
     
     def _mapa_to_png(self, mapa, width=800, height=600):
@@ -1520,7 +1211,7 @@ class GeneradorReportes:
             
             # En una implementación real, usaríamos selenium o map screenshot API
             # Por ahora, creamos una imagen de placeholder
-            from PIL import Image, ImageDraw, ImageFont
+            from PIL import Image, ImageDraw
             import io
             
             # Crear imagen de placeholder
@@ -1530,6 +1221,9 @@ class GeneradorReportes:
             # Dibujar texto
             draw.text((width//2 - 100, height//2 - 20), "Mapa interactivo", fill='black')
             draw.text((width//2 - 150, height//2 + 10), "Disponible en la aplicación web", fill='gray')
+            
+            # Dibujar un borde
+            draw.rectangle([10, 10, width-10, height-10], outline='blue', width=3)
             
             # Guardar en BytesIO
             img_byte_arr = io.BytesIO()
@@ -1991,7 +1685,7 @@ class GeneradorReportes:
             tabla_resumen.cell(0, 1).text = 'Valor'
             tabla_resumen.cell(0, 2).text = 'Interpretación'
             
-            # Datos - CORREGIDO: Comillas correctamente cerradas
+            # Datos
             datos = [
                 ('Área total', f"{res.get('area_total_ha', 0):,.1f} ha", 'Superficie del área de estudio'),
                 ('Carbono total almacenado', f"{res.get('carbono_total_ton', 0):,.0f} ton C", 'Carbono almacenado en el área'),
@@ -2637,14 +2331,11 @@ def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos):
         return None
 
 # ===============================
-# 🗺️ FUNCIONES DE VISUALIZACIÓN MEJORADAS
+# 🗺️ FUNCIONES DE VISUALIZACIÓN CORREGIDAS
 # ===============================
 def mostrar_mapas_calor():
-    """Muestra todos los mapas de calor disponibles con zoom automático y opción de descarga PNG"""
+    """Muestra todos los mapas de calor disponibles con zoom automático"""
     st.header("🗺️ Mapas de Calor - Análisis Multivariable")
-    
-    # Información sobre la descarga de mapas
-    st.info("💡 **Nueva funcionalidad:** Ahora puedes descargar los mapas como imágenes PNG con leyendas explicativas completas.")
     
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "🌍 Área de Estudio", 
@@ -2659,70 +2350,6 @@ def mostrar_mapas_calor():
         st.subheader("Área de Estudio")
         if st.session_state.mapa:
             folium_static(st.session_state.mapa, width=1000, height=600)
-            
-            # Botones de descarga para mapa base
-            st.markdown("### 📥 Opciones de Descarga")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Exportar como imagen usando Plotly
-                if st.button("🖼️ Generar Imagen con Leyenda", key="gen_base", use_container_width=True):
-                    # Crear un gráfico simple de Plotly para el área
-                    bounds = st.session_state.poligono_data.total_bounds
-                    fig = go.Figure()
-                    
-                    # Añadir polígono
-                    polygon = st.session_state.poligono_data.geometry.iloc[0]
-                    if polygon.geom_type == 'Polygon':
-                        coords = list(polygon.exterior.coords)
-                        lons_poly = [coord[0] for coord in coords]
-                        lats_poly = [coord[1] for coord in coords]
-                        
-                        fig.add_trace(go.Scattergeo(
-                            lon=lons_poly,
-                            lat=lats_poly,
-                            mode='lines',
-                            line=dict(width=3, color='#1d4ed8'),
-                            fill='toself',
-                            fillcolor='rgba(59, 130, 246, 0.2)',
-                            name='Área de estudio'
-                        ))
-                    
-                    fig.update_layout(
-                        title="Área de Estudio",
-                        geo=dict(
-                            projection_type='mercator',
-                            showland=True,
-                            landcolor='rgb(243, 243, 243)',
-                            countrycolor='rgb(204, 204, 204)'
-                        ),
-                        height=600
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Botón de descarga
-                    img_bytes = fig.to_image(format="png", width=1200, height=800)
-                    st.download_button(
-                        label="📥 Descargar Mapa PNG",
-                        data=img_bytes,
-                        file_name="area_estudio.png",
-                        mime="image/png",
-                        use_container_width=True
-                    )
-            
-            with col2:
-                # Exportar datos
-                if st.button("📊 Exportar Datos GeoJSON", key="exp_base", use_container_width=True):
-                    geojson_str = st.session_state.poligono_data.to_json()
-                    st.download_button(
-                        label="🌍 Descargar GeoJSON",
-                        data=geojson_str,
-                        file_name="area_estudio.geojson",
-                        mime="application/geo+json",
-                        use_container_width=True
-                    )
-            
             st.info("Mapa base con el polígono del área de estudio. El zoom se ajusta automáticamente al área.")
         else:
             st.info("No hay mapa para mostrar")
@@ -2737,102 +2364,9 @@ def mostrar_mapas_calor():
             )
             
             if mapa_carbono:
-                # Mostrar mapa interactivo
                 folium_static(mapa_carbono, width=1000, height=600)
                 
-                # ===== SECCIÓN DE DESCARGA MEJORADA =====
-                st.markdown("### 📥 Opciones de Descarga")
-                
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    # Generar y descargar mapa Plotly con leyenda
-                    if st.button("🖼️ Generar Mapa con Leyenda", key="gen_carbono", use_container_width=True):
-                        exportador = ExportadorMapas()
-                        fig = exportador.crear_mapa_plotly_con_leyenda(
-                            puntos=st.session_state.resultados['puntos_carbono'],
-                            variable_nombre="Carbono (ton C/ha)",
-                            columna_valor="carbono_ton_ha",
-                            colormap="Viridis",
-                            gdf_area=st.session_state.poligono_data
-                        )
-                        
-                        if fig:
-                            # Mostrar vista previa
-                            st.plotly_chart(fig, use_container_width=True)
-                            
-                            # Generar imagen PNG
-                            img_bytes = fig.to_image(format="png", width=1200, height=800, scale=2)
-                            
-                            # Botón de descarga
-                            st.download_button(
-                                label="📥 Descargar Mapa PNG",
-                                data=img_bytes,
-                                file_name="mapa_carbono_leyenda.png",
-                                mime="image/png",
-                                use_container_width=True
-                            )
-                        else:
-                            st.warning("No se pudo generar el mapa con leyenda.")
-                
-                with col2:
-                    # Exportar datos CSV
-                    if st.button("📊 Exportar Datos CSV", key="exp_carbono_csv", use_container_width=True):
-                        df_carbono = pd.DataFrame(st.session_state.resultados['puntos_carbono'])
-                        csv_buffer = StringIO()
-                        df_carbono.to_csv(csv_buffer, index=False)
-                        
-                        st.download_button(
-                            label="📋 Descargar CSV",
-                            data=csv_buffer.getvalue(),
-                            file_name="datos_carbono.csv",
-                            mime="text/csv",
-                            use_container_width=True
-                        )
-                
-                with col3:
-                    # Exportar reporte específico
-                    if st.button("📄 Reporte de Carbono", key="rep_carbono", use_container_width=True):
-                        # Crear un mini-reporte específico para carbono
-                        res = st.session_state.resultados
-                        carb_min = min(p['carbono_ton_ha'] for p in res['puntos_carbono'])
-                        carb_max = max(p['carbono_ton_ha'] for p in res['puntos_carbono'])
-                        carb_prom = res.get('carbono_promedio_ha', 0)
-                        
-                        reporte_text = f"""REPORTE DE CARBONO - Análisis Verra VCS
-                        
-Área de estudio: {res.get('area_total_ha', 0):,.1f} ha
-Carbono total almacenado: {res.get('carbono_total_ton', 0):,.0f} ton C
-CO₂ equivalente: {res.get('co2_total_ton', 0):,.0f} ton CO₂e
-Carbono promedio por hectárea: {carb_prom:.1f} ton C/ha
-Rango de carbono: {carb_min:.1f} - {carb_max:.1f} ton C/ha
-
-Distribución por pools de carbono:
-"""
-                        
-                        if res.get('desglose_promedio'):
-                            for pool, valor in res['desglose_promedio'].items():
-                                reporte_text += f"{pool}: {valor:.1f} ton C/ha\n"
-                        
-                        reporte_text += f"""
-Valor económico estimado: ${res.get('co2_total_ton', 0) * 15:,.0f} USD (@ $15/ton CO₂)
-
-Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}
-Sistema Satelital de Análisis Ambiental - Metodología Verra VCS
-"""
-                        
-                        st.download_button(
-                            label="📝 Descargar Reporte",
-                            data=reporte_text,
-                            file_name="reporte_carbono.txt",
-                            mime="text/plain",
-                            use_container_width=True
-                        )
-                
-                # ===== INFORMACIÓN ADICIONAL =====
-                st.markdown("---")
-                st.subheader("📊 Información del Análisis")
-                
+                # Información adicional
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     carb_min = min(p['carbono_ton_ha'] for p in st.session_state.resultados['puntos_carbono'])
@@ -2842,33 +2376,6 @@ Sistema Satelital de Análisis Ambiental - Metodología Verra VCS
                     st.metric("Rango", f"{carb_min:.1f} - {carb_max:.1f} ton C/ha")
                 with col3:
                     st.metric("Puntos muestreados", len(st.session_state.resultados['puntos_carbono']))
-                
-                # ===== INTERPRETACIÓN DE LA LEYENDA =====
-                with st.expander("📖 Interpretación de la Leyenda del Mapa de Carbono"):
-                    st.markdown("""
-                    ### 🌳 Leyenda del Mapa de Carbono - Metodología Verra VCS
-                    
-                    **Escala de colores (ton C/ha):**
-                    - **🔵 Azul (0-50):** Carbono bajo - Bosques jóvenes o degradados
-                    - **🟢 Verde (50-100):** Carbono medio - Bosques secundarios en recuperación
-                    - **🟡 Amarillo (100-150):** Carbono alto - Bosques maduros intermedios
-                    - **🟠 Naranja (150-200):** Carbono muy alto - Bosques primarios bien conservados
-                    - **🔴 Rojo (>200):** Carbono extremo - Bosques primarios antiguos
-                    
-                    **Pools de carbono considerados:**
-                    1. **AGB** - Biomasa aérea viva (árboles, arbustos)
-                    2. **BGB** - Biomasa de raíces
-                    3. **DW** - Madera muerta (troncos caídos)
-                    4. **LI** - Hojarasca (material orgánico superficial)
-                    5. **SOC** - Carbono orgánico del suelo (0-30 cm)
-                    
-                    **Uso para proyectos REDD+:**
-                    - **Áreas en rojo/naranja:** Prioritarias para conservación estricta
-                    - **Áreas en verde/amarillo:** Potencial para manejo forestal sostenible
-                    - **Áreas en azul:** Oportunidades para restauración y aumento de carbono
-                    
-                    **Metodología:** Basada en estándares **Verra VCS** para proyectos de carbono forestal.
-                    """)
             else:
                 st.warning("No se pudo generar el mapa de carbono.")
         else:
@@ -2885,45 +2392,6 @@ Sistema Satelital de Análisis Ambiental - Metodología Verra VCS
             
             if mapa_ndvi:
                 folium_static(mapa_ndvi, width=1000, height=600)
-                
-                # Botones de descarga
-                st.markdown("### 📥 Opciones de Descarga")
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    if st.button("🖼️ Generar Mapa NDVI con Leyenda", key="gen_ndvi", use_container_width=True):
-                        exportador = ExportadorMapas()
-                        fig = exportador.crear_mapa_plotly_con_leyenda(
-                            puntos=st.session_state.resultados['puntos_ndvi'],
-                            variable_nombre="NDVI",
-                            columna_valor="ndvi",
-                            colormap="RdYlGn",
-                            gdf_area=st.session_state.poligono_data
-                        )
-                        
-                        if fig:
-                            st.plotly_chart(fig, use_container_width=True)
-                            img_bytes = fig.to_image(format="png", width=1200, height=800, scale=2)
-                            st.download_button(
-                                label="📥 Descargar Mapa PNG",
-                                data=img_bytes,
-                                file_name="mapa_ndvi_leyenda.png",
-                                mime="image/png",
-                                use_container_width=True
-                            )
-                
-                with col2:
-                    if st.button("📊 Exportar Datos NDVI", key="exp_ndvi", use_container_width=True):
-                        df_ndvi = pd.DataFrame(st.session_state.resultados['puntos_ndvi'])
-                        csv_buffer = StringIO()
-                        df_ndvi.to_csv(csv_buffer, index=False)
-                        st.download_button(
-                            label="📋 Descargar CSV",
-                            data=csv_buffer.getvalue(),
-                            file_name="datos_ndvi.csv",
-                            mime="text/csv",
-                            use_container_width=True
-                        )
                 
                 # Información adicional
                 col1, col2, col3 = st.columns(3)
@@ -2958,45 +2426,6 @@ Sistema Satelital de Análisis Ambiental - Metodología Verra VCS
             if mapa_ndwi:
                 folium_static(mapa_ndwi, width=1000, height=600)
                 
-                # Botones de descarga
-                st.markdown("### 📥 Opciones de Descarga")
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    if st.button("🖼️ Generar Mapa NDWI con Leyenda", key="gen_ndwi", use_container_width=True):
-                        exportador = ExportadorMapas()
-                        fig = exportador.crear_mapa_plotly_con_leyenda(
-                            puntos=st.session_state.resultados['puntos_ndwi'],
-                            variable_nombre="NDWI",
-                            columna_valor="ndwi",
-                            colormap="Blues",
-                            gdf_area=st.session_state.poligono_data
-                        )
-                        
-                        if fig:
-                            st.plotly_chart(fig, use_container_width=True)
-                            img_bytes = fig.to_image(format="png", width=1200, height=800, scale=2)
-                            st.download_button(
-                                label="📥 Descargar Mapa PNG",
-                                data=img_bytes,
-                                file_name="mapa_ndwi_leyenda.png",
-                                mime="image/png",
-                                use_container_width=True
-                            )
-                
-                with col2:
-                    if st.button("📊 Exportar Datos NDWI", key="exp_ndwi", use_container_width=True):
-                        df_ndwi = pd.DataFrame(st.session_state.resultados['puntos_ndwi'])
-                        csv_buffer = StringIO()
-                        df_ndwi.to_csv(csv_buffer, index=False)
-                        st.download_button(
-                            label="📋 Descargar CSV",
-                            data=csv_buffer.getvalue(),
-                            file_name="datos_ndwi.csv",
-                            mime="text/csv",
-                            use_container_width=True
-                        )
-                
                 # Información adicional
                 col1, col2, col3 = st.columns(3)
                 with col1:
@@ -3030,66 +2459,6 @@ Sistema Satelital de Análisis Ambiental - Metodología Verra VCS
             if mapa_biodiv:
                 folium_static(mapa_biodiv, width=1000, height=600)
                 
-                # Botones de descarga
-                st.markdown("### 📥 Opciones de Descarga")
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    if st.button("🖼️ Generar Mapa Biodiversidad con Leyenda", key="gen_biodiv", use_container_width=True):
-                        # Formatear puntos para biodiversidad
-                        puntos_formatted = []
-                        for p in st.session_state.resultados['puntos_biodiversidad']:
-                            puntos_formatted.append({
-                                'lat': p['lat'],
-                                'lon': p['lon'],
-                                'indice_shannon': p['indice_shannon']
-                            })
-                        
-                        exportador = ExportadorMapas()
-                        fig = exportador.crear_mapa_plotly_con_leyenda(
-                            puntos=puntos_formatted,
-                            variable_nombre="Índice de Shannon",
-                            columna_valor="indice_shannon",
-                            colormap="Plasma",
-                            gdf_area=st.session_state.poligono_data
-                        )
-                        
-                        if fig:
-                            st.plotly_chart(fig, use_container_width=True)
-                            img_bytes = fig.to_image(format="png", width=1200, height=800, scale=2)
-                            st.download_button(
-                                label="📥 Descargar Mapa PNG",
-                                data=img_bytes,
-                                file_name="mapa_biodiversidad_leyenda.png",
-                                mime="image/png",
-                                use_container_width=True
-                            )
-                
-                with col2:
-                    if st.button("📊 Exportar Datos Biodiversidad", key="exp_biodiv", use_container_width=True):
-                        # Crear DataFrame simplificado
-                        datos_biodiv = []
-                        for p in st.session_state.resultados['puntos_biodiversidad']:
-                            datos_biodiv.append({
-                                'lat': p['lat'],
-                                'lon': p['lon'],
-                                'indice_shannon': p['indice_shannon'],
-                                'categoria': p['categoria'],
-                                'riqueza_especies': p['riqueza_especies'],
-                                'abundancia_total': p['abundancia_total']
-                            })
-                        
-                        df_biodiv = pd.DataFrame(datos_biodiv)
-                        csv_buffer = StringIO()
-                        df_biodiv.to_csv(csv_buffer, index=False)
-                        st.download_button(
-                            label="📋 Descargar CSV",
-                            data=csv_buffer.getvalue(),
-                            file_name="datos_biodiversidad.csv",
-                            mime="text/csv",
-                            use_container_width=True
-                        )
-                
                 # Información adicional
                 col1, col2, col3 = st.columns(3)
                 with col1:
@@ -3122,105 +2491,6 @@ Sistema Satelital de Análisis Ambiental - Metodología Verra VCS
             
             if mapa_combinado:
                 folium_static(mapa_combinado, width=1000, height=600)
-                
-                # Botones de descarga especiales para mapa combinado
-                st.markdown("### 📥 Opciones de Descarga - Mapa Combinado")
-                
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    if st.button("🖼️ Generar Mapa Combinado", key="gen_combinado", use_container_width=True):
-                        exportador = ExportadorMapas()
-                        fig = exportador.crear_mapa_plotly_combinado(
-                            st.session_state.resultados.get('puntos_carbono', []),
-                            st.session_state.resultados.get('puntos_ndvi', []),
-                            st.session_state.resultados.get('puntos_ndwi', []),
-                            st.session_state.resultados.get('puntos_biodiversidad', []),
-                            st.session_state.poligono_data
-                        )
-                        
-                        if fig:
-                            st.plotly_chart(fig, use_container_width=True)
-                            img_bytes = fig.to_image(format="png", width=1200, height=900, scale=2)
-                            st.download_button(
-                                label="📥 Descargar Mapa PNG",
-                                data=img_bytes,
-                                file_name="mapa_combinado_leyenda.png",
-                                mime="image/png",
-                                use_container_width=True
-                            )
-                
-                with col2:
-                    if st.button("📊 Generar Reporte Visual", key="gen_reporte_visual", use_container_width=True):
-                        exportador = ExportadorMapas()
-                        fig = exportador.generar_reporte_visual(
-                            st.session_state.resultados,
-                            st.session_state.poligono_data
-                        )
-                        
-                        if fig:
-                            st.plotly_chart(fig, use_container_width=True)
-                            img_bytes = fig.to_image(format="png", width=1200, height=800, scale=2)
-                            st.download_button(
-                                label="📥 Descargar Reporte Visual",
-                                data=img_bytes,
-                                file_name="reporte_visual.png",
-                                mime="image/png",
-                                use_container_width=True
-                            )
-                
-                with col3:
-                    if st.button("📁 Paquete Completo", key="gen_paquete", use_container_width=True):
-                        # Crear un archivo ZIP con todos los mapas
-                        import zipfile
-                        zip_buffer = BytesIO()
-                        
-                        with zipfile.ZipFile(zip_buffer, 'w') as zip_file:
-                            # Agregar datos CSV
-                            for nombre, puntos in [
-                                ("carbono", st.session_state.resultados.get('puntos_carbono', [])),
-                                ("ndvi", st.session_state.resultados.get('puntos_ndvi', [])),
-                                ("ndwi", st.session_state.resultados.get('puntos_ndwi', [])),
-                                ("biodiversidad", st.session_state.resultados.get('puntos_biodiversidad', []))
-                            ]:
-                                if puntos:
-                                    df = pd.DataFrame(puntos)
-                                    csv_data = df.to_csv(index=False)
-                                    zip_file.writestr(f"datos_{nombre}.csv", csv_data)
-                            
-                            # Agregar polígono GeoJSON
-                            geojson_str = st.session_state.poligono_data.to_json()
-                            zip_file.writestr("area_estudio.geojson", geojson_str)
-                            
-                            # Agregar resumen
-                            resumen = f"""
-RESUMEN DEL ANÁLISIS
-====================
-
-Fecha de generación: {datetime.now().strftime('%d/%m/%Y %H:%M')}
-Área total: {st.session_state.resultados.get('area_total_ha', 0):,.1f} ha
-Carbono total: {st.session_state.resultados.get('carbono_total_ton', 0):,.0f} ton C
-CO₂ equivalente: {st.session_state.resultados.get('co2_total_ton', 0):,.0f} ton
-Índice Shannon promedio: {st.session_state.resultados.get('shannon_promedio', 0):.3f}
-NDVI promedio: {st.session_state.resultados.get('ndvi_promedio', 0):.3f}
-NDWI promedio: {st.session_state.resultados.get('ndwi_promedio', 0):.3f}
-Puntos analizados: {st.session_state.resultados.get('num_puntos', 0)}
-Tipo de ecosistema: {st.session_state.resultados.get('tipo_ecosistema', 'N/A')}
-
-Sistema Satelital de Análisis Ambiental - Versión 1.0
-Metodología Verra VCS + Índice de Shannon
-                            """
-                            zip_file.writestr("resumen.txt", resumen)
-                        
-                        zip_buffer.seek(0)
-                        st.download_button(
-                            label="📦 Descargar Paquete ZIP",
-                            data=zip_buffer,
-                            file_name="paquete_analisis_completo.zip",
-                            mime="application/zip",
-                            use_container_width=True
-                        )
-                
                 st.info("📌 Use el control en la esquina superior derecha para alternar entre las diferentes capas de mapas de calor")
             else:
                 st.warning("No se pudo generar el mapa combinado.")
