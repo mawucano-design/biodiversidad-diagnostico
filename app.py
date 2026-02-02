@@ -29,7 +29,6 @@ import warnings
 import requests
 import xml.etree.ElementTree as ET
 from typing import Optional, Dict, Any, List, Tuple
-import geojson
 import requests
 import contextily as ctx
 
