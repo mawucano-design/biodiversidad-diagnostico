@@ -16,7 +16,3 @@ geojson>=3.2.0
 requests>=2.32.0
 contextily>=1.7.0
 scipy>=1.17.0
-
-# Para exportar imágenes de Plotly
-kaleido>=0.2.0
-
