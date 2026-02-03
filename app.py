@@ -295,12 +295,202 @@ class AnalisisBiodiversidad:
         }
 
 # ===============================
-# 🗺️ SISTEMA DE MAPAS COMPLETO CON ZOOM AUTOMÁTICO
+# ===============================
+# 🗺️ SISTEMA DE MAPAS MEJORADO CON INTERPOLACIÓN KNN
 # ===============================
 class SistemaMapas:
-    """Sistema de mapas completo con zoom automático a los polígonos"""
+    """Sistema de mapas mejorado con interpolación KNN para cobertura completa"""
+    
     def __init__(self):
         self.capa_base = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+        self.estilos = {
+            'area_estudio': {
+                'fillColor': '#3b82f6',
+                'color': '#1d4ed8',
+                'weight': 4,
+                'fillOpacity': 0.15,
+                'dashArray': '5, 5'
+            },
+            'gradientes': {
+                'carbono': {
+                    0.0: '#0000FF',  # Azul (bajo)
+                    0.2: '#00FFFF',  # Cian
+                    0.4: '#00FF00',  # Verde lima
+                    0.6: '#FFFF00',  # Amarillo
+                    0.8: '#FFA500',  # Naranja
+                    1.0: '#FF0000'   # Rojo (alto)
+                },
+                'ndvi': {
+                    0.0: '#8B0000',  # Rojo oscuro
+                    0.2: '#FF4500',  # Rojo naranja
+                    0.4: '#FFD700',  # Amarillo
+                    0.6: '#9ACD32',  # Amarillo verde
+                    0.8: '#32CD32',  # Verde lima
+                    1.0: '#006400'   # Verde oscuro
+                },
+                'ndwi': {
+                    0.0: '#8B4513',  # Marrón
+                    0.2: '#D2691E',  # Chocolate
+                    0.4: '#F4A460',  # Arena
+                    0.6: '#87CEEB',  # Celeste
+                    0.8: '#1E90FF',  # Azul dodger
+                    1.0: '#00008B'   # Azul oscuro
+                },
+                'biodiversidad': {
+                    0.0: '#991B1B',  # Rojo vino
+                    0.2: '#EF4444',  # Rojo
+                    0.4: '#F59E0B',  # Ámbar
+                    0.6: '#3B82F6',  # Azul
+                    0.8: '#8B5CF6',  # Violeta
+                    1.0: '#10B981'   # Esmeralda
+                }
+            }
+        }
+    
+    def _generar_malla_puntos(self, gdf, densidad=800):
+        """Genera una malla densa de puntos que cubre todo el polígono"""
+        if gdf is None or gdf.empty:
+            return []
+        
+        try:
+            poligono = gdf.geometry.iloc[0]
+            bounds = gdf.total_bounds
+            minx, miny, maxx, maxy = bounds
+            
+            # Calcular número de puntos basado en el área
+            area_ha = calcular_superficie(gdf)
+            num_puntos = min(densidad, max(200, int(area_ha * 0.5)))
+            
+            # Crear malla regular
+            puntos = []
+            
+            # Calcular dimensiones de la malla
+            lado = int(np.sqrt(num_puntos))
+            dx = (maxx - minx) / lado
+            dy = (maxy - miny) / lado
+            
+            for i in range(lado):
+                for j in range(lado):
+                    lon = minx + (i + 0.5) * dx
+                    lat = miny + (j + 0.5) * dy
+                    punto = Point(lon, lat)
+                    
+                    if poligono.contains(punto):
+                        puntos.append({
+                            'lat': lat,
+                            'lon': lon,
+                            'x_norm': i / lado,
+                            'y_norm': j / lado
+                        })
+            
+            return puntos
+        except Exception as e:
+            print(f"Error generando malla de puntos: {str(e)}")
+            return []
+    
+    def _interpolar_valores_knn(self, puntos_muestra, puntos_malla, variable='carbono', k=5):
+        """Interpola valores usando K-Nearest Neighbors"""
+        if not puntos_muestra or not puntos_malla:
+            return puntos_malla
+        
+        try:
+            # Solo importar sklearn si está disponible
+            try:
+                from sklearn.neighbors import KNeighborsRegressor
+                sklearn_disponible = True
+            except ImportError:
+                sklearn_disponible = False
+            
+            if sklearn_disponible:
+                # Preparar datos de entrenamiento
+                X_train = []
+                y_train = []
+                
+                for punto in puntos_muestra:
+                    X_train.append([punto['lat'], punto['lon']])
+                    if variable == 'carbono':
+                        y_train.append(punto['carbono_ton_ha'])
+                    elif variable == 'ndvi':
+                        y_train.append(punto['ndvi'])
+                    elif variable == 'ndwi':
+                        y_train.append(punto['ndwi'])
+                    elif variable == 'biodiversidad':
+                        y_train.append(punto['indice_shannon'])
+                
+                # Entrenar modelo KNN
+                knn = KNeighborsRegressor(n_neighbors=min(k, len(X_train)), weights='distance')
+                knn.fit(X_train, y_train)
+                
+                # Predecir para todos los puntos de la malla
+                X_pred = [[p['lat'], p['lon']] for p in puntos_malla]
+                if len(X_pred) > 0:
+                    predicciones = knn.predict(X_pred)
+                    
+                    # Asignar valores interpolados
+                    for i, punto in enumerate(puntos_malla):
+                        valor = float(predicciones[i])
+                        if variable == 'carbono':
+                            punto['carbono_ton_ha'] = max(0, valor)
+                        elif variable == 'ndvi':
+                            punto['ndvi'] = max(-1.0, min(1.0, valor))
+                        elif variable == 'ndwi':
+                            punto['ndwi'] = max(-1.0, min(1.0, valor))
+                        elif variable == 'biodiversidad':
+                            punto['indice_shannon'] = max(0, valor)
+            
+            # Fallback: interpolación simple (promedio ponderado por distancia)
+            else:
+                for punto_malla in puntos_malla:
+                    valores = []
+                    distancias = []
+                    
+                    for punto_muestra in puntos_muestra:
+                        # Calcular distancia euclidiana
+                        dist = np.sqrt((punto_malla['lat'] - punto_muestra['lat'])**2 + 
+                                     (punto_malla['lon'] - punto_muestra['lon'])**2)
+                        
+                        if variable == 'carbono':
+                            valor = punto_muestra['carbono_ton_ha']
+                        elif variable == 'ndvi':
+                            valor = punto_muestra['ndvi']
+                        elif variable == 'ndwi':
+                            valor = punto_muestra['ndwi']
+                        elif variable == 'biodiversidad':
+                            valor = punto_muestra['indice_shannon']
+                        
+                        # Peso inversamente proporcional a la distancia
+                        if dist > 0:
+                            peso = 1.0 / dist
+                        else:
+                            peso = 1.0
+                        
+                        valores.append(valor)
+                        distancias.append(peso)
+                    
+                    # Calcular promedio ponderado
+                    if distancias:
+                        total_pesos = sum(distancias)
+                        if total_pesos > 0:
+                            valor_interpolado = sum(v * w for v, w in zip(valores, distancias)) / total_pesos
+                        else:
+                            valor_interpolado = np.mean(valores) if valores else 0
+                    else:
+                        valor_interpolado = 0
+                    
+                    # Asignar valor interpolado
+                    if variable == 'carbono':
+                        punto_malla['carbono_ton_ha'] = max(0, valor_interpolado)
+                    elif variable == 'ndvi':
+                        punto_malla['ndvi'] = max(-1.0, min(1.0, valor_interpolado))
+                    elif variable == 'ndwi':
+                        punto_malla['ndwi'] = max(-1.0, min(1.0, valor_interpolado))
+                    elif variable == 'biodiversidad':
+                        punto_malla['indice_shannon'] = max(0, valor_interpolado)
+            
+            return puntos_malla
+        except Exception as e:
+            print(f"Error en interpolación KNN: {str(e)}")
+            return puntos_malla
     
     def crear_mapa_area(self, gdf, zoom_auto=True):
         """Crea mapa básico con el área de estudio con zoom automático"""
@@ -345,13 +535,7 @@ class SistemaMapas:
             # Agregar polígono con borde destacado
             folium.GeoJson(
                 gdf.geometry.iloc[0],
-                style_function=lambda x: {
-                    'fillColor': '#3b82f6',
-                    'color': '#1d4ed8',
-                    'weight': 4,
-                    'fillOpacity': 0.2,
-                    'dashArray': '5, 5'
-                },
+                style_function=lambda x: self.estilos['area_estudio'],
                 highlight_function=lambda x: {
                     'weight': 6,
                     'color': '#1e40af',
@@ -364,616 +548,432 @@ class SistemaMapas:
             ne = [bounds[3], bounds[2]]
             m.fit_bounds([sw, ne])
             
+            # Agregar controles adicionales
+            Fullscreen().add_to(m)
+            MousePosition().add_to(m)
+            
             return m
         except Exception as e:
             st.warning(f"Error al crear mapa: {str(e)}")
             return None
     
-    def crear_mapa_calor_carbono(self, puntos_carbono, gdf_area=None):
-        """Crea mapa de calor para carbono con zoom automático"""
-        if not puntos_carbono or len(puntos_carbono) == 0:
+    def crear_mapa_calor_interpolado(self, resultados, variable='carbono', gdf_area=None):
+        """Crea mapa de calor interpolado para cubrir toda el área"""
+        if not resultados or gdf_area is None or gdf_area.empty:
             return None
         
         try:
-            # Calcular centro y bounds
-            if gdf_area is not None and not gdf_area.empty:
-                bounds = gdf_area.total_bounds
-                centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
-            else:
-                centro = [puntos_carbono[0]['lat'], puntos_carbono[0]['lon']]
-                bounds = None
+            # Obtener puntos de muestra
+            puntos_muestra = []
+            if variable == 'carbono':
+                puntos_muestra = resultados.get('puntos_carbono', [])
+            elif variable == 'ndvi':
+                puntos_muestra = resultados.get('puntos_ndvi', [])
+            elif variable == 'ndwi':
+                puntos_muestra = resultados.get('puntos_ndwi', [])
+            elif variable == 'biodiversidad':
+                puntos_muestra = resultados.get('puntos_biodiversidad', [])
             
+            if not puntos_muestra:
+                return None
+            
+            # Generar malla de puntos
+            puntos_malla = self._generar_malla_puntos(gdf_area, densidad=600)
+            
+            if not puntos_malla:
+                st.warning(f"No se pudo generar malla de puntos para {variable}")
+                return None
+            
+            # Interpolar valores
+            puntos_interpolados = self._interpolar_valores_knn(puntos_muestra, puntos_malla, variable)
+            
+            # Calcular centro y bounds
+            bounds = gdf_area.total_bounds
+            centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
+            
+            # Crear mapa
             m = folium.Map(
                 location=centro,
                 zoom_start=12,
                 tiles=self.capa_base,
-                attr='Esri, Maxar, Earthstar Geographics'
+                attr='Esri, Maxar, Earthstar Geographics',
+                control_scale=True
             )
             
-            # Si hay polígono de área, agregarlo primero
-            if gdf_area is not None and not gdf_area.empty:
-                folium.GeoJson(
-                    gdf_area.geometry.iloc[0],
-                    style_function=lambda x: {
-                        'fillColor': '#3b82f6',
-                        'color': '#1d4ed8',
-                        'weight': 3,
-                        'fillOpacity': 0.1,
-                        'dashArray': '5, 5'
-                    }
-                ).add_to(m)
-            
-            # Preparar datos para heatmap
-            heat_data = [[p['lat'], p['lon'], p['carbono_ton_ha']] for p in puntos_carbono]
-            
-            # Gradiente personalizado para carbono
-            gradient_carbono = {
-                0.0: 'blue',
-                0.2: 'cyan',
-                0.4: 'lime',
-                0.6: 'yellow',
-                0.8: 'orange',
-                1.0: 'red'
-            }
-            
-            # Agregar heatmap
-            HeatMap(
-                heat_data,
-                name='Carbono (ton C/ha)',
-                min_opacity=0.4,
-                radius=25,
-                blur=20,
-                gradient=gradient_carbono
+            # Agregar polígono base
+            folium.GeoJson(
+                gdf_area.geometry.iloc[0],
+                style_function=lambda x: {
+                    'fillColor': 'transparent',
+                    'color': '#1d4ed8',
+                    'weight': 3,
+                    'fillOpacity': 0.05,
+                    'dashArray': '5, 5'
+                }
             ).add_to(m)
             
-            # Agregar leyenda
-            self._agregar_leyenda_carbono(m)
+            # Preparar datos para heatmap
+            heat_data = []
+            for punto in puntos_interpolados:
+                if variable == 'carbono':
+                    heat_data.append([punto['lat'], punto['lon'], punto['carbono_ton_ha']])
+                elif variable == 'ndvi':
+                    heat_data.append([punto['lat'], punto['lon'], punto['ndvi']])
+                elif variable == 'ndwi':
+                    heat_data.append([punto['lat'], punto['lon'], punto['ndwi']])
+                elif variable == 'biodiversidad':
+                    heat_data.append([punto['lat'], punto['lon'], punto['indice_shannon']])
             
-            # Ajustar zoom a los datos si hay área
-            if gdf_area is not None and not gdf_area.empty:
-                sw = [bounds[1], bounds[0]]
-                ne = [bounds[3], bounds[2]]
-                m.fit_bounds([sw, ne])
+            # Configurar parámetros del heatmap según la variable
+            if variable == 'carbono':
+                name = '🌳 Carbono (ton C/ha)'
+                gradient = self.estilos['gradientes']['carbono']
+                radius = 35
+                blur = 30
+                max_zoom = 15
+                min_opacity = 0.7
+            elif variable == 'ndvi':
+                name = '📈 NDVI'
+                gradient = self.estilos['gradientes']['ndvi']
+                radius = 30
+                blur = 25
+                max_zoom = 15
+                min_opacity = 0.75
+            elif variable == 'ndwi':
+                name = '💧 NDWI'
+                gradient = self.estilos['gradientes']['ndwi']
+                radius = 30
+                blur = 25
+                max_zoom = 15
+                min_opacity = 0.75
+            elif variable == 'biodiversidad':
+                name = '🦋 Índice de Shannon'
+                gradient = self.estilos['gradientes']['biodiversidad']
+                radius = 35
+                blur = 30
+                max_zoom = 15
+                min_opacity = 0.7
+            
+            # Crear heatmap
+            HeatMap(
+                heat_data,
+                name=name,
+                min_opacity=min_opacity,
+                radius=radius,
+                blur=blur,
+                gradient=gradient,
+                max_zoom=max_zoom
+            ).add_to(m)
+            
+            # Ajustar vista
+            m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
+            
+            # Agregar leyenda
+            self._agregar_leyenda_interpolada(m, variable, resultados)
             
             return m
         except Exception as e:
-            st.warning(f"Error al crear mapa de carbono: {str(e)}")
+            st.warning(f"Error al crear mapa de calor interpolado para {variable}: {str(e)}")
             return None
     
-    def crear_mapa_calor_ndvi(self, puntos_ndvi, gdf_area=None):
-        """Crea mapa de calor para NDVI con zoom automático"""
-        if not puntos_ndvi or len(puntos_ndvi) == 0:
+    def crear_mapa_combinado_interpolado(self, resultados, gdf_area=None):
+        """Crea mapa con múltiples capas de heatmap interpoladas"""
+        if not resultados or gdf_area is None or gdf_area.empty:
             return None
         
         try:
             # Calcular centro y bounds
-            if gdf_area is not None and not gdf_area.empty:
-                bounds = gdf_area.total_bounds
-                centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
-            else:
-                centro = [puntos_ndvi[0]['lat'], puntos_ndvi[0]['lon']]
-                bounds = None
+            bounds = gdf_area.total_bounds
+            centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
             
+            # Crear mapa base
             m = folium.Map(
                 location=centro,
                 zoom_start=12,
                 tiles=self.capa_base,
-                attr='Esri, Maxar, Earthstar Geographics'
+                attr='Esri, Maxar, Earthstar Geographics',
+                control_scale=True
             )
             
-            # Si hay polígono de área, agregarlo primero
-            if gdf_area is not None and not gdf_area.empty:
-                folium.GeoJson(
-                    gdf_area.geometry.iloc[0],
-                    style_function=lambda x: {
-                        'fillColor': '#3b82f6',
-                        'color': '#1d4ed8',
-                        'weight': 3,
-                        'fillOpacity': 0.1,
-                        'dashArray': '5, 5'
-                    }
-                ).add_to(m)
-            
-            # Preparar datos para heatmap
-            heat_data = [[p['lat'], p['lon'], p['ndvi']] for p in puntos_ndvi]
-            
-            # Gradiente para NDVI (rojo = bajo, verde = alto)
-            gradient_ndvi = {
-                0.0: '#8b0000',
-                0.2: '#ff4500',
-                0.4: '#ffd700',
-                0.6: '#9acd32',
-                0.8: '#32cd32',
-                1.0: '#006400'
-            }
-            
-            # Agregar heatmap
-            HeatMap(
-                heat_data,
-                name='NDVI',
-                min_opacity=0.5,
-                radius=25,
-                blur=20,
-                gradient=gradient_ndvi
+            # Agregar polígono base
+            folium.GeoJson(
+                gdf_area.geometry.iloc[0],
+                style_function=lambda x: {
+                    'fillColor': 'transparent',
+                    'color': '#1d4ed8',
+                    'weight': 2,
+                    'fillOpacity': 0.05,
+                    'dashArray': '5, 5'
+                }
             ).add_to(m)
             
-            # Agregar leyenda
-            self._agregar_leyenda_ndvi(m)
+            # Generar malla de puntos una vez (compartida para todas las variables)
+            puntos_malla = self._generar_malla_puntos(gdf_area, densidad=500)
             
-            # Ajustar zoom a los datos si hay área
-            if gdf_area is not None and not gdf_area.empty:
-                sw = [bounds[1], bounds[0]]
-                ne = [bounds[3], bounds[2]]
-                m.fit_bounds([sw, ne])
+            if puntos_malla:
+                # Variables a procesar
+                variables_procesar = []
+                if 'puntos_carbono' in resultados and resultados['puntos_carbono']:
+                    variables_procesar.append(('carbono', '🌳 Carbono', self.estilos['gradientes']['carbono'], 30, 25, False))
+                if 'puntos_ndvi' in resultados and resultados['puntos_ndvi']:
+                    variables_procesar.append(('ndvi', '📈 NDVI', self.estilos['gradientes']['ndvi'], 25, 20, False))
+                if 'puntos_ndwi' in resultados and resultados['puntos_ndwi']:
+                    variables_procesar.append(('ndwi', '💧 NDWI', self.estilos['gradientes']['ndwi'], 25, 20, False))
+                if 'puntos_biodiversidad' in resultados and resultados['puntos_biodiversidad']:
+                    variables_procesar.append(('biodiversidad', '🦋 Biodiversidad', self.estilos['gradientes']['biodiversidad'], 30, 25, True))
+                
+                # Procesar cada variable
+                for variable, nombre, gradient, radius, blur, mostrar_por_defecto in variables_procesar:
+                    # Obtener puntos de muestra
+                    puntos_muestra = resultados[f'puntos_{variable}']
+                    
+                    # Interpolar valores
+                    puntos_interpolados = self._interpolar_valores_knn(
+                        puntos_muestra, 
+                        puntos_malla.copy(), 
+                        variable
+                    )
+                    
+                    # Preparar datos para heatmap
+                    heat_data = []
+                    for punto in puntos_interpolados:
+                        if variable == 'carbono':
+                            heat_data.append([punto['lat'], punto['lon'], punto['carbono_ton_ha']])
+                        elif variable == 'ndvi':
+                            heat_data.append([punto['lat'], punto['lon'], punto['ndvi']])
+                        elif variable == 'ndwi':
+                            heat_data.append([punto['lat'], punto['lon'], punto['ndwi']])
+                        elif variable == 'biodiversidad':
+                            heat_data.append([punto['lat'], punto['lon'], punto['indice_shannon']])
+                    
+                    # Crear heatmap
+                    HeatMap(
+                        heat_data,
+                        name=nombre,
+                        min_opacity=0.65,
+                        radius=radius,
+                        blur=blur,
+                        gradient=gradient,
+                        max_zoom=15,
+                        show=mostrar_por_defecto
+                    ).add_to(m)
             
-            return m
-        except Exception as e:
-            st.warning(f"Error al crear mapa de NDVI: {str(e)}")
-            return None
-    
-    def crear_mapa_calor_ndwi(self, puntos_ndwi, gdf_area=None):
-        """Crea mapa de calor para NDWI con zoom automático"""
-        if not puntos_ndwi or len(puntos_ndwi) == 0:
-            return None
-        
-        try:
-            # Calcular centro y bounds
-            if gdf_area is not None and not gdf_area.empty:
-                bounds = gdf_area.total_bounds
-                centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
-            else:
-                centro = [puntos_ndwi[0]['lat'], puntos_ndwi[0]['lon']]
-                bounds = None
-            
-            m = folium.Map(
-                location=centro,
-                zoom_start=12,
-                tiles=self.capa_base,
-                attr='Esri, Maxar, Earthstar Geographics'
-            )
-            
-            # Si hay polígono de área, agregarlo primero
-            if gdf_area is not None and not gdf_area.empty:
-                folium.GeoJson(
-                    gdf_area.geometry.iloc[0],
-                    style_function=lambda x: {
-                        'fillColor': '#3b82f6',
-                        'color': '#1d4ed8',
-                        'weight': 3,
-                        'fillOpacity': 0.1,
-                        'dashArray': '5, 5'
-                    }
-                ).add_to(m)
-            
-            # Preparar datos para heatmap
-            heat_data = [[p['lat'], p['lon'], p['ndwi']] for p in puntos_ndwi]
-            
-            # Gradiente para NDWI (marrón = seco, azul = húmedo)
-            gradient_ndwi = {
-                0.0: '#8b4513',
-                0.2: '#d2691e',
-                0.4: '#f4a460',
-                0.6: '#87ceeb',
-                0.8: '#1e90ff',
-                1.0: '#00008b'
-            }
-            
-            # Agregar heatmap
-            HeatMap(
-                heat_data,
-                name='NDWI',
-                min_opacity=0.5,
-                radius=25,
-                blur=20,
-                gradient=gradient_ndwi
-            ).add_to(m)
-            
-            # Agregar leyenda
-            self._agregar_leyenda_ndwi(m)
-            
-            # Ajustar zoom a los datos si hay área
-            if gdf_area is not None and not gdf_area.empty:
-                sw = [bounds[1], bounds[0]]
-                ne = [bounds[3], bounds[2]]
-                m.fit_bounds([sw, ne])
-            
-            return m
-        except Exception as e:
-            st.warning(f"Error al crear mapa de NDWI: {str(e)}")
-            return None
-    
-    def crear_mapa_calor_biodiversidad(self, puntos_biodiversidad, gdf_area=None):
-        """Crea mapa de calor para biodiversidad con zoom automático"""
-        if not puntos_biodiversidad or len(puntos_biodiversidad) == 0:
-            return None
-        
-        try:
-            # Calcular centro y bounds
-            if gdf_area is not None and not gdf_area.empty:
-                bounds = gdf_area.total_bounds
-                centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
-            else:
-                centro = [puntos_biodiversidad[0]['lat'], puntos_biodiversidad[0]['lon']]
-                bounds = None
-            
-            m = folium.Map(
-                location=centro,
-                zoom_start=12,
-                tiles=self.capa_base,
-                attr='Esri, Maxar, Earthstar Geographics'
-            )
-            
-            # Si hay polígono de área, agregarlo primero
-            if gdf_area is not None and not gdf_area.empty:
-                folium.GeoJson(
-                    gdf_area.geometry.iloc[0],
-                    style_function=lambda x: {
-                        'fillColor': '#3b82f6',
-                        'color': '#1d4ed8',
-                        'weight': 3,
-                        'fillOpacity': 0.1,
-                        'dashArray': '5, 5'
-                    }
-                ).add_to(m)
-            
-            # Preparar datos para heatmap
-            heat_data = [[p['lat'], p['lon'], p['indice_shannon']] for p in puntos_biodiversidad]
-            
-            # Gradiente para biodiversidad
-            gradient_biodiv = {
-                0.0: '#991b1b',
-                0.2: '#ef4444',
-                0.4: '#f59e0b',
-                0.6: '#3b82f6',
-                0.8: '#8b5cf6',
-                1.0: '#10b981'
-            }
-            
-            # Agregar heatmap
-            HeatMap(
-                heat_data,
-                name='Índice de Shannon',
-                min_opacity=0.5,
-                radius=25,
-                blur=20,
-                gradient=gradient_biodiv
-            ).add_to(m)
-            
-            # Agregar leyenda
-            self._agregar_leyenda_biodiversidad(m)
-            
-            # Ajustar zoom a los datos si hay área
-            if gdf_area is not None and not gdf_area.empty:
-                sw = [bounds[1], bounds[0]]
-                ne = [bounds[3], bounds[2]]
-                m.fit_bounds([sw, ne])
-            
-            return m
-        except Exception as e:
-            st.warning(f"Error al crear mapa de biodiversidad: {str(e)}")
-            return None
-    
-    def crear_mapa_combinado(self, puntos_carbono, puntos_ndvi, puntos_ndwi, puntos_biodiversidad, gdf_area=None):
-        """Crea mapa con todas las capas de heatmap con zoom automático"""
-        if not puntos_carbono or len(puntos_carbono) == 0:
-            return None
-        
-        try:
-            # Calcular centro y bounds
-            if gdf_area is not None and not gdf_area.empty:
-                bounds = gdf_area.total_bounds
-                centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
-            else:
-                centro = [puntos_carbono[0]['lat'], puntos_carbono[0]['lon']]
-                bounds = None
-            
-            m = folium.Map(
-                location=centro,
-                zoom_start=12,
-                tiles=self.capa_base,
-                attr='Esri, Maxar, Earthstar Geographics'
-            )
-            
-            # Si hay polígono de área, agregarlo primero
-            if gdf_area is not None and not gdf_area.empty:
-                folium.GeoJson(
-                    gdf_area.geometry.iloc[0],
-                    style_function=lambda x: {
-                        'fillColor': '#3b82f6',
-                        'color': '#1d4ed8',
-                        'weight': 3,
-                        'fillOpacity': 0.1,
-                        'dashArray': '5, 5'
-                    }
-                ).add_to(m)
-            
-            # Agregar capas de heatmap (inicialmente ocultas)
-            capas = {}
-            
-            # Capa de carbono
-            if puntos_carbono and len(puntos_carbono) > 0:
-                heat_data_carbono = [[p['lat'], p['lon'], p['carbono_ton_ha']] for p in puntos_carbono]
-                capas['carbono'] = HeatMap(
-                    heat_data_carbono,
-                    name='🌳 Carbono',
-                    min_opacity=0.4,
-                    radius=20,
-                    blur=15,
-                    gradient={
-                        0.0: 'blue', 0.2: 'cyan', 0.4: 'lime', 
-                        0.6: 'yellow', 0.8: 'orange', 1.0: 'red'
-                    },
-                    show=False
-                )
-                capas['carbono'].add_to(m)
-            
-            # Capa de NDVI
-            if puntos_ndvi and len(puntos_ndvi) > 0:
-                heat_data_ndvi = [[p['lat'], p['lon'], p['ndvi']] for p in puntos_ndvi]
-                capas['ndvi'] = HeatMap(
-                    heat_data_ndvi,
-                    name='📈 NDVI',
-                    min_opacity=0.4,
-                    radius=20,
-                    blur=15,
-                    gradient={
-                        0.0: '#8b0000', 0.2: '#ff4500', 0.4: '#ffd700',
-                        0.6: '#9acd32', 0.8: '#32cd32', 1.0: '#006400'
-                    },
-                    show=False
-                )
-                capas['ndvi'].add_to(m)
-            
-            # Capa de NDWI
-            if puntos_ndwi and len(puntos_ndwi) > 0:
-                heat_data_ndwi = [[p['lat'], p['lon'], p['ndwi']] for p in puntos_ndwi]
-                capas['ndwi'] = HeatMap(
-                    heat_data_ndwi,
-                    name='💧 NDWI',
-                    min_opacity=0.4,
-                    radius=20,
-                    blur=15,
-                    gradient={
-                        0.0: '#8b4513', 0.2: '#d2691e', 0.4: '#f4a460',
-                        0.6: '#87ceeb', 0.8: '#1e90ff', 1.0: '#00008b'
-                    },
-                    show=False
-                )
-                capas['ndwi'].add_to(m)
-            
-            # Capa de biodiversidad
-            if puntos_biodiversidad and len(puntos_biodiversidad) > 0:
-                heat_data_biodiv = [[p['lat'], p['lon'], p['indice_shannon']] for p in puntos_biodiversidad]
-                capas['biodiversidad'] = HeatMap(
-                    heat_data_biodiv,
-                    name='🦋 Biodiversidad',
-                    min_opacity=0.4,
-                    radius=20,
-                    blur=15,
-                    gradient={
-                        0.0: '#991b1b', 0.2: '#ef4444', 0.4: '#f59e0b',
-                        0.6: '#3b82f6', 0.8: '#8b5cf6', 1.0: '#10b981'
-                    },
-                    show=True
-                )
-                capas['biodiversidad'].add_to(m)
-            
-            # Control de capas
-            folium.LayerControl().add_to(m)
+            # Agregar control de capas
+            folium.LayerControl(collapsed=False).add_to(m)
             
             # Agregar leyenda combinada
-            self._agregar_leyenda_combinada(m)
+            self._agregar_leyenda_combinada_interpolada(m, resultados)
             
-            # Ajustar zoom a los datos si hay área
-            if gdf_area is not None and not gdf_area.empty:
-                sw = [bounds[1], bounds[0]]
-                ne = [bounds[3], bounds[2]]
-                m.fit_bounds([sw, ne])
+            # Ajustar vista
+            m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
             
             return m
         except Exception as e:
-            st.warning(f"Error al crear mapa combinado: {str(e)}")
+            st.warning(f"Error al crear mapa combinado interpolado: {str(e)}")
             return None
     
-    # Las funciones de leyenda permanecen igual...
+    # ===== LEYENDAS MEJORADAS =====
     
-    def _agregar_leyenda_carbono(self, mapa):
-        """Agrega leyenda para el mapa de carbono"""
+    def _agregar_leyenda_interpolada(self, mapa, variable, resultados):
+        """Agrega leyenda para mapas interpolados"""
         try:
-            leyenda_html = '''
-            <div style="position: fixed; 
-                bottom: 50px; 
-                left: 50px; 
-                width: 250px;
-                background-color: white;
-                border: 2px solid #065f46;
+            if variable == 'carbono':
+                titulo = "🌳 Carbono Interpolado"
+                colores = self.estilos['gradientes']['carbono']
+                valores = [p['carbono_ton_ha'] for p in resultados.get('puntos_carbono', [])]
+                if valores:
+                    min_val = min(valores)
+                    max_val = max(valores)
+                    texto = f"Rango: {min_val:.1f} - {max_val:.1f} ton C/ha"
+                else:
+                    texto = "Datos interpolados"
+            elif variable == 'ndvi':
+                titulo = "📈 NDVI Interpolado"
+                colores = self.estilos['gradientes']['ndvi']
+                valores = [p['ndvi'] for p in resultados.get('puntos_ndvi', [])]
+                if valores:
+                    min_val = min(valores)
+                    max_val = max(valores)
+                    texto = f"Rango: {min_val:.2f} - {max_val:.2f}"
+                else:
+                    texto = "Datos interpolados"
+            elif variable == 'ndwi':
+                titulo = "💧 NDWI Interpolado"
+                colores = self.estilos['gradientes']['ndwi']
+                valores = [p['ndwi'] for p in resultados.get('puntos_ndwi', [])]
+                if valores:
+                    min_val = min(valores)
+                    max_val = max(valores)
+                    texto = f"Rango: {min_val:.2f} - {max_val:.2f}"
+                else:
+                    texto = "Datos interpolados"
+            elif variable == 'biodiversidad':
+                titulo = "🦋 Biodiversidad Interpolada"
+                colores = self.estilos['gradientes']['biodiversidad']
+                valores = [p['indice_shannon'] for p in resultados.get('puntos_biodiversidad', [])]
+                if valores:
+                    min_val = min(valores)
+                    max_val = max(valores)
+                    texto = f"Rango: {min_val:.2f} - {max_val:.2f}"
+                else:
+                    texto = "Datos interpolados"
+            
+            # Crear gradiente CSS
+            gradiente_css = f"linear-gradient(90deg, {', '.join(colores.values())})"
+            
+            leyenda_html = f'''
+            <div style="
+                position: fixed; 
+                bottom: 30px; 
+                left: 30px; 
+                width: 300px;
+                background-color: rgba(255, 255, 255, 0.95);
+                border: 2px solid #3b82f6;
+                border-radius: 10px;
                 z-index: 9999;
-                padding: 10px;
-                border-radius: 5px;
-                box-shadow: 0 0 10px rgba(0,0,0,0.2);
-                font-family: Arial;">
-                <h4 style="margin-top: 0; color: #065f46; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
-                🌳 Carbono (ton C/ha)
+                padding: 15px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                font-family: 'Segoe UI', Arial, sans-serif;
+                backdrop-filter: blur(5px);
+            ">
+                <h4 style="
+                    margin-top: 0; 
+                    color: #1d4ed8; 
+                    border-bottom: 2px solid #e5e7eb; 
+                    padding-bottom: 8px;
+                    font-size: 16px;
+                ">
+                {titulo}
                 </h4>
-                <div style="margin: 10px 0;">
-                    <div style="height: 20px; background: linear-gradient(90deg, blue, cyan, lime, yellow, orange, red); border: 1px solid #666;"></div>
-                    <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px;">
+                <div style="margin: 12px 0;">
+                    <div style="
+                        height: 20px; 
+                        background: {gradiente_css}; 
+                        border: 1px solid #666; 
+                        border-radius: 4px;
+                        margin-bottom: 8px;
+                    "></div>
+                    <div style="
+                        display: flex; 
+                        justify-content: space-between; 
+                        font-size: 12px;
+                        color: #4b5563;
+                    ">
                         <span>Bajo</span>
                         <span>Medio</span>
                         <span>Alto</span>
                     </div>
                 </div>
-                <div style="font-size: 12px; color: #666;">
-                    <div><span style="color: #065f46; font-weight: bold;">■</span> Contorno azul: Área de estudio</div>
-                    <div><span style="color: #3b82f6; font-weight: bold;">■</span> Heatmap: Intensidad de carbono</div>
+                <div style="
+                    font-size: 13px; 
+                    color: #374151;
+                    background-color: #f9fafb;
+                    padding: 10px;
+                    border-radius: 6px;
+                    border-left: 4px solid #3b82f6;
+                ">
+                    {texto}
+                </div>
+                <div style="
+                    font-size: 12px; 
+                    color: #6b7280;
+                    margin-top: 10px;
+                    padding-top: 10px;
+                    border-top: 1px solid #e5e7eb;
+                ">
+                    <div>🔵 <strong>Interpolación KNN:</strong> Cobertura completa del área</div>
+                    <div>📍 <strong>Malla densa:</strong> 600+ puntos interpolados</div>
+                    <div>🎯 <strong>Precisión:</strong> Modelo basado en vecinos más cercanos</div>
                 </div>
             </div>
             '''
             mapa.get_root().html.add_child(folium.Element(leyenda_html))
-        except:
-            pass
+        except Exception as e:
+            print(f"Error agregando leyenda: {str(e)}")
     
-    def _agregar_leyenda_ndvi(self, mapa):
-        """Agrega leyenda para el mapa de NDVI"""
+    def _agregar_leyenda_combinada_interpolada(self, mapa, resultados):
+        """Agrega leyenda combinada para mapa interpolado"""
         try:
             leyenda_html = '''
-            <div style="position: fixed; 
-                bottom: 50px; 
-                left: 50px; 
-                width: 250px;
-                background-color: white;
-                border: 2px solid #32cd32;
-                z-index: 9999;
-                padding: 10px;
-                border-radius: 5px;
-                box-shadow: 0 0 10px rgba(0,0,0,0.2);
-                font-family: Arial;">
-                <h4 style="margin-top: 0; color: #32cd32; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
-                📈 NDVI (Índice de Vegetación)
-                </h4>
-                <div style="margin: 10px 0;">
-                    <div style="height: 20px; background: linear-gradient(90deg, #8b0000, #ff4500, #ffd700, #9acd32, #32cd32, #006400); border: 1px solid #666;"></div>
-                    <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px;">
-                        <span>-1.0</span>
-                        <span>0.0</span>
-                        <span>+1.0</span>
-                    </div>
-                </div>
-                <div style="font-size: 12px; color: #666;">
-                    <div><span style="color: #1d4ed8; font-weight: bold;">■</span> Contorno azul: Área de estudio</div>
-                    <div><span style="color: #8b0000; font-weight: bold;">■</span> Rojo: Vegetación escasa/muerta</div>
-                    <div><span style="color: #32cd32; font-weight: bold;">■</span> Verde: Vegetación densa/sana</div>
-                </div>
-            </div>
-            '''
-            mapa.get_root().html.add_child(folium.Element(leyenda_html))
-        except:
-            pass
-    
-    def _agregar_leyenda_ndwi(self, mapa):
-        """Agrega leyenda para el mapa de NDWI"""
-        try:
-            leyenda_html = '''
-            <div style="position: fixed; 
-                bottom: 50px; 
-                left: 50px; 
-                width: 250px;
-                background-color: white;
-                border: 2px solid #1e90ff;
-                z-index: 9999;
-                padding: 10px;
-                border-radius: 5px;
-                box-shadow: 0 0 10px rgba(0,0,0,0.2);
-                font-family: Arial;">
-                <h4 style="margin-top: 0; color: #1e90ff; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
-                💧 NDWI (Índice de Agua)
-                </h4>
-                <div style="margin: 10px 0;">
-                    <div style="height: 20px; background: linear-gradient(90deg, #8b4513, #d2691e, #f4a460, #87ceeb, #1e90ff, #00008b); border: 1px solid #666;"></div>
-                    <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px;">
-                        <span>Seco</span>
-                        <span>Húmedo</span>
-                    </div>
-                </div>
-                <div style="font-size: 12px; color: #666;">
-                    <div><span style="color: #1d4ed8; font-weight: bold;">■</span> Contorno azul: Área de estudio</div>
-                    <div><span style="color: #8b4513; font-weight: bold;">■</span> Marrón: Superficie seca</div>
-                    <div><span style="color: #1e90ff; font-weight: bold;">■</span> Azul: Presencia de agua</div>
-                </div>
-            </div>
-            '''
-            mapa.get_root().html.add_child(folium.Element(leyenda_html))
-        except:
-            pass
-    
-    def _agregar_leyenda_biodiversidad(self, mapa):
-        """Agrega leyenda para el mapa de biodiversidad"""
-        try:
-            leyenda_html = '''
-            <div style="position: fixed; 
-                bottom: 50px; 
-                left: 50px; 
-                width: 280px;
-                background-color: white;
-                border: 2px solid #8b5cf6;
-                z-index: 9999;
-                padding: 10px;
-                border-radius: 5px;
-                box-shadow: 0 0 10px rgba(0,0,0,0.2);
-                font-family: Arial;">
-                <h4 style="margin-top: 0; color: #8b5cf6; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
-                🦋 Índice de Shannon
-                </h4>
-                <div style="margin: 10px 0;">
-                    <div style="height: 20px; background: linear-gradient(90deg, #991b1b, #ef4444, #f59e0b, #3b82f6, #8b5cf6, #10b981); border: 1px solid #666;"></div>
-                    <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px;">
-                        <span>0.0</span>
-                        <span>2.0</span>
-                        <span>4.0</span>
-                    </div>
-                </div>
-                <div style="font-size: 12px; color: #666;">
-                    <div><span style="color: #1d4ed8; font-weight: bold;">■</span> Contorno azul: Área de estudio</div>
-                    <div><span style="color: #991b1b; font-weight: bold;">■</span> Muy Baja: < 0.5</div>
-                    <div><span style="color: #ef4444; font-weight: bold;">■</span> Baja: 0.5 - 1.5</div>
-                    <div><span style="color: #f59e0b; font-weight: bold;">■</span> Moderada: 1.5 - 2.5</div>
-                    <div><span style="color: #3b82f6; font-weight: bold;">■</span> Alta: 2.5 - 3.5</div>
-                    <div><span style="color: #10b981; font-weight: bold;">■</span> Muy Alta: > 3.5</div>
-                </div>
-            </div>
-            '''
-            mapa.get_root().html.add_child(folium.Element(leyenda_html))
-        except:
-            pass
-    
-    def _agregar_leyenda_combinada(self, mapa):
-        """Agrega leyenda combinada"""
-        try:
-            leyenda_html = '''
-            <div style="position: fixed; 
-                bottom: 50px; 
-                left: 50px; 
+            <div style="
+                position: fixed; 
+                bottom: 30px; 
+                left: 30px; 
                 width: 320px;
-                background-color: white;
+                background-color: rgba(255, 255, 255, 0.95);
                 border: 2px solid #3b82f6;
+                border-radius: 10px;
                 z-index: 9999;
-                padding: 10px;
-                border-radius: 5px;
-                box-shadow: 0 0 10px rgba(0,0,0,0.2);
-                font-family: Arial;">
-                <h4 style="margin-top: 0; color: #3b82f6; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
-                🗺️ Capas del Mapa
+                padding: 15px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                font-family: 'Segoe UI', Arial, sans-serif;
+                backdrop-filter: blur(5px);
+            ">
+                <h4 style="
+                    margin-top: 0; 
+                    color: #1d4ed8; 
+                    border-bottom: 2px solid #e5e7eb; 
+                    padding-bottom: 8px;
+                    font-size: 16px;
+                ">
+                🗺️ Mapa Multivariable Interpolado
                 </h4>
-                <div style="margin: 10px 0;">
-                    <div style="display: flex; align-items: center; margin-bottom: 8px;">
-                        <div style="width: 20px; height: 20px; background: linear-gradient(90deg, blue, cyan, lime, yellow, orange, red); margin-right: 10px; border: 1px solid #666;"></div>
-                        <div>🌳 Carbono (ton C/ha)</div>
+                
+                <div style="margin: 12px 0;">
+                    <div style="display: flex; align-items: center; margin-bottom: 10px; padding: 8px; background: #f8fafc; border-radius: 6px;">
+                        <div style="width: 25px; height: 25px; background: linear-gradient(90deg, #0000FF, #00FFFF, #00FF00, #FFFF00, #FFA500, #FF0000); margin-right: 12px; border: 1px solid #666; border-radius: 4px;"></div>
+                        <div style="font-weight: 600;">🌳 Carbono (ton C/ha)</div>
                     </div>
-                    <div style="display: flex; align-items: center; margin-bottom: 8px;">
-                        <div style="width: 20px; height: 20px; background: linear-gradient(90deg, #8b0000, #ff4500, #ffd700, #9acd32, #32cd32, #006400); margin-right: 10px; border: 1px solid #666;"></div>
-                        <div>📈 NDVI</div>
+                    
+                    <div style="display: flex; align-items: center; margin-bottom: 10px; padding: 8px; background: #f8fafc; border-radius: 6px;">
+                        <div style="width: 25px; height: 25px; background: linear-gradient(90deg, #8B0000, #FF4500, #FFD700, #9ACD32, #32CD32, #006400); margin-right: 12px; border: 1px solid #666; border-radius: 4px;"></div>
+                        <div style="font-weight: 600;">📈 NDVI (Vegetación)</div>
                     </div>
-                    <div style="display: flex; align-items: center; margin-bottom: 8px;">
-                        <div style="width: 20px; height: 20px; background: linear-gradient(90deg, #8b4513, #d2691e, #f4a460, #87ceeb, #1e90ff, #00008b); margin-right: 10px; border: 1px solid #666;"></div>
-                        <div>💧 NDWI</div>
+                    
+                    <div style="display: flex; align-items: center; margin-bottom: 10px; padding: 8px; background: #f8fafc; border-radius: 6px;">
+                        <div style="width: 25px; height: 25px; background: linear-gradient(90deg, #8B4513, #D2691E, #F4A460, #87CEEB, #1E90FF, #00008B); margin-right: 12px; border: 1px solid #666; border-radius: 4px;"></div>
+                        <div style="font-weight: 600;">💧 NDWI (Agua)</div>
+                    </div>
+                    
+                    <div style="display: flex; align-items: center; padding: 8px; background: #f8fafc; border-radius: 6px;">
+                        <div style="width: 25px; height: 25px; background: linear-gradient(90deg, #991B1B, #EF4444, #F59E0B, #3B82F6, #8B5CF6, #10B981); margin-right: 12px; border: 1px solid #666; border-radius: 4px;"></div>
+                        <div style="font-weight: 600;">🦋 Índice de Shannon</div>
+                    </div>
+                </div>
+                
+                <div style="
+                    font-size: 13px; 
+                    color: #4b5563; 
+                    border-top: 1px solid #e5e7eb; 
+                    padding-top: 12px;
+                    background: #f0f9ff;
+                    padding: 12px;
+                    border-radius: 6px;
+                    margin-top: 10px;
+                ">
+                    <div style="margin-bottom: 8px;">🎯 <strong>Características:</strong></div>
+                    <div style="display: flex; align-items: center; margin-bottom: 6px;">
+                        <span style="color: #10b981; font-weight: bold; margin-right: 8px;">✓</span>
+                        <span>Interpolación KNN para cobertura completa</span>
+                    </div>
+                    <div style="display: flex; align-items: center; margin-bottom: 6px;">
+                        <span style="color: #10b981; font-weight: bold; margin-right: 8px;">✓</span>
+                        <span>Malla densa de 500+ puntos interpolados</span>
+                    </div>
+                    <div style="display: flex; align-items: center; margin-bottom: 6px;">
+                        <span style="color: #10b981; font-weight: bold; margin-right: 8px;">✓</span>
+                        <span>Gradientes suaves sin espacios vacíos</span>
                     </div>
                     <div style="display: flex; align-items: center;">
-                        <div style="width: 20px; height: 20px; background: linear-gradient(90deg, #991b1b, #ef4444, #f59e0b, #3b82f6, #8b5cf6, #10b981); margin-right: 10px; border: 1px solid #666;"></div>
-                        <div>🦋 Índice de Shannon</div>
+                        <span style="color: #3b82f6; font-weight: bold; margin-right: 8px;">🗂️</span>
+                        <span>Use el control superior para cambiar capas</span>
                     </div>
-                </div>
-                <div style="font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 10px;">
-                    <div><strong>Instrucciones:</strong></div>
-                    <div><span style="color: #1d4ed8; font-weight: bold;">■</span> Contorno azul: Área de estudio</div>
-                    <div>• Use el control en la esquina superior derecha para cambiar entre capas</div>
-                    <div>• Haga clic en los puntos para ver detalles</div>
-                    <div>• Zoom con la rueda del mouse</div>
                 </div>
             </div>
             '''
             mapa.get_root().html.add_child(folium.Element(leyenda_html))
-        except:
-            pass
+        except Exception as e:
+            print(f"Error agregando leyenda combinada: {str(e)}")
 
 # ===============================
 # 📊 VISUALIZACIONES Y GRÁFICOS
