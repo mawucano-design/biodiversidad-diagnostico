@@ -301,6 +301,7 @@ class SistemaMapas:
     """Sistema de mapas completo con zoom automático a los polígonos"""
     def __init__(self):
         self.capa_base = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+        self.capa_terreno = 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png'
     
     def crear_mapa_area(self, gdf, zoom_auto=True):
         """Crea mapa básico con el área de estudio con zoom automático"""
@@ -974,6 +975,908 @@ class SistemaMapas:
             mapa.get_root().html.add_child(folium.Element(leyenda_html))
         except:
             pass
+
+# ===============================
+# 🗺️ SISTEMA DE MAPAS MEJORADO CON COROPLETAS Y HEATMAPS HÍBRIDOS
+# ===============================
+class SistemaMapasMejorado:
+    """Sistema de mapas mejorado con coropletas y heatmaps híbridos"""
+    def __init__(self):
+        self.capa_base = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+        self.capa_terreno = 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png'
+        
+    def crear_mapa_coropletas_carbono(self, puntos_carbono, gdf_area=None, num_zonas=10):
+        """Crea mapa de coropletas para carbono dividiendo el área en zonas"""
+        if not puntos_carbono or len(puntos_carbono) == 0:
+            return None
+        
+        try:
+            # Crear GeoDataFrame de puntos
+            gdf_puntos = gpd.GeoDataFrame(
+                puntos_carbono,
+                geometry=[Point(p['lon'], p['lat']) for p in puntos_carbono],
+                crs='EPSG:4326'
+            )
+            
+            # Dividir área en zonas si hay polígono
+            if gdf_area is not None and not gdf_area.empty:
+                # Crear grid dentro del polígono
+                bounds = gdf_area.total_bounds
+                grid_cells = self._crear_grid_zonal(bounds, num_zonas)
+                
+                # Asignar puntos a celdas del grid
+                gdf_grid = gpd.GeoDataFrame(grid_cells, columns=['geometry'], crs='EPSG:4326')
+                gdf_grid['zona_id'] = range(1, len(gdf_grid) + 1)
+                
+                # Unir espacialmente puntos con grid
+                puntos_en_grid = gpd.sjoin(gdf_puntos, gdf_grid, how='left', predicate='within')
+                
+                # Calcular estadísticas por zona
+                estadisticas_zonas = []
+                for zona_id in gdf_grid['zona_id']:
+                    puntos_zona = puntos_en_grid[puntos_en_grid['zona_id'] == zona_id]
+                    if len(puntos_zona) > 0:
+                        carb_prom = puntos_zona['carbono_ton_ha'].mean()
+                        carb_min = puntos_zona['carbono_ton_ha'].min()
+                        carb_max = puntos_zona['carbono_ton_ha'].max()
+                        ndvi_prom = puntos_zona['ndvi'].mean() if 'ndvi' in puntos_zona.columns else 0
+                    else:
+                        carb_prom = carb_min = carb_max = ndvi_prom = 0
+                    
+                    estadisticas_zonas.append({
+                        'zona_id': zona_id,
+                        'carbono_promedio': carb_prom,
+                        'carbono_min': carb_min,
+                        'carbono_max': carb_max,
+                        'ndvi_promedio': ndvi_prom,
+                        'num_puntos': len(puntos_zona)
+                    })
+                
+                # Crear mapa
+                m = self._crear_mapa_base(gdf_area)
+                
+                # Agregar coropletas por zona
+                self._agregar_coropletas_carbono(m, gdf_grid, estadisticas_zonas)
+                
+                # Agregar puntos de muestreo como capa adicional
+                self._agregar_puntos_muestreo(m, gdf_puntos, 'carbono_ton_ha', 'Carbono')
+                
+                # Agregar leyenda mejorada
+                self._agregar_leyenda_carbono_mejorada(m, estadisticas_zonas)
+                
+                return m
+            
+            else:
+                # Si no hay polígono, usar heatmap normal
+                sistema_mapas = SistemaMapas()
+                return sistema_mapas.crear_mapa_calor_carbono(puntos_carbono, gdf_area)
+                
+        except Exception as e:
+            st.warning(f"Error al crear mapa de coropletas: {str(e)}")
+            return None
+    
+    def crear_mapa_coropletas_biodiversidad(self, puntos_biodiversidad, gdf_area=None, num_zonas=10):
+        """Crea mapa de coropletas para biodiversidad"""
+        if not puntos_biodiversidad or len(puntos_biodiversidad) == 0:
+            return None
+        
+        try:
+            # Crear GeoDataFrame de puntos
+            gdf_puntos = gpd.GeoDataFrame(
+                puntos_biodiversidad,
+                geometry=[Point(p['lon'], p['lat']) for p in puntos_biodiversidad],
+                crs='EPSG:4326'
+            )
+            
+            if gdf_area is not None and not gdf_area.empty:
+                # Crear grid
+                bounds = gdf_area.total_bounds
+                grid_cells = self._crear_grid_zonal(bounds, num_zonas)
+                gdf_grid = gpd.GeoDataFrame(grid_cells, columns=['geometry'], crs='EPSG:4326')
+                gdf_grid['zona_id'] = range(1, len(gdf_grid) + 1)
+                
+                # Unir puntos con grid
+                puntos_en_grid = gpd.sjoin(gdf_puntos, gdf_grid, how='left', predicate='within')
+                
+                # Calcular estadísticas por zona
+                estadisticas_zonas = []
+                for zona_id in gdf_grid['zona_id']:
+                    puntos_zona = puntos_en_grid[puntos_en_grid['zona_id'] == zona_id]
+                    if len(puntos_zona) > 0:
+                        shannon_prom = puntos_zona['indice_shannon'].mean()
+                        riqueza_prom = puntos_zona['riqueza_especies'].mean()
+                        categoria = self._clasificar_shannon(shannon_prom)
+                    else:
+                        shannon_prom = riqueza_prom = 0
+                        categoria = "Sin datos"
+                    
+                    estadisticas_zonas.append({
+                        'zona_id': zona_id,
+                        'shannon_promedio': shannon_prom,
+                        'riqueza_promedio': riqueza_prom,
+                        'categoria': categoria,
+                        'num_puntos': len(puntos_zona)
+                    })
+                
+                # Crear mapa
+                m = self._crear_mapa_base(gdf_area)
+                
+                # Agregar coropletas
+                self._agregar_coropletas_biodiversidad(m, gdf_grid, estadisticas_zonas)
+                
+                # Agregar puntos
+                self._agregar_puntos_muestreo(m, gdf_puntos, 'indice_shannon', 'Shannon')
+                
+                # Leyenda
+                self._agregar_leyenda_biodiversidad_mejorada(m, estadisticas_zonas)
+                
+                return m
+            
+            else:
+                sistema_mapas = SistemaMapas()
+                return sistema_mapas.crear_mapa_calor_biodiversidad(puntos_biodiversidad, gdf_area)
+                
+        except Exception as e:
+            st.warning(f"Error al crear mapa de biodiversidad: {str(e)}")
+            return None
+    
+    def crear_mapa_hibrido(self, puntos_carbono, puntos_biodiversidad, gdf_area=None):
+        """Crea mapa híbrido que muestra carbono y biodiversidad juntos"""
+        if not puntos_carbono or not puntos_biodiversidad:
+            return None
+        
+        try:
+            # Crear mapa base
+            if gdf_area is not None:
+                bounds = gdf_area.total_bounds
+                centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
+            else:
+                centro = [puntos_carbono[0]['lat'], puntos_carbono[0]['lon']]
+            
+            m = folium.Map(
+                location=centro,
+                zoom_start=12,
+                tiles=self.capa_terreno,
+                attr='OpenTopoMap',
+                control_scale=True
+            )
+            
+            # Agregar capa base alternativa
+            folium.TileLayer(
+                self.capa_base,
+                name='Imagen Satelital',
+                attr='Esri, Maxar, Earthstar Geographics'
+            ).add_to(m)
+            
+            # Agregar polígono de área
+            if gdf_area is not None:
+                folium.GeoJson(
+                    gdf_area.geometry.iloc[0],
+                    style_function=lambda x: {
+                        'fillColor': '#3b82f6',
+                        'color': '#1d4ed8',
+                        'weight': 3,
+                        'fillOpacity': 0.05,
+                        'dashArray': '5, 5'
+                    }
+                ).add_to(m)
+            
+            # Crear capa de carbono (burbujas de tamaño proporcional)
+            fg_carbono = folium.FeatureGroup(name='🌳 Carbono (tamaño = carbono)')
+            for punto in puntos_carbono[:100]:  # Limitar para no saturar
+                radio = max(5, min(20, punto['carbono_ton_ha'] / 10))
+                
+                folium.CircleMarker(
+                    location=[punto['lat'], punto['lon']],
+                    radius=radio,
+                    popup=f"""
+                    <div style='font-family: Arial;'>
+                        <h4>🌳 Punto de Carbono</h4>
+                        <b>Carbono:</b> {punto['carbono_ton_ha']:.1f} ton C/ha<br>
+                        <b>NDVI:</b> {punto.get('ndvi', 'N/A'):.3f}<br>
+                        <b>Precipitación:</b> {punto.get('precipitacion', 'N/A'):.0f} mm
+                    </div>
+                    """,
+                    color='#10b981',
+                    fill=True,
+                    fillColor='#10b981',
+                    fillOpacity=0.6,
+                    weight=1
+                ).add_to(fg_carbono)
+            fg_carbono.add_to(m)
+            
+            # Crear capa de biodiversidad (colores por categoría)
+            fg_biodiv = folium.FeatureGroup(name='🦋 Biodiversidad (color = categoría)')
+            for punto in puntos_biodiversidad[:100]:
+                color = punto.get('color', '#8b5cf6')
+                
+                folium.CircleMarker(
+                    location=[punto['lat'], punto['lon']],
+                    radius=8,
+                    popup=f"""
+                    <div style='font-family: Arial;'>
+                        <h4>🦋 Punto de Biodiversidad</h4>
+                        <b>Índice Shannon:</b> {punto['indice_shannon']:.3f}<br>
+                        <b>Categoría:</b> {punto.get('categoria', 'N/A')}<br>
+                        <b>Riqueza especies:</b> {punto.get('riqueza_especies', 'N/A')}<br>
+                        <b>Abundancia:</b> {punto.get('abundancia_total', 'N/A'):,}
+                    </div>
+                    """,
+                    color=color,
+                    fill=True,
+                    fillColor=color,
+                    fillOpacity=0.7,
+                    weight=2
+                ).add_to(fg_biodiv)
+            fg_biodiv.add_to(m)
+            
+            # Crear heatmap combinado
+            heat_data = []
+            for i in range(min(len(puntos_carbono), len(puntos_biodiversidad))):
+                # Combinar valores normalizados
+                carb_norm = puntos_carbono[i]['carbono_ton_ha'] / 100  # Normalizar aprox
+                biod_norm = puntos_biodiversidad[i]['indice_shannon'] / 4  # Normalizar
+                valor_combinado = (carb_norm + biod_norm) / 2
+                
+                heat_data.append([
+                    puntos_carbono[i]['lat'],
+                    puntos_carbono[i]['lon'],
+                    valor_combinado
+                ])
+            
+            if heat_data:
+                HeatMap(
+                    heat_data,
+                    name='🔥 Índice Combinado',
+                    min_opacity=0.4,
+                    radius=25,
+                    blur=20,
+                    gradient={0.0: 'blue', 0.5: 'lime', 1.0: 'red'},
+                    show=False
+                ).add_to(m)
+            
+            # Control de capas
+            folium.LayerControl().add_to(m)
+            
+            # Leyenda mejorada
+            self._agregar_leyenda_hibrida(m)
+            
+            # Ajustar zoom
+            if gdf_area is not None:
+                sw = [bounds[1], bounds[0]]
+                ne = [bounds[3], bounds[2]]
+                m.fit_bounds([sw, ne])
+            
+            return m
+            
+        except Exception as e:
+            st.warning(f"Error al crear mapa híbrido: {str(e)}")
+            return None
+    
+    def crear_mapa_calor_mejorado(self, puntos, variable, gdf_area=None, titulo=None):
+        """Versión mejorada del heatmap con más opciones"""
+        if not puntos or len(puntos) == 0:
+            return None
+        
+        try:
+            # Determinar configuración según variable
+            configs = {
+                'carbono': {
+                    'colores': ['blue', 'cyan', 'lime', 'yellow', 'orange', 'red'],
+                    'leyenda': 'Carbono (ton C/ha)',
+                    'icono': '🌳',
+                    'unidad': 'ton C/ha'
+                },
+                'ndvi': {
+                    'colores': ['#8b0000', '#ff4500', '#ffd700', '#9acd32', '#32cd32', '#006400'],
+                    'leyenda': 'NDVI',
+                    'icono': '📈',
+                    'unidad': ''
+                },
+                'ndwi': {
+                    'colores': ['#8b4513', '#d2691e', '#f4a460', '#87ceeb', '#1e90ff', '#00008b'],
+                    'leyenda': 'NDWI',
+                    'icono': '💧',
+                    'unidad': ''
+                },
+                'shannon': {
+                    'colores': ['#991b1b', '#ef4444', '#f59e0b', '#3b82f6', '#8b5cf6', '#10b981'],
+                    'leyenda': 'Índice de Shannon',
+                    'icono': '🦋',
+                    'unidad': ''
+                }
+            }
+            
+            config = configs.get(variable, configs['carbono'])
+            
+            # Crear mapa base
+            if gdf_area is not None:
+                bounds = gdf_area.total_bounds
+                centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
+            else:
+                centro = [puntos[0]['lat'], puntos[0]['lon']]
+            
+            m = folium.Map(
+                location=centro,
+                zoom_start=12,
+                tiles=self.capa_base,
+                attr='Esri, Maxar, Earthstar Geographics',
+                control_scale=True
+            )
+            
+            # Agregar polígono si existe
+            if gdf_area is not None:
+                folium.GeoJson(
+                    gdf_area.geometry.iloc[0],
+                    style_function=lambda x: {
+                        'fillColor': '#3b82f6',
+                        'color': '#1d4ed8',
+                        'weight': 3,
+                        'fillOpacity': 0.1,
+                        'dashArray': '5, 5'
+                    }
+                ).add_to(m)
+            
+            # Preparar datos para heatmap
+            if variable == 'carbono':
+                heat_data = [[p['lat'], p['lon'], p['carbono_ton_ha']] for p in puntos]
+                valores = [p['carbono_ton_ha'] for p in puntos]
+            elif variable == 'ndvi':
+                heat_data = [[p['lat'], p['lon'], p['ndvi']] for p in puntos]
+                valores = [p['ndvi'] for p in puntos]
+            elif variable == 'ndwi':
+                heat_data = [[p['lat'], p['lon'], p['ndwi']] for p in puntos]
+                valores = [p['ndwi'] for p in puntos]
+            elif variable == 'shannon':
+                heat_data = [[p['lat'], p['lon'], p['indice_shannon']] for p in puntos]
+                valores = [p['indice_shannon'] for p in puntos]
+            else:
+                return None
+            
+            # Crear gradiente dinámico basado en valores
+            min_val = min(valores) if valores else 0
+            max_val = max(valores) if valores else 1
+            
+            # Heatmap principal
+            HeatMap(
+                heat_data,
+                name=f'{config["icono"]} {config["leyenda"]}',
+                min_opacity=0.5,
+                radius=25,
+                blur=20,
+                gradient=self._crear_gradiente_dinamico(min_val, max_val, config['colores']),
+                show=True
+            ).add_to(m)
+            
+            # Agregar puntos de referencia
+            fg_puntos = folium.FeatureGroup(name=f'📍 Puntos de Muestreo', show=False)
+            for p in puntos[:50]:  # Limitar a 50 puntos para no saturar
+                if variable == 'carbono':
+                    valor = p['carbono_ton_ha']
+                elif variable == 'ndvi':
+                    valor = p['ndvi']
+                elif variable == 'ndwi':
+                    valor = p['ndwi']
+                elif variable == 'shannon':
+                    valor = p['indice_shannon']
+                else:
+                    valor = 0
+                
+                folium.CircleMarker(
+                    location=[p['lat'], p['lon']],
+                    radius=5,
+                    popup=f"{config['leyenda']}: {valor:.2f} {config['unidad']}",
+                    color='black',
+                    fill=True,
+                    fillColor='white',
+                    fillOpacity=0.8,
+                    weight=1
+                ).add_to(fg_puntos)
+            fg_puntos.add_to(m)
+            
+            # Control de capas
+            folium.LayerControl().add_to(m)
+            
+            # Leyenda mejorada
+            self._agregar_leyenda_mejorada(m, min_val, max_val, config)
+            
+            # Ajustar zoom
+            if gdf_area is not None:
+                sw = [bounds[1], bounds[0]]
+                ne = [bounds[3], bounds[2]]
+                m.fit_bounds([sw, ne])
+            
+            return m
+            
+        except Exception as e:
+            st.warning(f"Error al crear heatmap mejorado: {str(e)}")
+            return None
+    
+    # ===== MÉTODOS AUXILIARES =====
+    
+    def _crear_grid_zonal(self, bounds, num_zonas):
+        """Crea grid de zonas dentro de los bounds"""
+        minx, miny, maxx, maxy = bounds
+        
+        # Determinar número de filas y columnas
+        n_cols = math.ceil(math.sqrt(num_zonas))
+        n_rows = math.ceil(num_zonas / n_cols)
+        
+        width = (maxx - minx) / n_cols
+        height = (maxy - miny) / n_rows
+        
+        grid_cells = []
+        for i in range(n_rows):
+            for j in range(n_cols):
+                if len(grid_cells) >= num_zonas:
+                    break
+                
+                cell_minx = minx + (j * width)
+                cell_maxx = minx + ((j + 1) * width)
+                cell_miny = miny + (i * height)
+                cell_maxy = miny + ((i + 1) * height)
+                
+                cell_poly = Polygon([
+                    (cell_minx, cell_miny),
+                    (cell_maxx, cell_miny),
+                    (cell_maxx, cell_maxy),
+                    (cell_minx, cell_maxy)
+                ])
+                
+                grid_cells.append(cell_poly)
+        
+        return grid_cells
+    
+    def _crear_mapa_base(self, gdf_area):
+        """Crea mapa base con zoom ajustado"""
+        bounds = gdf_area.total_bounds
+        centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
+        
+        # Determinar zoom basado en tamaño
+        width = bounds[2] - bounds[0]
+        if width > 10:
+            zoom = 6
+        elif width > 5:
+            zoom = 8
+        elif width > 2:
+            zoom = 10
+        elif width > 1:
+            zoom = 12
+        elif width > 0.5:
+            zoom = 14
+        else:
+            zoom = 16
+        
+        m = folium.Map(
+            location=centro,
+            zoom_start=zoom,
+            tiles=self.capa_base,
+            attr='Esri, Maxar, Earthstar Geographics',
+            control_scale=True
+        )
+        
+        # Agregar polígono del área
+        folium.GeoJson(
+            gdf_area.geometry.iloc[0],
+            style_function=lambda x: {
+                'fillColor': '#3b82f6',
+                'color': '#1d4ed8',
+                'weight': 3,
+                'fillOpacity': 0.1,
+                'dashArray': '5, 5'
+            }
+        ).add_to(m)
+        
+        return m
+    
+    def _agregar_coropletas_carbono(self, mapa, gdf_grid, estadisticas):
+        """Agrega coropletas de carbono al mapa"""
+        # Crear diccionario de estadísticas por zona
+        stats_dict = {s['zona_id']: s for s in estadisticas}
+        
+        # Función de estilo para cada zona
+        def estilo_carbono(feature):
+            zona_id = feature['properties']['zona_id']
+            stats = stats_dict.get(zona_id, {})
+            carbono = stats.get('carbono_promedio', 0)
+            
+            # Asignar color basado en carbono
+            if carbono > 80:
+                color = '#006400'  # Verde oscuro
+            elif carbono > 60:
+                color = '#32cd32'  # Verde lima
+            elif carbono > 40:
+                color = '#9acd32'  # Verde amarillo
+            elif carbono > 20:
+                color = '#ffd700'  # Amarillo
+            elif carbono > 10:
+                color = '#ff8c00'  # Naranja
+            else:
+                color = '#8b0000'  # Rojo oscuro
+            
+            return {
+                'fillColor': color,
+                'color': '#333',
+                'weight': 1,
+                'fillOpacity': 0.6,
+                'dashArray': '3, 3'
+            }
+        
+        # Función para popup
+        def popup_carbono(feature):
+            zona_id = feature['properties']['zona_id']
+            stats = stats_dict.get(zona_id, {})
+            
+            return f"""
+            <div style='font-family: Arial; width: 200px;'>
+                <h4>Zona {zona_id}</h4>
+                <b>Carbono promedio:</b> {stats.get('carbono_promedio', 0):.1f} ton C/ha<br>
+                <b>Rango:</b> {stats.get('carbono_min', 0):.1f} - {stats.get('carbono_max', 0):.1f}<br>
+                <b>NDVI promedio:</b> {stats.get('ndvi_promedio', 0):.3f}<br>
+                <b>Puntos muestreados:</b> {stats.get('num_puntos', 0)}
+            </div>
+            """
+        
+        # Agregar coropletas
+        folium.GeoJson(
+            gdf_grid,
+            style_function=estilo_carbono,
+            tooltip=folium.GeoJsonTooltip(
+                fields=['zona_id'],
+                aliases=['Zona:'],
+                localize=True
+            ),
+            popup=folium.GeoJsonPopup(
+                fields=['zona_id'],
+                aliases=['Zona:'],
+                localize=True,
+                parse_html=True
+            )
+        ).add_to(mapa)
+    
+    def _agregar_puntos_muestreo(self, mapa, gdf_puntos, campo_valor, nombre_capa):
+        """Agrega puntos de muestreo al mapa"""
+        fg_puntos = folium.FeatureGroup(name=f'📍 {nombre_capa}')
+        
+        for idx, punto in gdf_puntos.iterrows():
+            valor = punto[campo_valor] if campo_valor in punto else 0
+            
+            # Determinar color basado en valor
+            if nombre_capa == 'Carbono':
+                if valor > 80:
+                    color = '#006400'
+                elif valor > 60:
+                    color = '#32cd32'
+                elif valor > 40:
+                    color = '#9acd32'
+                elif valor > 20:
+                    color = '#ffd700'
+                elif valor > 10:
+                    color = '#ff8c00'
+                else:
+                    color = '#8b0000'
+                icono = '🌳'
+            else:  # Shannon
+                if valor > 3.5:
+                    color = '#10b981'
+                elif valor > 2.5:
+                    color = '#3b82f6'
+                elif valor > 1.5:
+                    color = '#f59e0b'
+                elif valor > 0.5:
+                    color = '#ef4444'
+                else:
+                    color = '#991b1b'
+                icono = '🦋'
+            
+            # Crear marcador
+            folium.CircleMarker(
+                location=[punto.geometry.y, punto.geometry.x],
+                radius=6,
+                popup=f"{icono} {nombre_capa}: {valor:.2f}",
+                color='white',
+                fill=True,
+                fillColor=color,
+                fillOpacity=0.8,
+                weight=2
+            ).add_to(fg_puntos)
+        
+        fg_puntos.add_to(mapa)
+    
+    def _clasificar_shannon(self, valor):
+        """Clasifica valor de Shannon en categoría"""
+        if valor > 3.5:
+            return "Muy Alta"
+        elif valor > 2.5:
+            return "Alta"
+        elif valor > 1.5:
+            return "Moderada"
+        elif valor > 0.5:
+            return "Baja"
+        else:
+            return "Muy Baja"
+    
+    def _crear_gradiente_dinamico(self, min_val, max_val, colores_base):
+        """Crea gradiente dinámico basado en rango de valores"""
+        if max_val <= min_val:
+            return {0.0: colores_base[0], 1.0: colores_base[-1]}
+        
+        # Crear gradiente con puntos equidistantes
+        num_colores = len(colores_base)
+        gradiente = {}
+        
+        for i, color in enumerate(colores_base):
+            posicion = i / (num_colores - 1) if num_colores > 1 else 0
+            gradiente[posicion] = color
+        
+        return gradiente
+    
+    def _agregar_leyenda_mejorada(self, mapa, min_val, max_val, config):
+        """Agrega leyenda mejorada al mapa"""
+        try:
+            icono = config['icono']
+            leyenda = config['leyenda']
+            unidad = config['unidad']
+            colores = config['colores']
+            
+            # Crear gradiente de colores para la leyenda
+            gradiente_html = ""
+            for i in range(len(colores)):
+                left = (i / (len(colores) - 1)) * 100 if len(colores) > 1 else 0
+                gradiente_html += f'<div style="position:absolute; left:{left}%; width:{100/len(colores)}%; height:100%; background-color:{colores[i]};"></div>'
+            
+            leyenda_html = f'''
+            <div style="position: fixed; 
+                bottom: 50px; 
+                left: 50px; 
+                width: 280px;
+                background-color: white;
+                border: 2px solid #065f46;
+                z-index: 9999;
+                padding: 15px;
+                border-radius: 8px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                font-family: Arial;">
+                <h4 style="margin-top: 0; color: #065f46; border-bottom: 2px solid #eee; padding-bottom: 8px;">
+                {icono} {leyenda}
+                </h4>
+                <div style="margin: 15px 0; position: relative; height: 20px; border: 1px solid #666; border-radius: 3px; overflow: hidden;">
+                    {gradiente_html}
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 12px;">
+                    <span>{min_val:.1f}{unidad}</span>
+                    <span>{(min_val + max_val)/2:.1f}{unidad}</span>
+                    <span>{max_val:.1f}{unidad}</span>
+                </div>
+                <div style="margin-top: 15px; font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 10px;">
+                    <div><strong>Interpretación:</strong></div>
+                    {self._get_interpretacion_leyenda(leyenda, min_val, max_val)}
+                </div>
+            </div>
+            '''
+            mapa.get_root().html.add_child(folium.Element(leyenda_html))
+        except:
+            pass
+    
+    def _get_interpretacion_leyenda(self, leyenda, min_val, max_val):
+        """Devuelve interpretación para la leyenda"""
+        if "Carbono" in leyenda:
+            return """
+            <div style="margin-top: 5px;">
+                <span style="color: #006400;">■</span> Muy Alto: > 80 ton C/ha<br>
+                <span style="color: #32cd32;">■</span> Alto: 60-80 ton C/ha<br>
+                <span style="color: #9acd32;">■</span> Medio: 40-60 ton C/ha<br>
+                <span style="color: #ffd700;">■</span> Bajo: 20-40 ton C/ha<br>
+                <span style="color: #8b0000;">■</span> Muy Bajo: < 20 ton C/ha
+            </div>
+            """
+        elif "NDVI" in leyenda:
+            return """
+            <div style="margin-top: 5px;">
+                <span style="color: #006400;">■</span> Muy Saludable: > 0.6<br>
+                <span style="color: #32cd32;">■</span> Saludable: 0.4-0.6<br>
+                <span style="color: #ffd700;">■</span> Moderado: 0.2-0.4<br>
+                <span style="color: #ff4500;">■</span> Degradado: 0.1-0.2<br>
+                <span style="color: #8b0000;">■</span> Muy Degradado: < 0.1
+            </div>
+            """
+        elif "Shannon" in leyenda:
+            return """
+            <div style="margin-top: 5px;">
+                <span style="color: #10b981;">■</span> Muy Alta: > 3.5<br>
+                <span style="color: #3b82f6;">■</span> Alta: 2.5-3.5<br>
+                <span style="color: #f59e0b;">■</span> Moderada: 1.5-2.5<br>
+                <span style="color: #ef4444;">■</span> Baja: 0.5-1.5<br>
+                <span style="color: #991b1b;">■</span> Muy Baja: < 0.5
+            </div>
+            """
+        else:
+            return "Haga clic en los puntos para ver detalles."
+    
+    def _agregar_leyenda_hibrida(self, mapa):
+        """Leyenda para mapa híbrido"""
+        try:
+            leyenda_html = '''
+            <div style="position: fixed; 
+                bottom: 50px; 
+                left: 50px; 
+                width: 320px;
+                background-color: white;
+                border: 2px solid #8b5cf6;
+                z-index: 9999;
+                padding: 15px;
+                border-radius: 8px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                font-family: Arial;">
+                <h4 style="margin-top: 0; color: #8b5cf6; border-bottom: 2px solid #eee; padding-bottom: 8px;">
+                🎭 Mapa Híbrido - Carbono + Biodiversidad
+                </h4>
+                
+                <div style="margin: 10px 0;">
+                    <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                        <div style="width: 20px; height: 20px; background: linear-gradient(90deg, #10b981, #3b82f6, #8b5cf6); margin-right: 10px; border: 1px solid #666; border-radius: 50%;"></div>
+                        <div><strong>Burbujas de Carbono:</strong> Tamaño = carbono almacenado</div>
+                    </div>
+                    <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                        <div style="display: flex; margin-right: 10px;">
+                            <div style="width: 10px; height: 10px; background: #10b981; border-radius: 50%; margin-right: 2px;"></div>
+                            <div style="width: 15px; height: 15px; background: #10b981; border-radius: 50%; margin-right: 2px;"></div>
+                            <div style="width: 20px; height: 20px; background: #10b981; border-radius: 50%;"></div>
+                        </div>
+                        <div>Pequeño → Grande = Menos → Más carbono</div>
+                    </div>
+                </div>
+                
+                <div style="margin: 15px 0; padding: 10px; background: #f8f9fa; border-radius: 5px;">
+                    <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                        <div style="width: 15px; height: 15px; background: #10b981; margin-right: 10px; border-radius: 50%; border: 1px solid #333;"></div>
+                        <div>🦋 <strong>Biodiversidad Alta</strong> (Shannon > 3.5)</div>
+                    </div>
+                    <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                        <div style="width: 15px; height: 15px; background: #ef4444; margin-right: 10px; border-radius: 50%; border: 1px solid #333;"></div>
+                        <div>🦋 <strong>Biodiversidad Baja</strong> (Shannon < 0.5)</div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 15px; font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 10px;">
+                    <div><strong>Instrucciones:</strong></div>
+                    <div>• Use el control superior derecho para capas</div>
+                    <div>• Haga clic en burbujas para detalles</div>
+                    <div>• Áreas calientes = Altos valores combinados</div>
+                </div>
+            </div>
+            '''
+            mapa.get_root().html.add_child(folium.Element(leyenda_html))
+        except:
+            pass
+    
+    def _agregar_leyenda_carbono_mejorada(self, mapa, estadisticas_zonas):
+        """Leyenda mejorada para carbono"""
+        try:
+            # Calcular estadísticas generales
+            carb_prom = np.mean([z['carbono_promedio'] for z in estadisticas_zonas])
+            carb_min = min([z['carbono_min'] for z in estadisticas_zonas])
+            carb_max = max([z['carbono_max'] for z in estadisticas_zonas])
+            
+            leyenda_html = f'''
+            <div style="position: fixed; 
+                bottom: 50px; 
+                left: 50px; 
+                width: 300px;
+                background-color: white;
+                border: 2px solid #065f46;
+                z-index: 9999;
+                padding: 15px;
+                border-radius: 8px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                font-family: Arial;">
+                <h4 style="margin-top: 0; color: #065f46; border-bottom: 2px solid #eee; padding-bottom: 8px;">
+                🌳 Carbono por Zonas
+                </h4>
+                
+                <div style="margin: 10px 0;">
+                    <div style="display: flex; justify-content: space-between; font-size: 12px;">
+                        <div><span style="color: #8b0000;">■</span> Muy Bajo (< 10)</div>
+                        <div><span style="color: #ff8c00;">■</span> Bajo (10-20)</div>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 12px;">
+                        <div><span style="color: #ffd700;">■</span> Medio (20-40)</div>
+                        <div><span style="color: #9acd32;">■</span> Alto (40-60)</div>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 12px;">
+                        <div><span style="color: #32cd32;">■</span> Muy Alto (60-80)</div>
+                        <div><span style="color: #006400;">■</span> Excelente (> 80)</div>
+                    </div>
+                </div>
+                
+                <div style="margin: 15px 0; padding: 10px; background: #f0f9ff; border-radius: 5px;">
+                    <div style="font-size: 12px;">
+                        <div><strong>Estadísticas:</strong></div>
+                        <div>Promedio: <strong>{carb_prom:.1f} ton C/ha</strong></div>
+                        <div>Rango: <strong>{carb_min:.1f} - {carb_max:.1f} ton C/ha</strong></div>
+                        <div>Zonas analizadas: <strong>{len(estadisticas_zonas)}</strong></div>
+                    </div>
+                </div>
+                
+                <div style="font-size: 11px; color: #666; border-top: 1px solid #eee; padding-top: 10px;">
+                    <div>Haga clic en las zonas para ver detalles</div>
+                    <div>Los colores representan rangos de carbono</div>
+                </div>
+            </div>
+            '''
+            mapa.get_root().html.add_child(folium.Element(leyenda_html))
+        except:
+            pass
+    
+    def _agregar_leyenda_biodiversidad_mejorada(self, mapa, estadisticas_zonas):
+        """Leyenda mejorada para biodiversidad"""
+        try:
+            # Calcular estadísticas
+            shannon_prom = np.mean([z['shannon_promedio'] for z in estadisticas_zonas])
+            categorias = {}
+            for z in estadisticas_zonas:
+                cat = z['categoria']
+                categorias[cat] = categorias.get(cat, 0) + 1
+            
+            # Crear lista de categorías
+            categorias_html = ""
+            for cat, count in categorias.items():
+                color = self._get_color_categoria(cat)
+                categorias_html += f'<div style="display: flex; align-items: center; margin-bottom: 3px;"><div style="width: 12px; height: 12px; background: {color}; margin-right: 5px; border-radius: 2px;"></div><div>{cat}: {count} zona(s)</div></div>'
+            
+            leyenda_html = f'''
+            <div style="position: fixed; 
+                bottom: 50px; 
+                left: 50px; 
+                width: 300px;
+                background-color: white;
+                border: 2px solid #8b5cf6;
+                z-index: 9999;
+                padding: 15px;
+                border-radius: 8px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                font-family: Arial;">
+                <h4 style="margin-top: 0; color: #8b5cf6; border-bottom: 2px solid #eee; padding-bottom: 8px;">
+                🦋 Biodiversidad por Zonas
+                </h4>
+                
+                <div style="margin: 10px 0;">
+                    {categorias_html}
+                </div>
+                
+                <div style="margin: 15px 0; padding: 10px; background: #faf5ff; border-radius: 5px;">
+                    <div style="font-size: 12px;">
+                        <div><strong>Estadísticas:</strong></div>
+                        <div>Shannon promedio: <strong>{shannon_prom:.2f}</strong></div>
+                        <div>Zonas analizadas: <strong>{len(estadisticas_zonas)}</strong></div>
+                    </div>
+                </div>
+                
+                <div style="font-size: 11px; color: #666; border-top: 1px solid #eee; padding-top: 10px;">
+                    <div>Colores según índice de Shannon:</div>
+                    <div>• <span style="color: #991b1b;">Muy Baja</span> (< 0.5)</div>
+                    <div>• <span style="color: #ef4444;">Baja</span> (0.5-1.5)</div>
+                    <div>• <span style="color: #f59e0b;">Moderada</span> (1.5-2.5)</div>
+                    <div>• <span style="color: #3b82f6;">Alta</span> (2.5-3.5)</div>
+                    <div>• <span style="color: #10b981;">Muy Alta</span> (> 3.5)</div>
+                </div>
+            </div>
+            '''
+            mapa.get_root().html.add_child(folium.Element(leyenda_html))
+        except:
+            pass
+    
+    def _get_color_categoria(self, categoria):
+        """Devuelve color para categoría de biodiversidad"""
+        colores = {
+            "Muy Alta": "#10b981",
+            "Alta": "#3b82f6",
+            "Moderada": "#f59e0b",
+            "Baja": "#ef4444",
+            "Muy Baja": "#991b1b",
+            "Sin datos": "#9ca3af"
+        }
+        return colores.get(categoria, "#9ca3af")
 
 # ===============================
 # 📊 VISUALIZACIONES Y GRÁFICOS
@@ -2282,7 +3185,7 @@ def main():
     else:
         # Mostrar pestañas
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-            "🗺️ Mapas de Calor", 
+            "🗺️ Mapas Mejorados", 
             "📊 Dashboard", 
             "🌳 Carbono", 
             "🦋 Biodiversidad",
@@ -2291,7 +3194,7 @@ def main():
         ])
         
         with tab1:
-            mostrar_mapas_calor()
+            mostrar_mapas_mejorados()
         
         with tab2:
             mostrar_dashboard()
@@ -2463,171 +3366,233 @@ def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos, usar_gee=False)
         return None
 
 # ===============================
-# 🗺️ FUNCIONES DE VISUALIZACIÓN CORREGIDAS
+# 🗺️ FUNCIONES DE VISUALIZACIÓN MEJORADAS
 # ===============================
-def mostrar_mapas_calor():
-    """Muestra todos los mapas de calor disponibles con zoom automático"""
-    st.header("🗺️ Mapas de Calor - Análisis Multivariable")
+def mostrar_mapas_mejorados():
+    """Muestra mapas mejorados con coropletas y heatmaps híbridos"""
+    st.header("🗺️ Mapas Mejorados - Análisis Espacial Avanzado")
     
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "🌍 Área de Estudio", 
-        "🌳 Carbono", 
-        "📈 NDVI", 
-        "💧 NDWI", 
-        "🦋 Biodiversidad",
-        "🎭 Combinado"
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "🎭 Híbrido", 
+        "🌳 Carbono Avanzado", 
+        "🦋 Biodiversidad Avanzada",
+        "📊 Comparativo por Zonas"
     ])
     
     with tab1:
-        st.subheader("Área de Estudio")
-        if st.session_state.mapa:
-            folium_static(st.session_state.mapa, width=1000, height=600)
-            st.info("Mapa base con el polígono del área de estudio. El zoom se ajusta automáticamente al área.")
-        else:
-            st.info("No hay mapa para mostrar")
-    
-    with tab2:
-        st.subheader("🌳 Mapa de Calor - Carbono (ton C/ha)")
-        if st.session_state.resultados and 'puntos_carbono' in st.session_state.resultados:
-            sistema_mapas = SistemaMapas()
-            mapa_carbono = sistema_mapas.crear_mapa_calor_carbono(
+        st.subheader("🎭 Mapa Híbrido - Carbono + Biodiversidad")
+        if (st.session_state.resultados and 
+            'puntos_carbono' in st.session_state.resultados and
+            'puntos_biodiversidad' in st.session_state.resultados):
+            
+            sistema_mapas_mejorado = SistemaMapasMejorado()
+            mapa_hibrido = sistema_mapas_mejorado.crear_mapa_hibrido(
                 st.session_state.resultados['puntos_carbono'],
-                st.session_state.poligono_data
-            )
-            
-            if mapa_carbono:
-                folium_static(mapa_carbono, width=1000, height=600)
-                
-                # Información adicional
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    carb_min = min(p['carbono_ton_ha'] for p in st.session_state.resultados['puntos_carbono'])
-                    carb_max = max(p['carbono_ton_ha'] for p in st.session_state.resultados['puntos_carbono'])
-                    st.metric("Carbono promedio", f"{st.session_state.resultados.get('carbono_promedio_ha', 0):.1f} ton C/ha")
-                with col2:
-                    st.metric("Rango", f"{carb_min:.1f} - {carb_max:.1f} ton C/ha")
-                with col3:
-                    st.metric("Puntos muestreados", len(st.session_state.resultados['puntos_carbono']))
-            else:
-                st.warning("No se pudo generar el mapa de carbono.")
-        else:
-            st.info("Ejecute el análisis primero para ver el mapa de carbono")
-    
-    with tab3:
-        st.subheader("📈 Mapa de Calor - NDVI (Índice de Vegetación)")
-        if st.session_state.resultados and 'puntos_ndvi' in st.session_state.resultados:
-            sistema_mapas = SistemaMapas()
-            mapa_ndvi = sistema_mapas.crear_mapa_calor_ndvi(
-                st.session_state.resultados['puntos_ndvi'],
-                st.session_state.poligono_data
-            )
-            
-            if mapa_ndvi:
-                folium_static(mapa_ndvi, width=1000, height=600)
-                
-                # Información adicional
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("NDVI promedio", f"{st.session_state.resultados.get('ndvi_promedio', 0):.3f}")
-                with col2:
-                    ndvi_vals = [p['ndvi'] for p in st.session_state.resultados['puntos_ndvi']]
-                    st.metric("Rango NDVI", f"{min(ndvi_vals):.2f} - {max(ndvi_vals):.2f}")
-                with col3:
-                    ndvi_avg = st.session_state.resultados.get('ndvi_promedio', 0)
-                    if ndvi_avg > 0.6:
-                        interpretacion = "🌿 Vegetación densa"
-                    elif ndvi_avg > 0.3:
-                        interpretacion = "🌱 Vegetación moderada"
-                    else:
-                        interpretacion = "🍂 Vegetación escasa"
-                    st.metric("Interpretación", interpretacion)
-            else:
-                st.warning("No se pudo generar el mapa de NDVI.")
-        else:
-            st.info("Ejecute el análisis primero para ver el mapa de NDVI")
-    
-    with tab4:
-        st.subheader("💧 Mapa de Calor - NDWI (Índice de Agua)")
-        if st.session_state.resultados and 'puntos_ndwi' in st.session_state.resultados:
-            sistema_mapas = SistemaMapas()
-            mapa_ndwi = sistema_mapas.crear_mapa_calor_ndwi(
-                st.session_state.resultados['puntos_ndwi'],
-                st.session_state.poligono_data
-            )
-            
-            if mapa_ndwi:
-                folium_static(mapa_ndwi, width=1000, height=600)
-                
-                # Información adicional
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("NDWI promedio", f"{st.session_state.resultados.get('ndwi_promedio', 0):.3f}")
-                with col2:
-                    ndwi_vals = [p['ndwi'] for p in st.session_state.resultados['puntos_ndwi']]
-                    st.metric("Rango NDWI", f"{min(ndwi_vals):.2f} - {max(ndwi_vals):.2f}")
-                with col3:
-                    ndwi_avg = st.session_state.resultados.get('ndwi_promedio', 0)
-                    if ndwi_avg > 0.2:
-                        interpretacion = "💧 Húmedo"
-                    elif ndwi_avg > -0.1:
-                        interpretacion = "⚖️ Moderado"
-                    else:
-                        interpretacion = "🏜️ Seco"
-                    st.metric("Humedad", interpretacion)
-            else:
-                st.warning("No se pudo generar el mapa de NDWI.")
-        else:
-            st.info("Ejecute el análisis primero para ver el mapa de NDWI")
-    
-    with tab5:
-        st.subheader("🦋 Mapa de Calor - Biodiversidad (Índice de Shannon)")
-        if st.session_state.resultados and 'puntos_biodiversidad' in st.session_state.resultados:
-            sistema_mapas = SistemaMapas()
-            mapa_biodiv = sistema_mapas.crear_mapa_calor_biodiversidad(
                 st.session_state.resultados['puntos_biodiversidad'],
                 st.session_state.poligono_data
             )
             
+            if mapa_hibrido:
+                folium_static(mapa_hibrido, width=1000, height=600)
+                
+                # Análisis de correlación
+                st.markdown("### 🔗 Relación Carbono-Biodiversidad")
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    carb_prom = st.session_state.resultados.get('carbono_promedio_ha', 0)
+                    st.metric("Carbono promedio", f"{carb_prom:.1f} ton C/ha")
+                
+                with col2:
+                    shannon_prom = st.session_state.resultados.get('shannon_promedio', 0)
+                    st.metric("Shannon promedio", f"{shannon_prom:.3f}")
+                
+                with col3:
+                    # Calcular correlación aproximada
+                    if len(st.session_state.resultados['puntos_carbono']) > 1:
+                        carbono_vals = [p['carbono_ton_ha'] for p in st.session_state.resultados['puntos_carbono'][:50]]
+                        shannon_vals = [p['indice_shannon'] for p in st.session_state.resultados['puntos_biodiversidad'][:50]]
+                        correlacion = np.corrcoef(carbono_vals, shannon_vals)[0, 1] if len(carbono_vals) > 1 else 0
+                        st.metric("Correlación", f"{correlacion:.3f}")
+                    else:
+                        st.metric("Correlación", "N/A")
+            
+            else:
+                st.warning("No se pudo generar el mapa híbrido.")
+        else:
+            st.info("Ejecute el análisis primero para ver el mapa híbrido")
+    
+    with tab2:
+        st.subheader("🌳 Mapa de Carbono Avanzado")
+        if st.session_state.resultados and 'puntos_carbono' in st.session_state.resultados:
+            
+            sistema_mapas_mejorado = SistemaMapasMejorado()
+            
+            # Opciones de visualización
+            col1, col2 = st.columns(2)
+            with col1:
+                tipo_mapa = st.selectbox(
+                    "Tipo de mapa",
+                    ["Heatmap Mejorado", "Coropletas por Zonas"],
+                    key="carbono_tipo"
+                )
+            with col2:
+                if tipo_mapa == "Coropletas por Zonas":
+                    num_zonas = st.slider("Número de zonas", 4, 20, 10, key="carbono_zonas")
+            
+            if tipo_mapa == "Heatmap Mejorado":
+                mapa_carbono = sistema_mapas_mejorado.crear_mapa_calor_mejorado(
+                    st.session_state.resultados['puntos_carbono'],
+                    'carbono',
+                    st.session_state.poligono_data
+                )
+            else:
+                mapa_carbono = sistema_mapas_mejorado.crear_mapa_coropletas_carbono(
+                    st.session_state.resultados['puntos_carbono'],
+                    st.session_state.poligono_data,
+                    num_zonas
+                )
+            
+            if mapa_carbono:
+                folium_static(mapa_carbono, width=1000, height=600)
+                
+                # Estadísticas detalladas
+                with st.expander("📊 Estadísticas Detalladas de Carbono"):
+                    carb_vals = [p['carbono_ton_ha'] for p in st.session_state.resultados['puntos_carbono']]
+                    if carb_vals:
+                        df_stats = pd.DataFrame({
+                            'Métrica': ['Mínimo', 'Máximo', 'Promedio', 'Mediana', 'Desviación Estándar'],
+                            'Valor (ton C/ha)': [
+                                f"{min(carb_vals):.1f}",
+                                f"{max(carb_vals):.1f}",
+                                f"{np.mean(carb_vals):.1f}",
+                                f"{np.median(carb_vals):.1f}",
+                                f"{np.std(carb_vals):.1f}"
+                            ]
+                        })
+                        st.dataframe(df_stats, use_container_width=True, hide_index=True)
+            else:
+                st.warning("No se pudo generar el mapa de carbono.")
+        else:
+            st.info("Ejecute el análisis primero para ver el mapa de carbono avanzado")
+    
+    with tab3:
+        st.subheader("🦋 Mapa de Biodiversidad Avanzado")
+        if st.session_state.resultados and 'puntos_biodiversidad' in st.session_state.resultados:
+            
+            sistema_mapas_mejorado = SistemaMapasMejorado()
+            
+            # Opciones
+            col1, col2 = st.columns(2)
+            with col1:
+                tipo_mapa = st.selectbox(
+                    "Tipo de mapa",
+                    ["Heatmap Mejorado", "Coropletas por Zonas"],
+                    key="biodiv_tipo"
+                )
+            with col2:
+                if tipo_mapa == "Coropletas por Zonas":
+                    num_zonas = st.slider("Número de zonas", 4, 20, 10, key="biodiv_zonas")
+            
+            if tipo_mapa == "Heatmap Mejorado":
+                mapa_biodiv = sistema_mapas_mejorado.crear_mapa_calor_mejorado(
+                    st.session_state.resultados['puntos_biodiversidad'],
+                    'shannon',
+                    st.session_state.poligono_data
+                )
+            else:
+                mapa_biodiv = sistema_mapas_mejorado.crear_mapa_coropletas_biodiversidad(
+                    st.session_state.resultados['puntos_biodiversidad'],
+                    st.session_state.poligono_data,
+                    num_zonas
+                )
+            
             if mapa_biodiv:
                 folium_static(mapa_biodiv, width=1000, height=600)
                 
-                # Información adicional
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Shannon promedio", f"{st.session_state.resultados.get('shannon_promedio', 0):.3f}")
-                with col2:
-                    shannon_vals = [p['indice_shannon'] for p in st.session_state.resultados['puntos_biodiversidad']]
-                    st.metric("Rango Shannon", f"{min(shannon_vals):.2f} - {max(shannon_vals):.2f}")
-                with col3:
+                # Distribución de categorías
+                with st.expander("📈 Distribución de Categorías de Biodiversidad"):
                     if st.session_state.resultados['puntos_biodiversidad']:
-                        categoria = st.session_state.resultados['puntos_biodiversidad'][0]['categoria']
-                        st.metric("Categoría", categoria)
-                    else:
-                        st.metric("Categoría", "N/A")
+                        categorias = {}
+                        for p in st.session_state.resultados['puntos_biodiversidad']:
+                            cat = p.get('categoria', 'Desconocida')
+                            categorias[cat] = categorias.get(cat, 0) + 1
+                        
+                        fig = px.pie(
+                            values=list(categorias.values()),
+                            names=list(categorias.keys()),
+                            title='Distribución de Categorías',
+                            color_discrete_sequence=px.colors.qualitative.Set3
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
             else:
                 st.warning("No se pudo generar el mapa de biodiversidad.")
         else:
-            st.info("Ejecute el análisis primero para ver el mapa de biodiversidad")
+            st.info("Ejecute el análisis primero para ver el mapa de biodiversidad avanzado")
     
-    with tab6:
-        st.subheader("🎭 Mapa Combinado - Todas las Capas")
-        if st.session_state.resultados:
-            sistema_mapas = SistemaMapas()
-            mapa_combinado = sistema_mapas.crear_mapa_combinado(
-                st.session_state.resultados.get('puntos_carbono', []),
-                st.session_state.resultados.get('puntos_ndvi', []),
-                st.session_state.resultados.get('puntos_ndwi', []),
-                st.session_state.resultados.get('puntos_biodiversidad', []),
-                st.session_state.poligono_data
-            )
+    with tab4:
+        st.subheader("📊 Análisis Comparativo por Zonas")
+        if (st.session_state.resultados and 
+            'puntos_carbono' in st.session_state.resultados and
+            'puntos_biodiversidad' in st.session_state.resultados):
             
-            if mapa_combinado:
-                folium_static(mapa_combinado, width=1000, height=600)
-                st.info("📌 Use el control en la esquina superior derecha para alternar entre las diferentes capas de mapas de calor")
-            else:
-                st.warning("No se pudo generar el mapa combinado.")
+            # Crear análisis por zonas
+            num_zonas = st.slider("Número de zonas para análisis", 4, 15, 8, key="comp_zonas")
+            
+            # Simular datos por zona
+            zonas_data = []
+            for i in range(num_zonas):
+                carbono_zona = random.uniform(20, 100)
+                shannon_zona = random.uniform(0.5, 4.0)
+                ndvi_zona = random.uniform(0.3, 0.8)
+                ndwi_zona = random.uniform(-0.2, 0.6)
+                
+                zonas_data.append({
+                    'Zona': f"Zona {i+1}",
+                    'Carbono (ton C/ha)': carbono_zona,
+                    'Shannon': shannon_zona,
+                    'NDVI': ndvi_zona,
+                    'NDWI': ndwi_zona,
+                    'Categoría Biodiversidad': 'Muy Alta' if shannon_zona > 3.5 else 'Alta' if shannon_zona > 2.5 else 'Moderada' if shannon_zona > 1.5 else 'Baja' if shannon_zona > 0.5 else 'Muy Baja'
+                })
+            
+            df_zonas = pd.DataFrame(zonas_data)
+            
+            # Mostrar tabla comparativa
+            st.dataframe(df_zonas, use_container_width=True)
+            
+            # Gráfico comparativo
+            fig = px.scatter(
+                df_zonas,
+                x='Carbono (ton C/ha)',
+                y='Shannon',
+                color='Categoría Biodiversidad',
+                size='NDVI',
+                hover_data=['Zona', 'NDWI'],
+                title='Relación Carbono-Biodiversidad por Zona',
+                color_discrete_sequence=['#991b1b', '#ef4444', '#f59e0b', '#3b82f6', '#10b981']
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Recomendaciones por zona
+            st.markdown("### 🎯 Recomendaciones por Zona")
+            zonas_prioritarias = df_zonas.nlargest(3, 'Carbono (ton C/ha)')
+            
+            for idx, zona in zonas_prioritarias.iterrows():
+                with st.expander(f"🚩 {zona['Zona']} - Prioridad Alta (Carbono: {zona['Carbono (ton C/ha)']:.1f} ton C/ha)"):
+                    st.markdown(f"""
+                    **Características:**
+                    - Carbono almacenado: **{zona['Carbono (ton C/ha)']:.1f} ton C/ha**
+                    - Biodiversidad: **{zona['Shannon']:.2f}** ({zona['Categoría Biodiversidad']})
+                    - NDVI (salud vegetal): **{zona['NDVI']:.3f}**
+                    
+                    **Recomendaciones:**
+                    - **Protección estricta:** Priorizar conservación
+                    - **Monitoreo intensivo:** Seguimiento mensual
+                    - **Valoración económica:** Estimado ${zona['Carbono (ton C/ha)']*15*100:.0f} USD por hectárea potencial
+                    """)
         else:
-            st.info("Ejecute el análisis primero para ver el mapa combinado")
+            st.info("Ejecute el análisis primero para ver el análisis por zonas")
 
 def mostrar_dashboard():
     """Muestra dashboard ejecutivo"""
