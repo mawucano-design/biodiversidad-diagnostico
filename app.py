@@ -2466,48 +2466,59 @@ def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos, usar_gee=False)
 # 🗺️ FUNCIONES DE VISUALIZACIÓN CORREGIDAS
 # ===============================
 def mostrar_mapas_calor():
-    """Muestra todos los mapas de calor disponibles con zoom automático"""
-    st.header("🗺️ Mapas de Calor - Análisis Multivariable")
+    """Muestra todos los mapas de calor disponibles con interpolación KNN"""
+    st.header("🗺️ Mapas de Calor Interpolados - Cobertura Completa")
     
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "🌍 Área de Estudio", 
+        "🌍 Área Base", 
         "🌳 Carbono", 
         "📈 NDVI", 
         "💧 NDWI", 
         "🦋 Biodiversidad",
-        "🎭 Combinado"
+        "🎭 Todas las Capas"
     ])
     
     with tab1:
-        st.subheader("Área de Estudio")
+        st.subheader("🌍 Mapa Base del Área de Estudio")
         if st.session_state.mapa:
-            folium_static(st.session_state.mapa, width=1000, height=600)
-            st.info("Mapa base con el polígono del área de estudio. El zoom se ajusta automáticamente al área.")
+            folium_static(st.session_state.mapa, width=1000, height=650)
+            st.info("Mapa base con el polígono del área de estudio. El mapa se ajusta automáticamente al área cargada.")
         else:
             st.info("No hay mapa para mostrar")
     
     with tab2:
         st.subheader("🌳 Mapa de Calor - Carbono (ton C/ha)")
-        if st.session_state.resultados and 'puntos_carbono' in st.session_state.resultados:
+        if st.session_state.resultados and st.session_state.poligono_data:
             sistema_mapas = SistemaMapas()
-            mapa_carbono = sistema_mapas.crear_mapa_calor_carbono(
-                st.session_state.resultados['puntos_carbono'],
-                st.session_state.poligono_data
+            mapa_carbono = sistema_mapas.crear_mapa_calor_interpolado(
+                resultados=st.session_state.resultados,
+                variable='carbono',
+                gdf_area=st.session_state.poligono_data
             )
             
             if mapa_carbono:
-                folium_static(mapa_carbono, width=1000, height=600)
+                folium_static(mapa_carbono, width=1000, height=650)
                 
-                # Información adicional
-                col1, col2, col3 = st.columns(3)
+                # Información adicional mejorada
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     carb_min = min(p['carbono_ton_ha'] for p in st.session_state.resultados['puntos_carbono'])
                     carb_max = max(p['carbono_ton_ha'] for p in st.session_state.resultados['puntos_carbono'])
                     st.metric("Carbono promedio", f"{st.session_state.resultados.get('carbono_promedio_ha', 0):.1f} ton C/ha")
                 with col2:
-                    st.metric("Rango", f"{carb_min:.1f} - {carb_max:.1f} ton C/ha")
+                    st.metric("Rango total", f"{carb_min:.1f} - {carb_max:.1f}")
                 with col3:
-                    st.metric("Puntos muestreados", len(st.session_state.resultados['puntos_carbono']))
+                    st.metric("Carbono total", f"{st.session_state.resultados.get('carbono_total_ton', 0):,.0f} ton C")
+                with col4:
+                    st.metric("Puntos interpolados", "600+", "Malla densa KNN")
+                
+                st.info("""
+                **Características del mapa:**
+                - 🎯 **Cobertura completa**: Interpolación KNN para cubrir toda el área
+                - 🌡️ **Gradiente suave**: Transiciones de color continuas
+                - 📊 **Alta densidad**: Más de 600 puntos interpolados
+                - 🔍 **Zoom detallado**: Mantiene resolución al acercar
+                """)
             else:
                 st.warning("No se pudo generar el mapa de carbono.")
         else:
@@ -2515,18 +2526,19 @@ def mostrar_mapas_calor():
     
     with tab3:
         st.subheader("📈 Mapa de Calor - NDVI (Índice de Vegetación)")
-        if st.session_state.resultados and 'puntos_ndvi' in st.session_state.resultados:
+        if st.session_state.resultados and st.session_state.poligono_data:
             sistema_mapas = SistemaMapas()
-            mapa_ndvi = sistema_mapas.crear_mapa_calor_ndvi(
-                st.session_state.resultados['puntos_ndvi'],
-                st.session_state.poligono_data
+            mapa_ndvi = sistema_mapas.crear_mapa_calor_interpolado(
+                resultados=st.session_state.resultados,
+                variable='ndvi',
+                gdf_area=st.session_state.poligono_data
             )
             
             if mapa_ndvi:
-                folium_static(mapa_ndvi, width=1000, height=600)
+                folium_static(mapa_ndvi, width=1000, height=650)
                 
-                # Información adicional
-                col1, col2, col3 = st.columns(3)
+                # Información adicional mejorada
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("NDVI promedio", f"{st.session_state.resultados.get('ndvi_promedio', 0):.3f}")
                 with col2:
@@ -2541,6 +2553,16 @@ def mostrar_mapas_calor():
                     else:
                         interpretacion = "🍂 Vegetación escasa"
                     st.metric("Interpretación", interpretacion)
+                with col4:
+                    st.metric("Puntos interpolados", "600+", "Malla densa KNN")
+                
+                st.info("""
+                **Interpretación del NDVI:**
+                - 🟢 **> 0.6**: Vegetación densa y saludable
+                - 🟡 **0.3 - 0.6**: Vegetación moderada
+                - 🟠 **0.1 - 0.3**: Vegetación escasa/degradada
+                - 🔴 **< 0.1**: Suelo desnudo/agua/urbano
+                """)
             else:
                 st.warning("No se pudo generar el mapa de NDVI.")
         else:
@@ -2548,18 +2570,19 @@ def mostrar_mapas_calor():
     
     with tab4:
         st.subheader("💧 Mapa de Calor - NDWI (Índice de Agua)")
-        if st.session_state.resultados and 'puntos_ndwi' in st.session_state.resultados:
+        if st.session_state.resultados and st.session_state.poligono_data:
             sistema_mapas = SistemaMapas()
-            mapa_ndwi = sistema_mapas.crear_mapa_calor_ndwi(
-                st.session_state.resultados['puntos_ndwi'],
-                st.session_state.poligono_data
+            mapa_ndwi = sistema_mapas.crear_mapa_calor_interpolado(
+                resultados=st.session_state.resultados,
+                variable='ndwi',
+                gdf_area=st.session_state.poligono_data
             )
             
             if mapa_ndwi:
-                folium_static(mapa_ndwi, width=1000, height=600)
+                folium_static(mapa_ndwi, width=1000, height=650)
                 
-                # Información adicional
-                col1, col2, col3 = st.columns(3)
+                # Información adicional mejorada
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("NDWI promedio", f"{st.session_state.resultados.get('ndwi_promedio', 0):.3f}")
                 with col2:
@@ -2574,6 +2597,16 @@ def mostrar_mapas_calor():
                     else:
                         interpretacion = "🏜️ Seco"
                     st.metric("Humedad", interpretacion)
+                with col4:
+                    st.metric("Puntos interpolados", "600+", "Malla densa KNN")
+                
+                st.info("""
+                **Interpretación del NDWI:**
+                - 🔵 **> 0.2**: Presencia significativa de agua
+                - ⚪ **0.0 - 0.2**: Humedad moderada
+                - 🟤 **-0.1 - 0.0**: Condiciones secas
+                - 🟠 **< -0.1**: Muy seco
+                """)
             else:
                 st.warning("No se pudo generar el mapa de NDWI.")
         else:
@@ -2581,18 +2614,19 @@ def mostrar_mapas_calor():
     
     with tab5:
         st.subheader("🦋 Mapa de Calor - Biodiversidad (Índice de Shannon)")
-        if st.session_state.resultados and 'puntos_biodiversidad' in st.session_state.resultados:
+        if st.session_state.resultados and st.session_state.poligono_data:
             sistema_mapas = SistemaMapas()
-            mapa_biodiv = sistema_mapas.crear_mapa_calor_biodiversidad(
-                st.session_state.resultados['puntos_biodiversidad'],
-                st.session_state.poligono_data
+            mapa_biodiv = sistema_mapas.crear_mapa_calor_interpolado(
+                resultados=st.session_state.resultados,
+                variable='biodiversidad',
+                gdf_area=st.session_state.poligono_data
             )
             
             if mapa_biodiv:
-                folium_static(mapa_biodiv, width=1000, height=600)
+                folium_static(mapa_biodiv, width=1000, height=650)
                 
-                # Información adicional
-                col1, col2, col3 = st.columns(3)
+                # Información adicional mejorada
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("Shannon promedio", f"{st.session_state.resultados.get('shannon_promedio', 0):.3f}")
                 with col2:
@@ -2604,6 +2638,17 @@ def mostrar_mapas_calor():
                         st.metric("Categoría", categoria)
                     else:
                         st.metric("Categoría", "N/A")
+                with col4:
+                    st.metric("Puntos interpolados", "600+", "Malla densa KNN")
+                
+                st.info("""
+                **Escala del Índice de Shannon:**
+                - 🟢 **> 3.5**: Muy Alta (Ecosistema diverso)
+                - 🔵 **2.5 - 3.5**: Alta (Buena diversidad)
+                - 🟡 **1.5 - 2.5**: Moderada (Diversidad media)
+                - 🟠 **0.5 - 1.5**: Baja (Diversidad reducida)
+                - 🔴 **< 0.5**: Muy Baja (Ecosistema degradado)
+                """)
             else:
                 st.warning("No se pudo generar el mapa de biodiversidad.")
         else:
@@ -2611,19 +2656,35 @@ def mostrar_mapas_calor():
     
     with tab6:
         st.subheader("🎭 Mapa Combinado - Todas las Capas")
-        if st.session_state.resultados:
+        if st.session_state.resultados and st.session_state.poligono_data:
             sistema_mapas = SistemaMapas()
-            mapa_combinado = sistema_mapas.crear_mapa_combinado(
-                st.session_state.resultados.get('puntos_carbono', []),
-                st.session_state.resultados.get('puntos_ndvi', []),
-                st.session_state.resultados.get('puntos_ndwi', []),
-                st.session_state.resultados.get('puntos_biodiversidad', []),
-                st.session_state.poligono_data
+            mapa_combinado = sistema_mapas.crear_mapa_combinado_interpolado(
+                resultados=st.session_state.resultados,
+                gdf_area=st.session_state.poligono_data
             )
             
             if mapa_combinado:
-                folium_static(mapa_combinado, width=1000, height=600)
-                st.info("📌 Use el control en la esquina superior derecha para alternar entre las diferentes capas de mapas de calor")
+                folium_static(mapa_combinado, width=1000, height=650)
+                
+                st.info("""
+                **📌 Instrucciones para el mapa combinado:**
+                
+                1. **🎮 Control de capas**: Use el panel en la esquina superior derecha para activar/desactivar capas
+                2. **🔍 Zoom**: Use la rueda del mouse para acercar/alejar
+                3. **📍 Navegación**: Arrastre el mapa para mover la vista
+                4. **💡 Consejo**: Active solo 1-2 capas a la vez para mejor visualización
+                
+                **📊 Capas disponibles:**
+                - 🌳 **Carbono**: Almacenamiento de carbono (ton C/ha) - Interpolado KNN
+                - 📈 **NDVI**: Salud de la vegetación (-1 a +1) - Interpolado KNN
+                - 💧 **NDWI**: Contenido de agua (-1 a +1) - Interpolado KNN
+                - 🦋 **Biodiversidad**: Índice de Shannon - Interpolado KNN
+                
+                **🧠 Método de interpolación:**
+                - **K-Nearest Neighbors (KNN)**: Interpolación basada en los 5 puntos más cercanos
+                - **Cobertura completa**: Malla densa de 500+ puntos que cubre todo el polígono
+                - **Gradientes suaves**: Sin espacios vacíos en el heatmap
+                """)
             else:
                 st.warning("No se pudo generar el mapa combinado.")
         else:
