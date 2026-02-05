@@ -150,11 +150,12 @@ class ConectorClimaticoTropical:
             return {'precipitacion': 1200 + random.uniform(-200, 200), 'temperatura': 22 + random.uniform(-2, 2)}
 
 # ===============================
-# 🌳 METODOLOGÍA VERRA SIMPLIFICADA
+# 🌳 METODOLOGÍA VERRA SIMPLIFICADA - CORREGIDA PARA CULTIVOS
 # ===============================
 class MetodologiaVerra:
-    """Implementación simplificada de la metodología Verra VCS"""
+    """Implementación simplificada de la metodología Verra VCS - Corregida para cultivos"""
     def __init__(self):
+        # Factores generales (no cambian)
         self.factores = {
             'conversion_carbono': 0.47,
             'ratio_co2': 3.67,
@@ -164,35 +165,83 @@ class MetodologiaVerra:
             'carbono_suelo': 2.5  # ton C/ha en 30 cm
         }
         
+        # Factores específicos por tipo de vegetación
+        self.factores_vegetacion = {
+            'amazonia': {'factor_biomasa': 1.2, 'factor_suelo': 1.0, 'factor_madera': 1.0},
+            'choco': {'factor_biomasa': 1.3, 'factor_suelo': 1.1, 'factor_madera': 1.0},
+            'seco': {'factor_biomasa': 0.8, 'factor_suelo': 0.7, 'factor_madera': 0.8},
+            'vid': {'factor_biomasa': 0.15, 'factor_suelo': 0.6, 'factor_madera': 0.05},  # NUEVO
+            'cultivo': {'factor_biomasa': 0.2, 'factor_suelo': 0.7, 'factor_madera': 0.1},  # NUEVO
+            'agricola': {'factor_biomasa': 0.25, 'factor_suelo': 0.8, 'factor_madera': 0.1}  # NUEVO
+        }
+        
     def calcular_carbono_hectarea(self, ndvi: float, tipo_bosque: str, precipitacion: float) -> Dict:
-        """Calcula carbono por hectárea basado en NDVI, tipo de bosque y precipitación"""
-        # Factor por precipitación (bosques más lluviosos tienen más biomasa)
-        factor_precip = min(2.0, max(0.5, precipitacion / 1500))
+        """Calcula carbono por hectárea basado en NDVI, tipo de vegetación y precipitación"""
+        
+        # Obtener factores específicos para el tipo de vegetación
+        factores_veg = self.factores_vegetacion.get(tipo_bosque, 
+            {'factor_biomasa': 1.0, 'factor_suelo': 1.0, 'factor_madera': 1.0})
+        
+        # Factor por precipitación 
+        if tipo_bosque in ['vid', 'cultivo', 'agricola']:
+            # Para cultivos, la precipitación tiene menos impacto en la biomasa
+            factor_precip = min(1.3, max(0.7, precipitacion / 1500))
+        else:
+            factor_precip = min(2.0, max(0.5, precipitacion / 1500))
         
         # Estimación de biomasa aérea basada en NDVI
-        if ndvi > 0.7:
-            agb_ton_ha = (150 + (ndvi - 0.7) * 300) * factor_precip
-        elif ndvi > 0.5:
-            agb_ton_ha = (80 + (ndvi - 0.5) * 350) * factor_precip
-        elif ndvi > 0.3:
-            agb_ton_ha = (30 + (ndvi - 0.3) * 250) * factor_precip
+        if tipo_bosque in ['vid', 'cultivo', 'agricola']:
+            # PARA CULTIVOS: Biomasa mucho más baja
+            if ndvi > 0.7:
+                agb_ton_ha = (30 + (ndvi - 0.7) * 50) * factor_precip  # Muy baja
+            elif ndvi > 0.5:
+                agb_ton_ha = (20 + (ndvi - 0.5) * 60) * factor_precip
+            elif ndvi > 0.3:
+                agb_ton_ha = (10 + (ndvi - 0.3) * 50) * factor_precip
+            else:
+                agb_ton_ha = (5 + ndvi * 30) * factor_precip
         else:
-            agb_ton_ha = (5 + ndvi * 100) * factor_precip
+            # PARA BOSQUES NATURALES (original)
+            if ndvi > 0.7:
+                agb_ton_ha = (150 + (ndvi - 0.7) * 300) * factor_precip
+            elif ndvi > 0.5:
+                agb_ton_ha = (80 + (ndvi - 0.5) * 350) * factor_precip
+            elif ndvi > 0.3:
+                agb_ton_ha = (30 + (ndvi - 0.3) * 250) * factor_precip
+            else:
+                agb_ton_ha = (5 + ndvi * 100) * factor_precip
         
-        # Ajuste por tipo de bosque
-        if tipo_bosque == "amazonia":
-            agb_ton_ha *= 1.2
-        elif tipo_bosque == "choco":
-            agb_ton_ha *= 1.3
-        elif tipo_bosque == "seco":
+        # Aplicar factor específico del tipo de vegetación
+        agb_ton_ha *= factores_veg['factor_biomasa']
+        
+        # Ajustes adicionales por tipo específico
+        if tipo_bosque == "vid":
+            # Para viñedos: estructura baja, podas regulares
+            agb_ton_ha *= 0.9  # Reducción adicional
+        elif tipo_bosque == "cultivo":
+            # Para cultivos anuales: biomasa aún menor
             agb_ton_ha *= 0.8
         
         # Cálculos de carbono por pool
         carbono_agb = agb_ton_ha * self.factores['conversion_carbono']
-        carbono_bgb = carbono_agb * self.factores['ratio_raiz']
-        carbono_dw = carbono_agb * self.factores['proporcion_madera_muerta']
-        carbono_li = self.factores['acumulacion_hojarasca'] * self.factores['conversion_carbono']
-        carbono_soc = self.factores['carbono_suelo']
+        
+        # Para cultivos: raíces menos profundas
+        if tipo_bosque in ['vid', 'cultivo', 'agricola']:
+            carbono_bgb = carbono_agb * (self.factores['ratio_raiz'] * 0.7)  # 30% menos
+        else:
+            carbono_bgb = carbono_agb * self.factores['ratio_raiz']
+        
+        # Madera muerta: mucho menor en cultivos
+        carbono_dw = carbono_agb * self.factores['proporcion_madera_muerta'] * factores_veg['factor_madera']
+        
+        # Hojarasca: menor acumulación en cultivos
+        if tipo_bosque in ['vid', 'cultivo', 'agricola']:
+            carbono_li = self.factores['acumulacion_hojarasca'] * 0.3 * self.factores['conversion_carbono']  # 70% menos
+        else:
+            carbono_li = self.factores['acumulacion_hojarasca'] * self.factores['conversion_carbono']
+        
+        # Carbono del suelo: ajustado por tipo de vegetación
+        carbono_soc = self.factores['carbono_suelo'] * factores_veg['factor_suelo']
         
         carbono_total = carbono_agb + carbono_bgb + carbono_dw + carbono_li + carbono_soc
         co2_equivalente = carbono_total * self.factores['ratio_co2']
@@ -200,15 +249,16 @@ class MetodologiaVerra:
         return {
             'carbono_total_ton_ha': round(carbono_total, 2),
             'co2_equivalente_ton_ha': round(co2_equivalente, 2),
+            'biomasa_aerea_ton_ha': round(agb_ton_ha, 2),
             'desglose': {
                 'AGB': round(carbono_agb, 2),
                 'BGB': round(carbono_bgb, 2),
                 'DW': round(carbono_dw, 2),
                 'LI': round(carbono_li, 2),
                 'SOC': round(carbono_soc, 2)
-            }
+            },
+            'tipo_vegetacion': tipo_bosque
         }
-
 # ===============================
 # 🦋 ANÁLISIS DE BIODIVERSIDAD CON SHANNON - CORREGIDO PARA CULTIVOS
 # ===============================
