@@ -2289,10 +2289,10 @@ def main():
         if st.session_state.poligono_data is not None:
             st.header("⚙️ Configuración")
             
-           tipo_ecosistema = st.selectbox(
-                "Tipo de ecosistema/vegetación",
-                ['amazonia', 'choco', 'andes', 'pampa', 'seco', 'vid', 'cultivo', 'agricola'],
-                help="Seleccione el tipo de vegetación predominante. Use 'vid' para viñedos"
+                       tipo_ecosistema = st.selectbox(
+                        "Tipo de ecosistema/vegetación",
+                        ['amazonia', 'choco', 'andes', 'pampa', 'seco', 'vid', 'cultivo', 'agricola'],
+                        help="Seleccione el tipo de vegetación predominante. Use 'vid' para viñedos"
             )
             
             num_puntos = st.slider(
