@@ -210,53 +210,85 @@ class MetodologiaVerra:
         }
 
 # ===============================
-# 🦋 ANÁLISIS DE BIODIVERSIDAD CON SHANNON
+# 🦋 ANÁLISIS DE BIODIVERSIDAD CON SHANNON - CORREGIDO PARA CULTIVOS
 # ===============================
 class AnalisisBiodiversidad:
-    """Sistema para análisis de biodiversidad usando el índice de Shannon"""
+    """Sistema para análisis de biodiversidad usando el índice de Shannon - Corregido para cultivos"""
     def __init__(self):
         self.parametros = {
-            'amazonia': {'riqueza_base': 150, 'abundancia_base': 1000},
-            'choco': {'riqueza_base': 120, 'abundancia_base': 800},
-            'andes': {'riqueza_base': 100, 'abundancia_base': 600},
-            'pampa': {'riqueza_base': 50, 'abundancia_base': 300},
-            'seco': {'riqueza_base': 40, 'abundancia_base': 200}
+            'amazonia': {'riqueza_base': 150, 'abundancia_base': 1000, 'factor_ndvi': 0.8, 'es_cultivo': False},
+            'choco': {'riqueza_base': 120, 'abundancia_base': 800, 'factor_ndvi': 0.8, 'es_cultivo': False},
+            'andes': {'riqueza_base': 100, 'abundancia_base': 600, 'factor_ndvi': 0.8, 'es_cultivo': False},
+            'pampa': {'riqueza_base': 50, 'abundancia_base': 300, 'factor_ndvi': 0.8, 'es_cultivo': False},
+            'seco': {'riqueza_base': 40, 'abundancia_base': 200, 'factor_ndvi': 0.8, 'es_cultivo': False},
+            'cultivo': {'riqueza_base': 10, 'abundancia_base': 50, 'factor_ndvi': 0.2, 'es_cultivo': True},  # NUEVO
+            'vid': {'riqueza_base': 8, 'abundancia_base': 40, 'factor_ndvi': 0.1, 'es_cultivo': True},      # NUEVO
+            'agricola': {'riqueza_base': 15, 'abundancia_base': 60, 'factor_ndvi': 0.3, 'es_cultivo': True} # NUEVO
         }
     
     def calcular_shannon(self, ndvi: float, tipo_ecosistema: str, area_ha: float, precipitacion: float) -> Dict:
         """Calcula índice de Shannon basado en NDVI, tipo de ecosistema y condiciones ambientales"""
         
         # Parámetros base según ecosistema
-        params = self.parametros.get(tipo_ecosistema, {'riqueza_base': 60, 'abundancia_base': 400})
+        params = self.parametros.get(tipo_ecosistema, {'riqueza_base': 60, 'abundancia_base': 400, 'factor_ndvi': 0.5, 'es_cultivo': False})
         
         # Factor NDVI (vegetación más sana → más biodiversidad)
-        factor_ndvi = 1.0 + (ndvi * 0.8)
+        # Para cultivos, la relación NDVI-biodiversidad es mucho menor
+        factor_ndvi = 1.0 + (ndvi * params['factor_ndvi'])
         
         # Factor área (áreas más grandes → más especies)
-        factor_area = min(2.0, math.log10(area_ha + 1) * 0.5 + 1)
+        # Para cultivos, el factor área es menos relevante (monocultivos)
+        if params['es_cultivo']:
+            factor_area = min(1.3, math.log10(area_ha + 1) * 0.2 + 1)
+        else:
+            factor_area = min(2.0, math.log10(area_ha + 1) * 0.5 + 1)
         
         # Factor precipitación (más lluvia → más biodiversidad en trópicos)
         if tipo_ecosistema in ['amazonia', 'choco']:
             factor_precip = min(1.5, precipitacion / 2000)
+        elif params['es_cultivo']:
+            # Para cultivos, la precipitación afecta menos la biodiversidad
+            factor_precip = 1.0 + (precipitacion / 2000 * 0.3)
         else:
             factor_precip = 1.0
         
         # Cálculo de riqueza de especies estimada
-        riqueza_especies = int(params['riqueza_base'] * factor_ndvi * factor_area * factor_precip * random.uniform(0.9, 1.1))
+        # Para cultivos: riqueza muy baja (monocultivo)
+        riqueza_especies = int(params['riqueza_base'] * factor_ndvi * factor_area * factor_precip * random.uniform(0.8, 1.2))
         
         # Cálculo de abundancia estimada
-        abundancia_total = int(params['abundancia_base'] * factor_ndvi * factor_area * factor_precip * random.uniform(0.9, 1.1))
+        # Para cultivos: abundancia más baja y menos variable
+        if params['es_cultivo']:
+            abundancia_total = int(params['abundancia_base'] * factor_ndvi * factor_area * factor_precip * random.uniform(0.9, 1.1))
+        else:
+            abundancia_total = int(params['abundancia_base'] * factor_ndvi * factor_area * factor_precip * random.uniform(0.9, 1.1))
         
-        # Simulación de distribución de abundancia (ley de potencias común en ecología)
+        # Simulación de distribución de abundancia
         especies = []
         abundancia_acumulada = 0
         
-        for i in range(riqueza_especies):
-            # Abundancia sigue una distribución log-normal
-            abundancia = int((abundancia_total / max(riqueza_especies, 1)) * random.lognormvariate(0, 0.5))
-            if abundancia > 0:
-                especies.append({'especie_id': i+1, 'abundancia': abundancia})
-                abundancia_acumulada += abundancia
+        if params['es_cultivo']:
+            # PARA CULTIVOS: Distribución muy desigual (monocultivo)
+            # Una especie dominante (el cultivo) y pocas especies acompañantes
+            if riqueza_especies > 0:
+                # Especie principal (el cultivo) - 70-90% de la abundancia
+                abundancia_principal = int(abundancia_total * random.uniform(0.7, 0.9))
+                especies.append({'especie_id': 1, 'abundancia': abundancia_principal, 'nombre': tipo_ecosistema.capitalize()})
+                abundancia_acumulada += abundancia_principal
+                
+                # Otras especies (malezas, insectos) - baja abundancia
+                for i in range(2, riqueza_especies + 1):
+                    abundancia = int((abundancia_total - abundancia_principal) / max(riqueza_especies - 1, 1) * random.uniform(0.5, 1.5))
+                    if abundancia > 0:
+                        especies.append({'especie_id': i, 'abundancia': abundancia, 'nombre': f'Especie {i}'})
+                        abundancia_acumulada += abundancia
+        else:
+            # PARA ECOSISTEMAS NATURALES: Distribución más equilibrada
+            for i in range(1, riqueza_especies + 1):
+                abundancia = int((abundancia_total / max(riqueza_especies, 1)) * random.lognormvariate(0, 0.5))
+                if abundancia > 0:
+                    especies.append({'especie_id': i, 'abundancia': abundancia, 'nombre': f'Especie {i}'})
+                    abundancia_acumulada += abundancia
         
         # Normalizar abundancias
         for especie in especies:
@@ -269,21 +301,37 @@ class AnalisisBiodiversidad:
                 shannon -= especie['proporcion'] * math.log(especie['proporcion'])
         
         # Categorías de biodiversidad según Shannon
-        if shannon > 3.5:
-            categoria = "Muy Alta"
-            color = "#10b981"
-        elif shannon > 2.5:
-            categoria = "Alta"
-            color = "#3b82f6"
-        elif shannon > 1.5:
-            categoria = "Moderada"
-            color = "#f59e0b"
-        elif shannon > 0.5:
-            categoria = "Baja"
-            color = "#ef4444"
+        if params['es_cultivo']:
+            # ESCALA ESPECIAL PARA CULTIVOS (valores más bajos)
+            if shannon > 1.5:
+                categoria = "Alta (para cultivo)"
+                color = "#3b82f6"
+            elif shannon > 1.0:
+                categoria = "Moderada (para cultivo)"
+                color = "#f59e0b"
+            elif shannon > 0.5:
+                categoria = "Baja (típico de monocultivo)"
+                color = "#ef4444"
+            else:
+                categoria = "Muy Baja (monocultivo puro)"
+                color = "#991b1b"
         else:
-            categoria = "Muy Baja"
-            color = "#991b1b"
+            # ESCALA PARA ECOSISTEMAS NATURALES
+            if shannon > 3.5:
+                categoria = "Muy Alta"
+                color = "#10b981"
+            elif shannon > 2.5:
+                categoria = "Alta"
+                color = "#3b82f6"
+            elif shannon > 1.5:
+                categoria = "Moderada"
+                color = "#f59e0b"
+            elif shannon > 0.5:
+                categoria = "Baja"
+                color = "#ef4444"
+            else:
+                categoria = "Muy Baja"
+                color = "#991b1b"
         
         return {
             'indice_shannon': round(shannon, 3),
@@ -291,7 +339,8 @@ class AnalisisBiodiversidad:
             'color': color,
             'riqueza_especies': riqueza_especies,
             'abundancia_total': abundancia_acumulada,
-            'especies_muestra': especies[:10]
+            'especies_muestra': especies[:10],
+            'es_cultivo': params['es_cultivo']
         }
 
 # ===============================
