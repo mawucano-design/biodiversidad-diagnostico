@@ -2289,10 +2289,10 @@ def main():
         if st.session_state.poligono_data is not None:
             st.header("⚙️ Configuración")
             
-                       tipo_ecosistema = st.selectbox(
-                        "Tipo de ecosistema/vegetación",
-                        ['amazonia', 'choco', 'andes', 'pampa', 'seco', 'vid', 'cultivo', 'agricola'],
-                        help="Seleccione el tipo de vegetación predominante. Use 'vid' para viñedos"
+            tipo_ecosistema = st.selectbox(
+                "Tipo de ecosistema/vegetación",
+                ['amazonia', 'choco', 'andes', 'pampa', 'seco', 'vid', 'cultivo', 'agricola'],
+                help="Seleccione el tipo de vegetación predominante. Use 'vid' para viñedos, 'cultivo' para otros cultivos, y 'agricola' para zonas agrícolas mixtas."
             )
             
             num_puntos = st.slider(
@@ -2371,6 +2371,11 @@ def main():
             - Detección de estrés hídrico en vegetación
             - Identificación de áreas prioritarias para conservación
             - Estudios de impacto ambiental integrales
+            
+            **Novedades:**
+            - ✅ **Soporte para cultivos agrícolas** (viñedos, cultivos generales)
+            - ✅ **Índice de Shannon ajustado** para monocultivos
+            - ✅ **Metodología Verra calibrada** para sistemas agrícolas
             """)
             
             if GEE_AVAILABLE:
@@ -2455,6 +2460,16 @@ def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos, usar_gee=False)
         else:
             datos_reales = False
         
+        # Ajustar NDVI base según tipo de vegetación
+        if tipo_ecosistema in ['vid', 'cultivo', 'agricola']:
+            # Para cultivos: NDVI generalmente más bajo y menos variable
+            ndvi_base = 0.4
+            ndvi_var = 0.15
+        else:
+            # Para bosques naturales: NDVI más alto y más variable
+            ndvi_base = 0.5
+            ndvi_var = 0.2
+        
         while puntos_generados < num_puntos and len(puntos_carbono) < max_intentos:
             # Generar punto aleatorio
             lat = bounds[1] + random.random() * (bounds[3] - bounds[1])
@@ -2465,8 +2480,9 @@ def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos, usar_gee=False)
                 # Obtener datos climáticos
                 datos_clima = clima.obtener_datos_climaticos(lat, lon)
                 
-                # Generar NDVI aleatorio pero realista
-                ndvi = 0.5 + random.uniform(-0.2, 0.3)
+                # Generar NDVI ajustado al tipo de vegetación
+                ndvi = ndvi_base + random.uniform(-ndvi_var, ndvi_var)
+                ndvi = max(0.1, min(0.9, ndvi))  # Mantener rango razonable
                 
                 # Generar NDWI basado en precipitación y ubicación
                 base_ndwi = 0.1
@@ -2478,10 +2494,10 @@ def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos, usar_gee=False)
                 ndwi = base_ndwi + random.uniform(-0.2, 0.2)
                 ndwi = max(-0.5, min(0.8, ndwi))
                 
-                # Calcular carbono
+                # Calcular carbono con metodología Verra ajustada
                 carbono_info = verra.calcular_carbono_hectarea(ndvi, tipo_ecosistema, datos_clima['precipitacion'])
                 
-                # Calcular biodiversidad
+                # Calcular biodiversidad con índice de Shannon ajustado
                 biodiv_info = biodiversidad.calcular_shannon(
                     ndvi, 
                     tipo_ecosistema, 
@@ -2501,27 +2517,33 @@ def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos, usar_gee=False)
                     'lat': lat,
                     'lon': lon,
                     'carbono_ton_ha': carbono_info['carbono_total_ton_ha'],
+                    'biomasa_aerea_ton_ha': carbono_info.get('biomasa_aerea_ton_ha', 0),
                     'ndvi': ndvi,
-                    'precipitacion': datos_clima['precipitacion']
+                    'precipitacion': datos_clima['precipitacion'],
+                    'tipo_vegetacion': tipo_ecosistema
                 })
                 
                 # Guardar puntos para biodiversidad
                 biodiv_info['lat'] = lat
                 biodiv_info['lon'] = lon
+                biodiv_info['tipo_vegetacion'] = tipo_ecosistema
+                biodiv_info['es_cultivo'] = biodiv_info.get('es_cultivo', False)
                 puntos_biodiversidad.append(biodiv_info)
                 
                 # Guardar puntos para NDVI
                 puntos_ndvi.append({
                     'lat': lat,
                     'lon': lon,
-                    'ndvi': ndvi
+                    'ndvi': ndvi,
+                    'tipo_vegetacion': tipo_ecosistema
                 })
                 
                 # Guardar puntos para NDWI
                 puntos_ndwi.append({
                     'lat': lat,
                     'lon': lon,
-                    'ndwi': ndwi
+                    'ndwi': ndwi,
+                    'tipo_vegetacion': tipo_ecosistema
                 })
                 
                 puntos_generados += 1
@@ -2534,6 +2556,9 @@ def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos, usar_gee=False)
         
         # Obtener desglose promedio de carbono
         carbono_promedio = verra.calcular_carbono_hectarea(ndvi_promedio, tipo_ecosistema, 1500)
+        
+        # Determinar si es cultivo para ajustar interpretaciones
+        es_cultivo = tipo_ecosistema in ['vid', 'cultivo', 'agricola']
         
         # Preparar resultados
         resultados = {
@@ -2549,10 +2574,30 @@ def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos, usar_gee=False)
             'puntos_ndvi': puntos_ndvi,
             'puntos_ndwi': puntos_ndwi,
             'tipo_ecosistema': tipo_ecosistema,
+            'es_cultivo': es_cultivo,
             'num_puntos': puntos_generados,
             'desglose_promedio': carbono_promedio['desglose'] if carbono_promedio else {},
-            'usar_gee': usar_gee and datos_reales
+            'usar_gee': usar_gee and datos_reales,
+            'biomasa_aerea_promedio': carbono_promedio.get('biomasa_aerea_ton_ha', 0) if carbono_promedio else 0
         }
+        
+        # Mostrar información específica según tipo de vegetación
+        if es_cultivo:
+            st.info(f"""
+            **🌾 Análisis para sistema agrícola ({tipo_ecosistema}):**
+            
+            • **Carbono promedio:** {resultados['carbono_promedio_ha']:.1f} ton C/ha (esperado: 20-70 ton C/ha)
+            • **Índice Shannon:** {resultados['shannon_promedio']:.2f} (típico para monocultivos: 0.5-1.5)
+            • **NDVI:** {resultados['ndvi_promedio']:.2f} (rango normal para cultivos: 0.3-0.7)
+            """)
+        else:
+            st.info(f"""
+            **🌳 Análisis para ecosistema natural ({tipo_ecosistema}):**
+            
+            • **Carbono promedio:** {resultados['carbono_promedio_ha']:.1f} ton C/ha (esperado: 80-400 ton C/ha)
+            • **Índice Shannon:** {resultados['shannon_promedio']:.2f} (típico para bosques: 2.0-4.0)
+            • **NDVI:** {resultados['ndvi_promedio']:.2f} (rango normal para bosques: 0.5-0.9)
+            """)
         
         return resultados
     except Exception as e:
