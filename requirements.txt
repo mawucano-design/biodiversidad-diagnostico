@@ -20,3 +20,4 @@ google-generativeai
 python-docx
 kaleido 
 matplotlib
+scipy
