@@ -21,3 +21,4 @@ python-docx
 kaleido 
 matplotlib
 scipy
+reportlab
