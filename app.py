@@ -1096,75 +1096,78 @@ class SistemaMapas:
             print(f"Error agregando leyenda combinada: {str(e)}")
 
     # ===== NUEVO MÉTODO: GENERAR MAPA ESTÁTICO CON MATPLOTLIB =====
-    def crear_mapa_estatico(self, resultados, variable='carbono', gdf_area=None, dpi=150):
-        """
-        Genera una imagen PNG estática del mapa de calor usando Matplotlib.
-        """
-        if not resultados or gdf_area is None or gdf_area.empty:
-            return None
+   def crear_mapa_estatico(self, resultados, variable='carbono', gdf_area=None, dpi=150):
+    """
+    Genera una imagen PNG estática del mapa de calor usando Matplotlib.
+    """
+    if not resultados or gdf_area is None or gdf_area.empty:
+        return None
 
-        # Obtener puntos de muestra
-        puntos_muestra = resultados.get(f'puntos_{variable}', [])
-        if not puntos_muestra:
-            return None
+    # Obtener puntos de muestra
+    puntos_muestra = resultados.get(f'puntos_{variable}', [])
+    if not puntos_muestra:
+        return None
 
-        # Generar malla densa
-        puntos_malla = self._generar_malla_puntos(gdf_area, densidad=800)
-        if not puntos_malla:
-            return None
+    # Generar malla densa
+    puntos_malla = self._generar_malla_puntos(gdf_area, densidad=800)
+    if not puntos_malla:
+        return None
 
-        # Interpolar
-        puntos_interpolados = self._interpolar_valores_knn(puntos_muestra, puntos_malla, variable)
+    # Interpolar
+    puntos_interpolados = self._interpolar_valores_knn(puntos_muestra, puntos_malla, variable)
 
-        # Extraer coordenadas y valores
-        lats = [p['lat'] for p in puntos_interpolados]
-        lons = [p['lon'] for p in puntos_interpolados]
-        if variable == 'carbono':
-            valores = [p['carbono_ton_ha'] for p in puntos_interpolados]
-            titulo = 'Carbono (ton C/ha)'
-            cmap_name = 'carbono'
-        elif variable == 'ndvi':
-            valores = [p['ndvi'] for p in puntos_interpolados]
-            titulo = 'NDVI'
-            cmap_name = 'ndvi'
-        elif variable == 'ndwi':
-            valores = [p['ndwi'] for p in puntos_interpolados]
-            titulo = 'NDWI'
-            cmap_name = 'ndwi'
-        elif variable == 'biodiversidad':
-            valores = [p['indice_shannon'] for p in puntos_interpolados]
-            titulo = 'Índice de Shannon'
-            cmap_name = 'biodiversidad'
-        else:
-            return None
+    # Extraer coordenadas y valores
+    lats = [p['lat'] for p in puntos_interpolados]
+    lons = [p['lon'] for p in puntos_interpolados]
+    if variable == 'carbono':
+        valores = [p['carbono_ton_ha'] for p in puntos_interpolados]
+        titulo = 'Carbono (ton C/ha)'
+        cmap_name = 'carbono'
+    elif variable == 'ndvi':
+        valores = [p['ndvi'] for p in puntos_interpolados]
+        titulo = 'NDVI'
+        cmap_name = 'ndvi'
+    elif variable == 'ndwi':
+        valores = [p['ndwi'] for p in puntos_interpolados]
+        titulo = 'NDWI'
+        cmap_name = 'ndwi'
+    elif variable == 'biodiversidad':
+        valores = [p['indice_shannon'] for p in puntos_interpolados]
+        titulo = 'Índice de Shannon'
+        cmap_name = 'biodiversidad'
+    else:
+        return None
 
-        # Crear malla regular para el gráfico
-        bounds = gdf_area.total_bounds
-        minx, miny, maxx, maxy = bounds
-        grid_x, grid_y = np.mgrid[minx:maxx:100j, miny:maxy:100j]
-        grid_z = griddata((lons, lats), valores, (grid_x, grid_y), method='cubic')
+    # Crear malla regular para el gráfico
+    bounds = gdf_area.total_bounds
+    minx, miny, maxx, maxy = bounds
+    grid_x, grid_y = np.mgrid[minx:maxx:100j, miny:maxy:100j]
+    from scipy.interpolate import griddata
+    grid_z = griddata((lons, lats), valores, (grid_x, grid_y), method='cubic')
 
-        # Crear figura
-        fig, ax = plt.subplots(1, 1, figsize=(10, 8))
-        colormap = LinearSegmentedColormap.from_list(cmap_name, list(self.estilos['gradientes'][cmap_name].values()))
-        im = ax.imshow(grid_z.T, extent=[minx, maxx, miny, maxy], origin='lower',
-                       cmap=colormap, aspect='auto')
-        plt.colorbar(im, ax=ax, label=titulo)
-        ax.set_title(f'Mapa de {titulo}')
-        ax.set_xlabel('Longitud')
-        ax.set_ylabel('Latitud')
-        ax.grid(True, linestyle='--', alpha=0.5)
+    # Crear figura
+    fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+    colormap = LinearSegmentedColormap.from_list(cmap_name, list(self.estilos['gradientes'][cmap_name].values()))
+    im = ax.imshow(grid_z.T, extent=[minx, maxx, miny, maxy], origin='lower',
+                   cmap=colormap, aspect='auto')
+    plt.colorbar(im, ax=ax, label=titulo)
+    ax.set_title(f'Mapa de {titulo}')
+    ax.set_xlabel('Longitud')
+    ax.set_ylabel('Latitud')
+    ax.grid(True, linestyle='--', alpha=0.5)
 
-        # Dibujar el polígono del área
-        from geopandas import GeoSeries
-        gdf_area.geometry.iloc[0].boundary.plot(ax=ax, color='black', linewidth=1.5)
+    # Dibujar el polígono del área (borde)
+    if gdf_area is not None and not gdf_area.empty:
+        boundary_geom = gdf_area.geometry.iloc[0].boundary
+        if boundary_geom and not boundary_geom.is_empty:
+            gpd.GeoSeries([boundary_geom]).plot(ax=ax, color='black', linewidth=1.5)
 
-        # Guardar en BytesIO
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=dpi, bbox_inches='tight')
-        plt.close(fig)
-        buf.seek(0)
-        return buf
+    # Guardar en BytesIO
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=dpi, bbox_inches='tight')
+    plt.close(fig)
+    buf.seek(0)
+    return buf
 
 # ===============================
 # 📊 VISUALIZACIONES Y GRÁFICOS
