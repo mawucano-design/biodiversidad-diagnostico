@@ -30,6 +30,15 @@ import requests
 import xml.etree.ElementTree as ET
 from typing import Optional, Dict, Any, List, Tuple
 
+# ===== IMPORTACIÓN DE MÓDULOS IA =====
+from modules.ia_integration import (
+    preparar_resumen,
+    generar_analisis_carbono,
+    generar_analisis_biodiversidad,
+    generar_analisis_espectral,
+    generar_recomendaciones_integradas
+)
+
 # ===== IMPORTACIONES GOOGLE EARTH ENGINE (NO MODIFICAR) =====
 try:
     import ee
@@ -52,6 +61,13 @@ from branca.colormap import LinearColormap
 import matplotlib.cm as cm
 # Para simulación de datos satelitales
 import random
+
+# ===== CONFIGURACIÓN DE IA (GEMINI) =====
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
+if not GEMINI_API_KEY:
+    st.warning("⚠️ No se encontró API Key de Gemini. La IA no estará disponible.")
+else:
+    os.environ["GEMINI_API_KEY"] = GEMINI_API_KEY
 
 # === INICIALIZACIÓN SEGURA DE GOOGLE EARTH ENGINE (NO MODIFICAR) ===
 def inicializar_gee():
@@ -259,6 +275,7 @@ class MetodologiaVerra:
             },
             'tipo_vegetacion': tipo_bosque
         }
+
 # ===============================
 # 🦋 ANÁLISIS DE BIODIVERSIDAD CON SHANNON - CORREGIDO PARA CULTIVOS
 # ===============================
@@ -393,7 +410,6 @@ class AnalisisBiodiversidad:
             'es_cultivo': params['es_cultivo']
         }
 
-# ===============================
 # ===============================
 # 🗺️ SISTEMA DE MAPAS MEJORADO CON INTERPOLACIÓN KNN
 # ===============================
@@ -1971,6 +1987,140 @@ class GeneradorReportes:
             st.error(f"Error generando GeoJSON: {str(e)}")
             return json.dumps({"error": str(e)})
 
+# ===============================
+# 📄 NUEVA FUNCIÓN PARA GENERAR INFORME CON IA (GEMINI)
+# ===============================
+def generar_reporte_ia(resultados, gdf, sistema_mapas=None):
+    """
+    Genera un informe en formato DOCX con análisis de IA (Gemini) y gráficos/mapas incrustados.
+    """
+    import tempfile
+    from docx import Document
+    from docx.shared import Inches, Pt
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from datetime import datetime
+    import io
+    import os
+
+    if not REPORTDOCX_AVAILABLE:
+        st.error("python-docx no está instalado. No se puede generar el informe.")
+        return None
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        doc = Document()
+        section = doc.sections[0]
+        section.left_margin = Inches(1)
+        section.right_margin = Inches(1)
+        section.top_margin = Inches(1)
+        section.bottom_margin = Inches(1)
+
+        # Portada
+        title = doc.add_heading('INFORME AMBIENTAL CON ANÁLISIS DE IA', 0)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        subtitle = doc.add_paragraph(f'Fecha: {datetime.now().strftime("%d/%m/%Y %H:%M")}')
+        subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        doc.add_paragraph()
+
+        # Preparar datos para IA
+        df, stats = preparar_resumen(resultados)
+
+        # 1. Resumen ejecutivo
+        doc.add_heading('1. RESUMEN EJECUTIVO', level=1)
+        tabla_resumen = doc.add_table(rows=1, cols=3)
+        tabla_resumen.style = 'Light Shading'
+        tabla_resumen.cell(0, 0).text = 'Métrica'
+        tabla_resumen.cell(0, 1).text = 'Valor'
+        tabla_resumen.cell(0, 2).text = 'Interpretación'
+
+        metricas = [
+            ('Área total', f"{stats['area_total_ha']:,.1f} ha", 'Superficie del área de estudio'),
+            ('Carbono total', f"{stats['carbono_total_ton']:,.0f} ton C", 'Almacenamiento total de carbono'),
+            ('CO₂ equivalente', f"{stats['co2_total_ton']:,.0f} ton CO₂e", 'Potencial de créditos de carbono'),
+            ('Índice Shannon', f"{stats['shannon_promedio']:.3f}", 'Nivel de biodiversidad'),
+            ('NDVI promedio', f"{stats['ndvi_promedio']:.3f}", 'Salud de la vegetación'),
+            ('NDWI promedio', f"{stats['ndwi_promedio']:.3f}", 'Contenido de agua'),
+            ('Tipo ecosistema', stats['tipo_ecosistema'], 'Vegetación predominante'),
+            ('Puntos muestreo', str(stats['num_puntos']), 'Muestras analizadas')
+        ]
+        for i, (met, val, interp) in enumerate(metricas, 1):
+            row = tabla_resumen.add_row().cells
+            row[0].text = met
+            row[1].text = val
+            row[2].text = interp
+        doc.add_paragraph()
+
+        # 2. Análisis de Carbono
+        doc.add_heading('2. ANÁLISIS DE CARBONO', level=1)
+        if resultados.get('desglose_promedio'):
+            doc.add_heading('Distribución por pools', level=2)
+            tabla_pools = doc.add_table(rows=1, cols=3)
+            tabla_pools.style = 'Light Shading'
+            tabla_pools.cell(0, 0).text = 'Pool'
+            tabla_pools.cell(0, 1).text = 'Descripción'
+            tabla_pools.cell(0, 2).text = 'Ton C/ha'
+            desc = {'AGB':'Biomasa Aérea Viva', 'BGB':'Biomasa de Raíces', 'DW':'Madera Muerta', 'LI':'Hojarasca', 'SOC':'Carbono Orgánico del Suelo'}
+            for pool, valor in resultados['desglose_promedio'].items():
+                row = tabla_pools.add_row().cells
+                row[0].text = pool
+                row[1].text = desc.get(pool, pool)
+                row[2].text = f"{valor:.2f}"
+            doc.add_paragraph()
+        doc.add_heading('2.1 Interpretación técnica', level=2)
+        analisis_carbono = generar_analisis_carbono(df, stats)
+        doc.add_paragraph(analisis_carbono)
+
+        # 3. Análisis de Biodiversidad
+        doc.add_heading('3. ANÁLISIS DE BIODIVERSIDAD', level=1)
+        if resultados.get('puntos_biodiversidad'):
+            biodiv = resultados['puntos_biodiversidad'][0]
+            tabla_biodiv = doc.add_table(rows=1, cols=2)
+            tabla_biodiv.style = 'Light Shading'
+            tabla_biodiv.cell(0, 0).text = 'Métrica'
+            tabla_biodiv.cell(0, 1).text = 'Valor'
+            metricas_bio = [
+                ('Índice Shannon', f"{biodiv.get('indice_shannon', 0):.3f}"),
+                ('Categoría', biodiv.get('categoria', 'N/A')),
+                ('Riqueza de especies', str(biodiv.get('riqueza_especies', 0))),
+                ('Abundancia total', f"{biodiv.get('abundancia_total', 0):,}")
+            ]
+            for met, val in metricas_bio:
+                row = tabla_biodiv.add_row().cells
+                row[0].text = met
+                row[1].text = val
+            doc.add_paragraph()
+        doc.add_heading('3.1 Interpretación técnica', level=2)
+        analisis_biodiv = generar_analisis_biodiversidad(df, stats)
+        doc.add_paragraph(analisis_biodiv)
+
+        # 4. Análisis de Índices Espectrales
+        doc.add_heading('4. ANÁLISIS DE ÍNDICES ESPECTRALES', level=1)
+        doc.add_heading('4.1 Interpretación técnica', level=2)
+        analisis_espectral = generar_analisis_espectral(df, stats)
+        doc.add_paragraph(analisis_espectral)
+
+        # 5. Recomendaciones Integradas
+        doc.add_heading('5. RECOMENDACIONES DE MANEJO', level=1)
+        recomendaciones = generar_recomendaciones_integradas(df, stats)
+        doc.add_paragraph(recomendaciones)
+
+        # 6. Metadatos
+        doc.add_heading('6. METADATOS', level=1)
+        metadatos = [
+            ('Generado por', 'Sistema Satelital de Análisis Ambiental v2.0 con IA Gemini'),
+            ('Fecha de generación', datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+            ('Número de puntos', str(stats['num_puntos']))
+        ]
+        for key, val in metadatos:
+            p = doc.add_paragraph()
+            p.add_run(f"{key}: ").bold = True
+            p.add_run(val)
+
+        # Guardar
+        docx_output = io.BytesIO()
+        doc.save(docx_output)
+        docx_output.seek(0)
+        return docx_output
+
 # ===== FUNCIONES AUXILIARES - CORREGIDAS PARA EPSG:4326 =====
 def validar_y_corregir_crs(gdf):
     if gdf is None or len(gdf) == 0:
@@ -2311,6 +2461,13 @@ def main():
                     value=False,
                     help="Usar datos satelitales reales en lugar de simulaciones"
                 )
+            
+            st.header("🤖 Configuración de IA")
+            proveedor_ia = st.selectbox(
+                "Proveedor de IA",
+                ["gemini"],
+                help="Selecciona el motor de IA para análisis interpretativo"
+            )
             
             if st.button("🚀 Ejecutar Análisis Completo", type="primary", use_container_width=True):
                 with st.spinner("Analizando carbono, biodiversidad e índices espectrales..."):
@@ -3342,7 +3499,7 @@ def mostrar_informe():
             sistema_mapas
         )
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             if REPORTPDF_AVAILABLE:
@@ -3385,6 +3542,28 @@ def mostrar_informe():
                 st.info("DOCX no disponible (instale python-docx)")
         
         with col3:
+            st.markdown("#### 🤖 Informe con IA")
+            st.markdown("Análisis interpretativo generado por Gemini (incluye texto técnico y recomendaciones)")
+            if st.button("Generar Informe con IA", use_container_width=True):
+                with st.spinner("Generando informe con IA (puede tomar unos segundos)..."):
+                    sistema_mapas = SistemaMapas()
+                    reporte_ia = generar_reporte_ia(
+                        st.session_state.resultados, 
+                        st.session_state.poligono_data, 
+                        sistema_mapas
+                    )
+                    if reporte_ia:
+                        st.download_button(
+                            label="⬇️ Descargar Informe con IA",
+                            data=reporte_ia,
+                            file_name=f"informe_IA_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            use_container_width=True
+                        )
+                    else:
+                        st.error("No se pudo generar el informe con IA")
+        
+        with col4:
             st.markdown("#### 🌍 Datos Geoespaciales")
             st.markdown("Polígono de estudio con atributos calculados")
             if st.button("Generar GeoJSON", use_container_width=True):
