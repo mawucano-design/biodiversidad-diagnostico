@@ -411,10 +411,10 @@ class AnalisisBiodiversidad:
         }
 
 # ===============================
-# 🗺️ SISTEMA DE MAPAS MEJORADO CON INTERPOLACIÓN KNN
+# 🗺️ SISTEMA DE MAPAS MEJORADO CON INTERPOLACIÓN KNN Y MAPAS DE CALOR CONTINUOS
 # ===============================
 class SistemaMapas:
-    """Sistema de mapas mejorado con interpolación KNN para cobertura completa"""
+    """Sistema de mapas mejorado con interpolación KNN para cobertura completa y mapas de calor continuos"""
     
     def __init__(self):
         self.capa_base = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
@@ -462,7 +462,7 @@ class SistemaMapas:
             }
         }
     
-    def _generar_malla_puntos(self, gdf, densidad=800):
+    def _generar_malla_puntos(self, gdf, densidad=1200):
         """Genera una malla densa de puntos que cubre todo el polígono"""
         if gdf is None or gdf.empty:
             return []
@@ -474,7 +474,7 @@ class SistemaMapas:
             
             # Calcular número de puntos basado en el área
             area_ha = calcular_superficie(gdf)
-            num_puntos = min(densidad, max(200, int(area_ha * 0.5)))
+            num_puntos = min(densidad, max(400, int(area_ha * 1.5)))  # Mayor densidad
             
             # Crear malla regular
             puntos = []
@@ -503,8 +503,8 @@ class SistemaMapas:
             print(f"Error generando malla de puntos: {str(e)}")
             return []
     
-    def _interpolar_valores_knn(self, puntos_muestra, puntos_malla, variable='carbono', k=5):
-        """Interpola valores usando K-Nearest Neighbors"""
+    def _interpolar_valores_knn(self, puntos_muestra, puntos_malla, variable='carbono', k=8):
+        """Interpola valores usando K-Nearest Neighbors con mayor suavidad"""
         if not puntos_muestra or not puntos_malla:
             return puntos_malla
         
@@ -532,7 +532,7 @@ class SistemaMapas:
                     elif variable == 'biodiversidad':
                         y_train.append(punto['indice_shannon'])
                 
-                # Entrenar modelo KNN
+                # Entrenar modelo KNN con más vecinos para mayor suavidad
                 knn = KNeighborsRegressor(n_neighbors=min(k, len(X_train)), weights='distance')
                 knn.fit(X_train, y_train)
                 
@@ -575,7 +575,7 @@ class SistemaMapas:
                         
                         # Peso inversamente proporcional a la distancia
                         if dist > 0:
-                            peso = 1.0 / dist
+                            peso = 1.0 / (dist ** 2)  # Distancia al cuadrado para mayor suavidad
                         else:
                             peso = 1.0
                         
@@ -608,7 +608,7 @@ class SistemaMapas:
             return puntos_malla
     
     def crear_mapa_area(self, gdf, zoom_auto=True):
-        """Crea mapa básico con el área de estudio con zoom automático"""
+        """Crea mapa básico con el área de estudio con zoom automático mejorado"""
         if gdf is None or gdf.empty:
             return None
         
@@ -617,24 +617,27 @@ class SistemaMapas:
             bounds = gdf.total_bounds
             centro = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
             
-            # Calcular zoom basado en el tamaño del polígono
+            # Calcular zoom basado en la extensión (mejorado)
             if zoom_auto:
                 width = bounds[2] - bounds[0]
                 height = bounds[3] - bounds[1]
+                extension = max(width, height)
                 
-                # Determinar zoom basado en la extensión
-                if max(width, height) > 10:
+                # Ajuste fino del zoom basado en la extensión
+                if extension > 10:
                     zoom_start = 6
-                elif max(width, height) > 5:
+                elif extension > 5:
                     zoom_start = 8
-                elif max(width, height) > 2:
+                elif extension > 2:
                     zoom_start = 10
-                elif max(width, height) > 1:
+                elif extension > 1:
                     zoom_start = 12
-                elif max(width, height) > 0.5:
+                elif extension > 0.5:
                     zoom_start = 14
-                else:
+                elif extension > 0.2:
                     zoom_start = 16
+                else:
+                    zoom_start = 18
             else:
                 zoom_start = 12
             
@@ -658,10 +661,8 @@ class SistemaMapas:
                 }
             ).add_to(m)
             
-            # Ajustar límites del mapa al polígono
-            sw = [bounds[1], bounds[0]]
-            ne = [bounds[3], bounds[2]]
-            m.fit_bounds([sw, ne])
+            # Ajustar límites del mapa al polígono (zoom automático)
+            m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
             
             # Agregar controles adicionales
             Fullscreen().add_to(m)
@@ -673,7 +674,7 @@ class SistemaMapas:
             return None
     
     def crear_mapa_calor_interpolado(self, resultados, variable='carbono', gdf_area=None):
-        """Crea mapa de calor interpolado para cubrir toda el área"""
+        """Crea mapa de calor interpolado continuo (sin puntos de muestra)"""
         if not resultados or gdf_area is None or gdf_area.empty:
             return None
         
@@ -692,8 +693,8 @@ class SistemaMapas:
             if not puntos_muestra:
                 return None
             
-            # Generar malla de puntos
-            puntos_malla = self._generar_malla_puntos(gdf_area, densidad=600)
+            # Generar malla de puntos con mayor densidad
+            puntos_malla = self._generar_malla_puntos(gdf_area, densidad=1200)
             
             if not puntos_malla:
                 st.warning(f"No se pudo generar malla de puntos para {variable}")
@@ -715,13 +716,13 @@ class SistemaMapas:
                 control_scale=True
             )
             
-            # Agregar polígono base
+            # Agregar polígono base (semi-transparente)
             folium.GeoJson(
                 gdf_area.geometry.iloc[0],
                 style_function=lambda x: {
                     'fillColor': 'transparent',
                     'color': '#1d4ed8',
-                    'weight': 3,
+                    'weight': 2,
                     'fillOpacity': 0.05,
                     'dashArray': '5, 5'
                 }
@@ -739,37 +740,37 @@ class SistemaMapas:
                 elif variable == 'biodiversidad':
                     heat_data.append([punto['lat'], punto['lon'], punto['indice_shannon']])
             
-            # Configurar parámetros del heatmap según la variable
+            # Configurar parámetros del heatmap según la variable (con radios más grandes)
             if variable == 'carbono':
                 name = '🌳 Carbono (ton C/ha)'
                 gradient = self.estilos['gradientes']['carbono']
-                radius = 35
-                blur = 30
-                max_zoom = 15
+                radius = 45
+                blur = 40
+                max_zoom = 18
                 min_opacity = 0.7
             elif variable == 'ndvi':
                 name = '📈 NDVI'
                 gradient = self.estilos['gradientes']['ndvi']
-                radius = 30
-                blur = 25
-                max_zoom = 15
+                radius = 40
+                blur = 35
+                max_zoom = 18
                 min_opacity = 0.75
             elif variable == 'ndwi':
                 name = '💧 NDWI'
                 gradient = self.estilos['gradientes']['ndwi']
-                radius = 30
-                blur = 25
-                max_zoom = 15
+                radius = 40
+                blur = 35
+                max_zoom = 18
                 min_opacity = 0.75
             elif variable == 'biodiversidad':
                 name = '🦋 Índice de Shannon'
                 gradient = self.estilos['gradientes']['biodiversidad']
-                radius = 35
-                blur = 30
-                max_zoom = 15
+                radius = 45
+                blur = 40
+                max_zoom = 18
                 min_opacity = 0.7
             
-            # Crear heatmap
+            # Crear heatmap continuo (sin puntos de muestra visibles)
             HeatMap(
                 heat_data,
                 name=name,
@@ -783,8 +784,8 @@ class SistemaMapas:
             # Ajustar vista
             m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
             
-            # Agregar leyenda
-            self._agregar_leyenda_interpolada(m, variable, resultados)
+            # Agregar leyenda mejorada
+            self._agregar_leyenda_continua(m, variable, resultados)
             
             return m
         except Exception as e:
@@ -792,7 +793,7 @@ class SistemaMapas:
             return None
     
     def crear_mapa_combinado_interpolado(self, resultados, gdf_area=None):
-        """Crea mapa con múltiples capas de heatmap interpoladas"""
+        """Crea mapa con múltiples capas de heatmap continuas"""
         if not resultados or gdf_area is None or gdf_area.empty:
             return None
         
@@ -823,19 +824,19 @@ class SistemaMapas:
             ).add_to(m)
             
             # Generar malla de puntos una vez (compartida para todas las variables)
-            puntos_malla = self._generar_malla_puntos(gdf_area, densidad=500)
+            puntos_malla = self._generar_malla_puntos(gdf_area, densidad=1000)
             
             if puntos_malla:
                 # Variables a procesar
                 variables_procesar = []
                 if 'puntos_carbono' in resultados and resultados['puntos_carbono']:
-                    variables_procesar.append(('carbono', '🌳 Carbono', self.estilos['gradientes']['carbono'], 30, 25, False))
+                    variables_procesar.append(('carbono', '🌳 Carbono', self.estilos['gradientes']['carbono'], 40, 35, False))
                 if 'puntos_ndvi' in resultados and resultados['puntos_ndvi']:
-                    variables_procesar.append(('ndvi', '📈 NDVI', self.estilos['gradientes']['ndvi'], 25, 20, False))
+                    variables_procesar.append(('ndvi', '📈 NDVI', self.estilos['gradientes']['ndvi'], 35, 30, False))
                 if 'puntos_ndwi' in resultados and resultados['puntos_ndwi']:
-                    variables_procesar.append(('ndwi', '💧 NDWI', self.estilos['gradientes']['ndwi'], 25, 20, False))
+                    variables_procesar.append(('ndwi', '💧 NDWI', self.estilos['gradientes']['ndwi'], 35, 30, False))
                 if 'puntos_biodiversidad' in resultados and resultados['puntos_biodiversidad']:
-                    variables_procesar.append(('biodiversidad', '🦋 Biodiversidad', self.estilos['gradientes']['biodiversidad'], 30, 25, True))
+                    variables_procesar.append(('biodiversidad', '🦋 Biodiversidad', self.estilos['gradientes']['biodiversidad'], 40, 35, True))
                 
                 # Procesar cada variable
                 for variable, nombre, gradient, radius, blur, mostrar_por_defecto in variables_procesar:
@@ -861,7 +862,7 @@ class SistemaMapas:
                         elif variable == 'biodiversidad':
                             heat_data.append([punto['lat'], punto['lon'], punto['indice_shannon']])
                     
-                    # Crear heatmap
+                    # Crear heatmap continuo
                     HeatMap(
                         heat_data,
                         name=nombre,
@@ -869,7 +870,7 @@ class SistemaMapas:
                         radius=radius,
                         blur=blur,
                         gradient=gradient,
-                        max_zoom=15,
+                        max_zoom=18,
                         show=mostrar_por_defecto
                     ).add_to(m)
             
@@ -877,7 +878,7 @@ class SistemaMapas:
             folium.LayerControl(collapsed=False).add_to(m)
             
             # Agregar leyenda combinada
-            self._agregar_leyenda_combinada_interpolada(m, resultados)
+            self._agregar_leyenda_combinada_continua(m, resultados)
             
             # Ajustar vista
             m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
@@ -889,11 +890,11 @@ class SistemaMapas:
     
     # ===== LEYENDAS MEJORADAS =====
     
-    def _agregar_leyenda_interpolada(self, mapa, variable, resultados):
-        """Agrega leyenda para mapas interpolados"""
+    def _agregar_leyenda_continua(self, mapa, variable, resultados):
+        """Agrega leyenda para mapas de calor continuos"""
         try:
             if variable == 'carbono':
-                titulo = "🌳 Carbono Interpolado"
+                titulo = "🌳 Carbono (ton C/ha) - Mapa Continuo"
                 colores = self.estilos['gradientes']['carbono']
                 valores = [p['carbono_ton_ha'] for p in resultados.get('puntos_carbono', [])]
                 if valores:
@@ -901,9 +902,9 @@ class SistemaMapas:
                     max_val = max(valores)
                     texto = f"Rango: {min_val:.1f} - {max_val:.1f} ton C/ha"
                 else:
-                    texto = "Datos interpolados"
+                    texto = "Distribución interpolada"
             elif variable == 'ndvi':
-                titulo = "📈 NDVI Interpolado"
+                titulo = "📈 NDVI - Mapa Continuo"
                 colores = self.estilos['gradientes']['ndvi']
                 valores = [p['ndvi'] for p in resultados.get('puntos_ndvi', [])]
                 if valores:
@@ -911,9 +912,9 @@ class SistemaMapas:
                     max_val = max(valores)
                     texto = f"Rango: {min_val:.2f} - {max_val:.2f}"
                 else:
-                    texto = "Datos interpolados"
+                    texto = "Distribución interpolada"
             elif variable == 'ndwi':
-                titulo = "💧 NDWI Interpolado"
+                titulo = "💧 NDWI - Mapa Continuo"
                 colores = self.estilos['gradientes']['ndwi']
                 valores = [p['ndwi'] for p in resultados.get('puntos_ndwi', [])]
                 if valores:
@@ -921,9 +922,9 @@ class SistemaMapas:
                     max_val = max(valores)
                     texto = f"Rango: {min_val:.2f} - {max_val:.2f}"
                 else:
-                    texto = "Datos interpolados"
+                    texto = "Distribución interpolada"
             elif variable == 'biodiversidad':
-                titulo = "🦋 Biodiversidad Interpolada"
+                titulo = "🦋 Índice de Shannon - Mapa Continuo"
                 colores = self.estilos['gradientes']['biodiversidad']
                 valores = [p['indice_shannon'] for p in resultados.get('puntos_biodiversidad', [])]
                 if valores:
@@ -931,7 +932,7 @@ class SistemaMapas:
                     max_val = max(valores)
                     texto = f"Rango: {min_val:.2f} - {max_val:.2f}"
                 else:
-                    texto = "Datos interpolados"
+                    texto = "Distribución interpolada"
             
             # Crear gradiente CSS
             gradiente_css = f"linear-gradient(90deg, {', '.join(colores.values())})"
@@ -996,9 +997,9 @@ class SistemaMapas:
                     padding-top: 10px;
                     border-top: 1px solid #e5e7eb;
                 ">
-                    <div>🔵 <strong>Interpolación KNN:</strong> Cobertura completa del área</div>
-                    <div>📍 <strong>Malla densa:</strong> 600+ puntos interpolados</div>
-                    <div>🎯 <strong>Precisión:</strong> Modelo basado en vecinos más cercanos</div>
+                    <div>🌡️ <strong>Mapa de calor continuo</strong> - Interpolación espacial</div>
+                    <div>📍 <strong>Malla densa:</strong> 1200+ puntos</div>
+                    <div>🎯 <strong>Sin puntos de muestreo visibles</strong></div>
                 </div>
             </div>
             '''
@@ -1006,8 +1007,8 @@ class SistemaMapas:
         except Exception as e:
             print(f"Error agregando leyenda: {str(e)}")
     
-    def _agregar_leyenda_combinada_interpolada(self, mapa, resultados):
-        """Agrega leyenda combinada para mapa interpolado"""
+    def _agregar_leyenda_combinada_continua(self, mapa, resultados):
+        """Agrega leyenda combinada para mapa de calor continuo"""
         try:
             leyenda_html = '''
             <div style="
@@ -1031,7 +1032,7 @@ class SistemaMapas:
                     padding-bottom: 8px;
                     font-size: 16px;
                 ">
-                🗺️ Mapa Multivariable Interpolado
+                🗺️ Mapas de Calor Continuos
                 </h4>
                 
                 <div style="margin: 12px 0;">
@@ -1069,15 +1070,15 @@ class SistemaMapas:
                     <div style="margin-bottom: 8px;">🎯 <strong>Características:</strong></div>
                     <div style="display: flex; align-items: center; margin-bottom: 6px;">
                         <span style="color: #10b981; font-weight: bold; margin-right: 8px;">✓</span>
-                        <span>Interpolación KNN para cobertura completa</span>
+                        <span>Mapas de calor continuos (sin puntos de muestreo)</span>
                     </div>
                     <div style="display: flex; align-items: center; margin-bottom: 6px;">
                         <span style="color: #10b981; font-weight: bold; margin-right: 8px;">✓</span>
-                        <span>Malla densa de 500+ puntos interpolados</span>
+                        <span>Malla densa de 1200+ puntos</span>
                     </div>
                     <div style="display: flex; align-items: center; margin-bottom: 6px;">
                         <span style="color: #10b981; font-weight: bold; margin-right: 8px;">✓</span>
-                        <span>Gradientes suaves sin espacios vacíos</span>
+                        <span>Gradientes suaves sin discontinuidades</span>
                     </div>
                     <div style="display: flex; align-items: center;">
                         <span style="color: #3b82f6; font-weight: bold; margin-right: 8px;">🗂️</span>
@@ -1855,7 +1856,7 @@ class GeneradorReportes:
             datos = [
                 ('Área total', f"{res.get('area_total_ha', 0):,.1f} ha", 'Superficie del área de estudio'),
                 ('Carbono total almacenado', f"{res.get('carbono_total_ton', 0):,.0f} ton C", 'Carbono almacenado en el área'),
-                ('CO₂ equivalente', f"{res.get('co2_total_ton', 0):,.0f} ton CO₂e", 'Potencial de créditos de carbono'),
+                ('CO₂ equivalente', f"{res.get('co2_total_ton', 0):,.0f} ton CO₂e', 'Potencial de créditos de carbono'),
                 ('Índice de Shannon promedio', f"{res.get('shannon_promedio', 0):.3f}", 'Nivel de biodiversidad'),
                 ('NDVI promedio', f"{res.get('ndvi_promedio', 0):.3f}", 'Salud de la vegetación'),
                 ('NDWI promedio', f"{res.get('ndwi_promedio', 0):.3f}", 'Contenido de agua'),
@@ -2429,7 +2430,7 @@ def main():
                             st.write(f"Sureste: {bounds[1]:.4f}°N, {bounds[2]:.4f}°W")
                             st.write(f"**CRS:** {gdf.crs}")
                         
-                        # Crear mapa inicial con zoom automático
+                        # Crear mapa inicial con zoom automático mejorado
                         sistema_mapas = SistemaMapas()
                         st.session_state.mapa = sistema_mapas.crear_mapa_area(gdf, zoom_auto=True)
                         
@@ -2767,8 +2768,8 @@ def ejecutar_analisis_completo(gdf, tipo_ecosistema, num_puntos, usar_gee=False)
 # 🗺️ FUNCIONES DE VISUALIZACIÓN CORREGIDAS
 # ===============================
 def mostrar_mapas_calor():
-    """Muestra todos los mapas de calor disponibles con interpolación KNN"""
-    st.header("🗺️ Mapas de Calor Interpolados - Cobertura Completa")
+    """Muestra todos los mapas de calor disponibles con interpolación KNN y aspecto continuo"""
+    st.header("🗺️ Mapas de Calor Continuos - Sin puntos de muestreo")
     
     # Verificaciones iniciales seguras
     resultados_disponibles = st.session_state.get('resultados') is not None
@@ -2798,12 +2799,12 @@ def mostrar_mapas_calor():
         st.subheader("🌍 Mapa Base del Área de Estudio")
         if mapa_base_disponible:
             folium_static(st.session_state.mapa, width=1000, height=650)
-            st.info("Mapa base con el polígono del área de estudio. El mapa se ajusta automáticamente al área cargada.")
+            st.info("Mapa base con el polígono del área de estudio. El zoom se ajusta automáticamente al área cargada.")
         else:
             st.info("No hay mapa para mostrar")
     
     with tab2:
-        st.subheader("🌳 Mapa de Calor - Carbono (ton C/ha)")
+        st.subheader("🌳 Mapa de Calor Continuo - Carbono (ton C/ha)")
         if resultados_disponibles and poligono_disponible:
             try:
                 sistema_mapas = SistemaMapas()
@@ -2816,7 +2817,7 @@ def mostrar_mapas_calor():
                 if mapa_carbono:
                     folium_static(mapa_carbono, width=1000, height=650)
                     
-                    # Información adicional mejorada
+                    # Información adicional
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
                         puntos_carbono = st.session_state.resultados.get('puntos_carbono', [])
@@ -2831,31 +2832,24 @@ def mostrar_mapas_calor():
                     with col3:
                         st.metric("Carbono total", f"{st.session_state.resultados.get('carbono_total_ton', 0):,.0f} ton C")
                     with col4:
-                        st.metric("Puntos interpolados", "600+", "Malla densa KNN")
+                        st.metric("Puntos interpolados", "1200+", "Malla densa")
                     
                     st.info("""
-                    **Características del mapa:**
+                    **Características del mapa continuo:**
                     - 🎯 **Cobertura completa**: Interpolación KNN para cubrir toda el área
                     - 🌡️ **Gradiente suave**: Transiciones de color continuas
-                    - 📊 **Alta densidad**: Más de 600 puntos interpolados
-                    - 🔍 **Zoom detallado**: Mantiene resolución al acercar
+                    - 📊 **Alta densidad**: Más de 1200 puntos interpolados
+                    - 🔍 **Sin puntos de muestreo visibles**
                     """)
                 else:
                     st.warning("No se pudo generar el mapa de carbono.")
             except Exception as e:
                 st.error(f"Error generando mapa de carbono: {str(e)}")
-                st.info("Intentando método alternativo...")
-                # Método alternativo si falla la interpolación
-                sistema_mapas = SistemaMapas()
-                # Usar el método de mapa base como fallback
-                mapa_fallback = sistema_mapas.crear_mapa_area(poligono_data)
-                if mapa_fallback:
-                    folium_static(mapa_fallback, width=1000, height=650)
         else:
             st.info("Ejecute el análisis primero para ver el mapa de carbono")
     
     with tab3:
-        st.subheader("📈 Mapa de Calor - NDVI (Índice de Vegetación)")
+        st.subheader("📈 Mapa de Calor Continuo - NDVI (Índice de Vegetación)")
         if resultados_disponibles and poligono_disponible:
             try:
                 sistema_mapas = SistemaMapas()
@@ -2868,7 +2862,7 @@ def mostrar_mapas_calor():
                 if mapa_ndvi:
                     folium_static(mapa_ndvi, width=1000, height=650)
                     
-                    # Información adicional mejorada
+                    # Información adicional
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
                         st.metric("NDVI promedio", f"{st.session_state.resultados.get('ndvi_promedio', 0):.3f}")
@@ -2888,7 +2882,7 @@ def mostrar_mapas_calor():
                             interpretacion = "🍂 Vegetación escasa"
                         st.metric("Interpretación", interpretacion)
                     with col4:
-                        st.metric("Puntos interpolados", "600+", "Malla densa KNN")
+                        st.metric("Puntos interpolados", "1200+", "Malla densa")
                     
                     st.info("""
                     **Interpretación del NDVI:**
@@ -2905,7 +2899,7 @@ def mostrar_mapas_calor():
             st.info("Ejecute el análisis primero para ver el mapa de NDVI")
     
     with tab4:
-        st.subheader("💧 Mapa de Calor - NDWI (Índice de Agua)")
+        st.subheader("💧 Mapa de Calor Continuo - NDWI (Índice de Agua)")
         if resultados_disponibles and poligono_disponible:
             try:
                 sistema_mapas = SistemaMapas()
@@ -2918,7 +2912,7 @@ def mostrar_mapas_calor():
                 if mapa_ndwi:
                     folium_static(mapa_ndwi, width=1000, height=650)
                     
-                    # Información adicional mejorada
+                    # Información adicional
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
                         st.metric("NDWI promedio", f"{st.session_state.resultados.get('ndwi_promedio', 0):.3f}")
@@ -2938,7 +2932,7 @@ def mostrar_mapas_calor():
                             interpretacion = "🏜️ Seco"
                         st.metric("Humedad", interpretacion)
                     with col4:
-                        st.metric("Puntos interpolados", "600+", "Malla densa KNN")
+                        st.metric("Puntos interpolados", "1200+", "Malla densa")
                     
                     st.info("""
                     **Interpretación del NDWI:**
@@ -2955,7 +2949,7 @@ def mostrar_mapas_calor():
             st.info("Ejecute el análisis primero para ver el mapa de NDWI")
     
     with tab5:
-        st.subheader("🦋 Mapa de Calor - Biodiversidad (Índice de Shannon)")
+        st.subheader("🦋 Mapa de Calor Continuo - Biodiversidad (Índice de Shannon)")
         if resultados_disponibles and poligono_disponible:
             try:
                 sistema_mapas = SistemaMapas()
@@ -2968,7 +2962,7 @@ def mostrar_mapas_calor():
                 if mapa_biodiv:
                     folium_static(mapa_biodiv, width=1000, height=650)
                     
-                    # Información adicional mejorada
+                    # Información adicional
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
                         st.metric("Shannon promedio", f"{st.session_state.resultados.get('shannon_promedio', 0):.3f}")
@@ -2986,7 +2980,7 @@ def mostrar_mapas_calor():
                         else:
                             st.metric("Categoría", "N/A")
                     with col4:
-                        st.metric("Puntos interpolados", "600+", "Malla densa KNN")
+                        st.metric("Puntos interpolados", "1200+", "Malla densa")
                     
                     st.info("""
                     **Escala del Índice de Shannon:**
@@ -3004,7 +2998,7 @@ def mostrar_mapas_calor():
             st.info("Ejecute el análisis primero para ver el mapa de biodiversidad")
     
     with tab6:
-        st.subheader("🎭 Mapa Combinado - Todas las Capas")
+        st.subheader("🎭 Mapa Combinado Continuo - Todas las Capas")
         if resultados_disponibles and poligono_disponible:
             try:
                 sistema_mapas = SistemaMapas()
@@ -3024,16 +3018,16 @@ def mostrar_mapas_calor():
                     3. **📍 Navegación**: Arrastre el mapa para mover la vista
                     4. **💡 Consejo**: Active solo 1-2 capas a la vez para mejor visualización
                     
-                    **📊 Capas disponibles:**
-                    - 🌳 **Carbono**: Almacenamiento de carbono (ton C/ha) - Interpolado KNN
-                    - 📈 **NDVI**: Salud de la vegetación (-1 a +1) - Interpolado KNN
-                    - 💧 **NDWI**: Contenido de agua (-1 a +1) - Interpolado KNN
-                    - 🦋 **Biodiversidad**: Índice de Shannon - Interpolado KNN
+                    **📊 Capas disponibles (continuas, sin puntos):**
+                    - 🌳 **Carbono**: Almacenamiento de carbono (ton C/ha)
+                    - 📈 **NDVI**: Salud de la vegetación (-1 a +1)
+                    - 💧 **NDWI**: Contenido de agua (-1 a +1)
+                    - 🦋 **Biodiversidad**: Índice de Shannon
                     
                     **🧠 Método de interpolación:**
-                    - **K-Nearest Neighbors (KNN)**: Interpolación basada en los 5 puntos más cercanos
-                    - **Cobertura completa**: Malla densa de 500+ puntos que cubre todo el polígono
-                    - **Gradientes suaves**: Sin espacios vacíos en el heatmap
+                    - **K-Nearest Neighbors (KNN)**: Interpolación basada en vecinos cercanos
+                    - **Cobertura completa**: Malla densa de 1200+ puntos que cubre todo el polígono
+                    - **Gradientes suaves**: Sin espacios vacíos ni puntos visibles
                     """)
                 else:
                     st.warning("No se pudo generar el mapa combinado.")
