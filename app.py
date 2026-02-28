@@ -61,6 +61,10 @@ from branca.colormap import LinearColormap
 import matplotlib.cm as cm
 # Para simulación de datos satelitales
 import random
+# Para conversión de gráficos y mapas estáticos
+import io
+from scipy.interpolate import griddata
+from matplotlib.colors import LinearSegmentedColormap
 
 # ===== CONFIGURACIÓN DE IA (GEMINI) =====
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
@@ -1091,6 +1095,77 @@ class SistemaMapas:
         except Exception as e:
             print(f"Error agregando leyenda combinada: {str(e)}")
 
+    # ===== NUEVO MÉTODO: GENERAR MAPA ESTÁTICO CON MATPLOTLIB =====
+    def crear_mapa_estatico(self, resultados, variable='carbono', gdf_area=None, dpi=150):
+        """
+        Genera una imagen PNG estática del mapa de calor usando Matplotlib.
+        """
+        if not resultados or gdf_area is None or gdf_area.empty:
+            return None
+
+        # Obtener puntos de muestra
+        puntos_muestra = resultados.get(f'puntos_{variable}', [])
+        if not puntos_muestra:
+            return None
+
+        # Generar malla densa
+        puntos_malla = self._generar_malla_puntos(gdf_area, densidad=800)
+        if not puntos_malla:
+            return None
+
+        # Interpolar
+        puntos_interpolados = self._interpolar_valores_knn(puntos_muestra, puntos_malla, variable)
+
+        # Extraer coordenadas y valores
+        lats = [p['lat'] for p in puntos_interpolados]
+        lons = [p['lon'] for p in puntos_interpolados]
+        if variable == 'carbono':
+            valores = [p['carbono_ton_ha'] for p in puntos_interpolados]
+            titulo = 'Carbono (ton C/ha)'
+            cmap_name = 'carbono'
+        elif variable == 'ndvi':
+            valores = [p['ndvi'] for p in puntos_interpolados]
+            titulo = 'NDVI'
+            cmap_name = 'ndvi'
+        elif variable == 'ndwi':
+            valores = [p['ndwi'] for p in puntos_interpolados]
+            titulo = 'NDWI'
+            cmap_name = 'ndwi'
+        elif variable == 'biodiversidad':
+            valores = [p['indice_shannon'] for p in puntos_interpolados]
+            titulo = 'Índice de Shannon'
+            cmap_name = 'biodiversidad'
+        else:
+            return None
+
+        # Crear malla regular para el gráfico
+        bounds = gdf_area.total_bounds
+        minx, miny, maxx, maxy = bounds
+        grid_x, grid_y = np.mgrid[minx:maxx:100j, miny:maxy:100j]
+        grid_z = griddata((lons, lats), valores, (grid_x, grid_y), method='cubic')
+
+        # Crear figura
+        fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+        colormap = LinearSegmentedColormap.from_list(cmap_name, list(self.estilos['gradientes'][cmap_name].values()))
+        im = ax.imshow(grid_z.T, extent=[minx, maxx, miny, maxy], origin='lower',
+                       cmap=colormap, aspect='auto')
+        plt.colorbar(im, ax=ax, label=titulo)
+        ax.set_title(f'Mapa de {titulo}')
+        ax.set_xlabel('Longitud')
+        ax.set_ylabel('Latitud')
+        ax.grid(True, linestyle='--', alpha=0.5)
+
+        # Dibujar el polígono del área
+        from geopandas import GeoSeries
+        gdf_area.geometry.iloc[0].boundary.plot(ax=ax, color='black', linewidth=1.5)
+
+        # Guardar en BytesIO
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=dpi, bbox_inches='tight')
+        plt.close(fig)
+        buf.seek(0)
+        return buf
+
 # ===============================
 # 📊 VISUALIZACIONES Y GRÁFICOS
 # ===============================
@@ -1335,39 +1410,15 @@ class GeneradorReportes:
         self.buffer_pdf = BytesIO()
         self.buffer_docx = BytesIO()
         
-    def _fig_to_png(self, fig):
-        """Convierte un gráfico Plotly a PNG en BytesIO - Versión simplificada para Streamlit Cloud"""
+    def _fig_to_png(self, fig, width=800, height=500):
+        """Convierte una figura de Plotly a PNG en BytesIO usando Kaleido."""
+        if fig is None:
+            return None
         try:
-            if fig is None:
-                return None
-            
-            # SOLUCIÓN: En lugar de usar fig.to_image() que requiere Kaleido,
-            # creamos una imagen placeholder simple usando PIL
-            from PIL import Image, ImageDraw
-            import io
-            
-            # Crear imagen placeholder para el PDF
-            width, height = 800, 500
-            img = Image.new('RGB', (width, height), color='white')
-            draw = ImageDraw.Draw(img)
-            
-            # Dibujar texto informativo
-            draw.text((width//2 - 200, height//2 - 20), 
-                     "Gráfico interactivo disponible", fill='black')
-            draw.text((width//2 - 250, height//2 + 10), 
-                     "Consulte la aplicación web para visualización completa", fill='gray')
-            
-            # Dibujar un borde
-            draw.rectangle([10, 10, width-10, height-10], outline='gray', width=2)
-            
-            # Guardar en BytesIO
-            img_byte_arr = io.BytesIO()
-            img.save(img_byte_arr, format='PNG')
-            img_byte_arr.seek(0)
-            
-            return img_byte_arr
+            img_bytes = fig.to_image(format='png', width=width, height=height, scale=2)
+            return BytesIO(img_bytes)
         except Exception as e:
-            st.warning(f"No se pudo crear imagen del gráfico: {str(e)}")
+            st.warning(f"No se pudo convertir el gráfico a PNG: {str(e)}")
             return None
     
     def _mapa_to_png(self, mapa, width=800, height=600):
@@ -1434,7 +1485,7 @@ class GeneradorReportes:
         return graficos
 
     def generar_pdf(self):
-        """Genera reporte completo en PDF con todas las secciones"""
+        """Genera reporte completo en PDF con todas las secciones e imágenes"""
         if not REPORTPDF_AVAILABLE:
             st.error("ReportLab no está instalado. No se puede generar PDF.")
             return None
@@ -1568,6 +1619,15 @@ class GeneradorReportes:
                 
                 story.append(tabla_carbono)
                 story.append(Spacer(1, 15))
+                
+                # Gráfico de carbono
+                graficos = self._crear_graficos()
+                if graficos.get('carbono'):
+                    story.append(Spacer(1, 12))
+                    story.append(Paragraph("Gráfico de distribución", seccion_style))
+                    img_carbono = Image(graficos['carbono'], width=400, height=250)
+                    story.append(img_carbono)
+                    story.append(Spacer(1, 12))
             
             # Valor económico estimado
             valor_economico = res.get('co2_total_ton', 0) * 15
@@ -1629,6 +1689,14 @@ class GeneradorReportes:
                 
                 story.append(tabla_biodiv)
                 story.append(Spacer(1, 15))
+                
+                # Gráfico de biodiversidad
+                if graficos.get('biodiv'):
+                    story.append(Spacer(1, 12))
+                    story.append(Paragraph("Perfil de biodiversidad", seccion_style))
+                    img_biodiv = Image(graficos['biodiv'], width=400, height=400)
+                    story.append(img_biodiv)
+                    story.append(Spacer(1, 12))
             
             # Escala del Índice de Shannon
             story.append(Paragraph("Escala del Índice de Shannon", seccion_style))
@@ -1712,6 +1780,39 @@ class GeneradorReportes:
             story.append(tabla_ndvi)
             story.append(Spacer(1, 20))
             
+            # ===== MAPAS ESTÁTICOS =====
+            if self.sistema_mapas:
+                story.append(PageBreak())
+                story.append(Paragraph("MAPAS DE CALOR CONTINUOS", subtitulo_style))
+                
+                # Mapa de carbono
+                mapa_carbono = self.sistema_mapas.crear_mapa_estatico(self.resultados, 'carbono', self.gdf)
+                if mapa_carbono:
+                    story.append(Paragraph("Carbono (ton C/ha)", seccion_style))
+                    story.append(Image(mapa_carbono, width=450, height=350))
+                    story.append(Spacer(1, 12))
+                
+                # Mapa de NDVI
+                mapa_ndvi = self.sistema_mapas.crear_mapa_estatico(self.resultados, 'ndvi', self.gdf)
+                if mapa_ndvi:
+                    story.append(Paragraph("NDVI - Índice de Vegetación", seccion_style))
+                    story.append(Image(mapa_ndvi, width=450, height=350))
+                    story.append(Spacer(1, 12))
+                
+                # Mapa de NDWI
+                mapa_ndwi = self.sistema_mapas.crear_mapa_estatico(self.resultados, 'ndwi', self.gdf)
+                if mapa_ndwi:
+                    story.append(Paragraph("NDWI - Índice de Agua", seccion_style))
+                    story.append(Image(mapa_ndwi, width=450, height=350))
+                    story.append(Spacer(1, 12))
+                
+                # Mapa de biodiversidad
+                mapa_biodiv = self.sistema_mapas.crear_mapa_estatico(self.resultados, 'biodiversidad', self.gdf)
+                if mapa_biodiv:
+                    story.append(Paragraph("Biodiversidad - Índice de Shannon", seccion_style))
+                    story.append(Image(mapa_biodiv, width=450, height=350))
+                    story.append(Spacer(1, 12))
+            
             # ===== RECOMENDACIONES =====
             story.append(PageBreak())
             story.append(Paragraph("RECOMENDACIONES Y CONCLUSIONES", subtitulo_style))
@@ -1737,7 +1838,11 @@ class GeneradorReportes:
             story.append(Spacer(1, 15))
             
             # Recomendaciones según biodiversidad
-            categoria_biodiv = biodiv.get('categoria', 'N/A') if res.get('puntos_biodiversidad') else 'N/A'
+            if res.get('puntos_biodiversidad'):
+                biodiv = res['puntos_biodiversidad'][0]
+                categoria_biodiv = biodiv.get('categoria', 'N/A')
+            else:
+                categoria_biodiv = 'N/A'
             story.append(Paragraph(f"Recomendaciones para Biodiversidad ({categoria_biodiv})", seccion_style))
             
             if categoria_biodiv in ["Muy Baja", "Baja"]:
@@ -1817,12 +1922,13 @@ class GeneradorReportes:
             return None
 
     def generar_docx(self):
-        """Genera reporte completo en DOCX"""
+        """Genera reporte completo en DOCX con imágenes"""
         if not REPORTDOCX_AVAILABLE:
             st.error("python-docx no está instalado. No se puede generar DOCX.")
             return None
         
         try:
+            import tempfile
             doc = Document()
             
             # Configurar estilos
@@ -1856,7 +1962,7 @@ class GeneradorReportes:
             datos = [
                 ('Área total', f"{res.get('area_total_ha', 0):,.1f} ha", 'Superficie del área de estudio'),
                 ('Carbono total almacenado', f"{res.get('carbono_total_ton', 0):,.0f} ton C", 'Carbono almacenado en el área'),
-                ('CO₂ equivalente', f"{res.get('co2_total_ton', 0):,.0f} ton CO₂e', 'Potencial de créditos de carbono'),
+                ('CO₂ equivalente', f"{res.get('co2_total_ton', 0):,.0f} ton CO₂e", 'Potencial de créditos de carbono'),
                 ('Índice de Shannon promedio', f"{res.get('shannon_promedio', 0):.3f}", 'Nivel de biodiversidad'),
                 ('NDVI promedio', f"{res.get('ndvi_promedio', 0):.3f}", 'Salud de la vegetación'),
                 ('NDWI promedio', f"{res.get('ndwi_promedio', 0):.3f}", 'Contenido de agua'),
@@ -1902,6 +2008,19 @@ class GeneradorReportes:
                     tabla_carbono.cell(i, 2).text = f"{valor:.2f}"
                     porcentaje = (valor / total * 100) if total > 0 else 0
                     tabla_carbono.cell(i, 3).text = f"{porcentaje:.1f}%"
+                
+                doc.add_paragraph()
+                
+                # Gráfico de carbono
+                graficos = self._crear_graficos()
+                if graficos.get('carbono'):
+                    doc.add_heading('Gráfico de distribución', level=3)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                        tmp.write(graficos['carbono'].getvalue())
+                        tmp_path = tmp.name
+                    doc.add_picture(tmp_path, width=Inches(5))
+                    os.unlink(tmp_path)
+                    doc.add_paragraph()
             
             doc.add_page_break()
             
@@ -1930,6 +2049,68 @@ class GeneradorReportes:
                     tabla_biodiv.cell(i, 0).text = metrica
                     tabla_biodiv.cell(i, 1).text = valor
                     tabla_biodiv.cell(i, 2).text = interpretacion
+                
+                doc.add_paragraph()
+                
+                # Gráfico de biodiversidad
+                if graficos.get('biodiv'):
+                    doc.add_heading('Perfil de biodiversidad', level=3)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                        tmp.write(graficos['biodiv'].getvalue())
+                        tmp_path = tmp.name
+                    doc.add_picture(tmp_path, width=Inches(5))
+                    os.unlink(tmp_path)
+                    doc.add_paragraph()
+            
+            doc.add_page_break()
+            
+            # ===== MAPAS ESTÁTICOS =====
+            if self.sistema_mapas:
+                doc.add_heading('MAPAS DE CALOR CONTINUOS', level=1)
+                
+                # Mapa de carbono
+                mapa_carbono = self.sistema_mapas.crear_mapa_estatico(self.resultados, 'carbono', self.gdf)
+                if mapa_carbono:
+                    doc.add_heading('Carbono (ton C/ha)', level=2)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                        tmp.write(mapa_carbono.getvalue())
+                        tmp_path = tmp.name
+                    doc.add_picture(tmp_path, width=Inches(6))
+                    os.unlink(tmp_path)
+                    doc.add_paragraph()
+                
+                # Mapa de NDVI
+                mapa_ndvi = self.sistema_mapas.crear_mapa_estatico(self.resultados, 'ndvi', self.gdf)
+                if mapa_ndvi:
+                    doc.add_heading('NDVI - Índice de Vegetación', level=2)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                        tmp.write(mapa_ndvi.getvalue())
+                        tmp_path = tmp.name
+                    doc.add_picture(tmp_path, width=Inches(6))
+                    os.unlink(tmp_path)
+                    doc.add_paragraph()
+                
+                # Mapa de NDWI
+                mapa_ndwi = self.sistema_mapas.crear_mapa_estatico(self.resultados, 'ndwi', self.gdf)
+                if mapa_ndwi:
+                    doc.add_heading('NDWI - Índice de Agua', level=2)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                        tmp.write(mapa_ndwi.getvalue())
+                        tmp_path = tmp.name
+                    doc.add_picture(tmp_path, width=Inches(6))
+                    os.unlink(tmp_path)
+                    doc.add_paragraph()
+                
+                # Mapa de biodiversidad
+                mapa_biodiv = self.sistema_mapas.crear_mapa_estatico(self.resultados, 'biodiversidad', self.gdf)
+                if mapa_biodiv:
+                    doc.add_heading('Biodiversidad - Índice de Shannon', level=2)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                        tmp.write(mapa_biodiv.getvalue())
+                        tmp_path = tmp.name
+                    doc.add_picture(tmp_path, width=Inches(6))
+                    os.unlink(tmp_path)
+                    doc.add_paragraph()
             
             doc.add_page_break()
             
@@ -1989,7 +2170,7 @@ class GeneradorReportes:
             return json.dumps({"error": str(e)})
 
 # ===============================
-# 📄 NUEVA FUNCIÓN PARA GENERAR INFORME CON IA (GEMINI)
+# 📄 NUEVA FUNCIÓN PARA GENERAR INFORME CON IA (GEMINI) - INCLUYE MAPAS Y GRÁFICOS
 # ===============================
 def generar_reporte_ia(resultados, gdf, sistema_mapas=None):
     """
@@ -2066,6 +2247,21 @@ def generar_reporte_ia(resultados, gdf, sistema_mapas=None):
                 row[1].text = desc.get(pool, pool)
                 row[2].text = f"{valor:.2f}"
             doc.add_paragraph()
+
+            # Gráfico de carbono
+            vis = Visualizaciones()
+            fig_carbono = vis.crear_grafico_barras_carbono(resultados['desglose_promedio'])
+            if fig_carbono:
+                try:
+                    img_bytes = fig_carbono.to_image(format='png', width=800, height=500, scale=2)
+                    img_path = os.path.join(tmpdir, 'carbono.png')
+                    with open(img_path, 'wb') as f:
+                        f.write(img_bytes)
+                    doc.add_picture(img_path, width=Inches(5))
+                    doc.add_paragraph()
+                except:
+                    pass
+
         doc.add_heading('2.1 Interpretación técnica', level=2)
         analisis_carbono = generar_analisis_carbono(df, stats)
         doc.add_paragraph(analisis_carbono)
@@ -2089,6 +2285,20 @@ def generar_reporte_ia(resultados, gdf, sistema_mapas=None):
                 row[0].text = met
                 row[1].text = val
             doc.add_paragraph()
+
+            # Gráfico de biodiversidad
+            fig_biodiv = vis.crear_grafico_radar_biodiversidad(biodiv)
+            if fig_biodiv:
+                try:
+                    img_bytes = fig_biodiv.to_image(format='png', width=800, height=800, scale=2)
+                    img_path = os.path.join(tmpdir, 'biodiv.png')
+                    with open(img_path, 'wb') as f:
+                        f.write(img_bytes)
+                    doc.add_picture(img_path, width=Inches(5))
+                    doc.add_paragraph()
+                except:
+                    pass
+
         doc.add_heading('3.1 Interpretación técnica', level=2)
         analisis_biodiv = generar_analisis_biodiversidad(df, stats)
         doc.add_paragraph(analisis_biodiv)
@@ -2099,13 +2309,28 @@ def generar_reporte_ia(resultados, gdf, sistema_mapas=None):
         analisis_espectral = generar_analisis_espectral(df, stats)
         doc.add_paragraph(analisis_espectral)
 
-        # 5. Recomendaciones Integradas
-        doc.add_heading('5. RECOMENDACIONES DE MANEJO', level=1)
+        # 5. Mapas de calor
+        if sistema_mapas:
+            doc.add_heading('5. MAPAS DE CALOR CONTINUOS', level=1)
+            variables = ['carbono', 'ndvi', 'ndwi', 'biodiversidad']
+            titulos = ['Carbono (ton C/ha)', 'NDVI - Índice de Vegetación', 'NDWI - Índice de Agua', 'Biodiversidad - Índice de Shannon']
+            for var, tit in zip(variables, titulos):
+                mapa = sistema_mapas.crear_mapa_estatico(resultados, var, gdf)
+                if mapa:
+                    doc.add_heading(tit, level=2)
+                    img_path = os.path.join(tmpdir, f'mapa_{var}.png')
+                    with open(img_path, 'wb') as f:
+                        f.write(mapa.getvalue())
+                    doc.add_picture(img_path, width=Inches(6))
+                    doc.add_paragraph()
+
+        # 6. Recomendaciones Integradas
+        doc.add_heading('6. RECOMENDACIONES DE MANEJO', level=1)
         recomendaciones = generar_recomendaciones_integradas(df, stats)
         doc.add_paragraph(recomendaciones)
 
-        # 6. Metadatos
-        doc.add_heading('6. METADATOS', level=1)
+        # 7. Metadatos
+        doc.add_heading('7. METADATOS', level=1)
         metadatos = [
             ('Generado por', 'Sistema Satelital de Análisis Ambiental v2.0 con IA Gemini'),
             ('Fecha de generación', datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
@@ -3479,6 +3704,8 @@ def mostrar_informe():
         - Análisis completo de carbono con metodología Verra VCS
         - Análisis de biodiversidad con Índice de Shannon
         - Evaluación de índices espectrales (NDVI, NDWI)
+        - Mapas de calor continuos de todas las variables
+        - Gráficos de distribución de carbono y perfil de biodiversidad
         - Tablas detalladas y recomendaciones
         - Conclusiones y valoración económica
         """)
@@ -3540,7 +3767,6 @@ def mostrar_informe():
             st.markdown("Análisis interpretativo generado por Gemini (incluye texto técnico y recomendaciones)")
             if st.button("Generar Informe con IA", use_container_width=True):
                 with st.spinner("Generando informe con IA (puede tomar unos segundos)..."):
-                    sistema_mapas = SistemaMapas()
                     reporte_ia = generar_reporte_ia(
                         st.session_state.resultados, 
                         st.session_state.poligono_data, 
