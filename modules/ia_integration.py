@@ -2,44 +2,41 @@
 import os
 import pandas as pd
 from typing import Dict
-import google.generativeai as genai
+from groq import Groq
 import streamlit as st
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# Obtener la API Key de Groq desde las variables de entorno
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-def _get_available_model():
-    genai.configure(api_key=GEMINI_API_KEY)
+def llamar_groq(prompt: str, system_prompt: str = None, temperature: float = 0.3) -> str:
+    """
+    Llama a la API de Groq usando un modelo Llama 3.3 (gratuito y rápido).
+    """
+    if not GROQ_API_KEY:
+        raise ValueError("GROQ_API_KEY no está configurada en las variables de entorno")
+    
+    client = Groq(api_key=GROQ_API_KEY)
+    
+    mensajes = []
+    if system_prompt:
+        mensajes.append({"role": "system", "content": system_prompt})
+    mensajes.append({"role": "user", "content": prompt})
+    
     try:
-        models = genai.list_models()
-        valid_models = [m for m in models if 'generateContent' in m.supported_generation_methods]
-        if not valid_models:
-            raise RuntimeError("No hay modelos Gemini que soporten generateContent.")
-        model_names = [m.name for m in valid_models]
-        print(f"Modelos Gemini disponibles: {model_names}")
-        chosen_model = valid_models[0].name
-        print(f"Usando modelo: {chosen_model}")
-        return genai.GenerativeModel(chosen_model)
-    except Exception as e:
-        st.error(f"Error al listar modelos Gemini: {str(e)}")
-        raise
-
-def llamar_gemini(prompt: str, system_prompt: str = None, temperature: float = 0.3) -> str:
-    if not GEMINI_API_KEY:
-        raise ValueError("GEMINI_API_KEY no está configurada en las variables de entorno")
-    model = _get_available_model()
-    full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
-    try:
-        response = model.generate_content(
-            full_prompt,
-            generation_config=genai.types.GenerationConfig(
-                temperature=temperature,
-                max_output_tokens=4096
-            )
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",  # Modelo gratuito con buen rendimiento
+            messages=mensajes,
+            temperature=temperature,
+            max_tokens=4096,
         )
-        return response.text
+        return response.choices[0].message.content
     except Exception as e:
-        print(f"Error en llamada a Gemini: {str(e)}")
+        st.error(f"Error llamando a Groq: {str(e)}")
         raise
+
+# Mantenemos el nombre de la función original para no cambiar las llamadas en otros archivos
+def llamar_gemini(prompt: str, system_prompt: str = None, temperature: float = 0.3) -> str:
+    return llamar_groq(prompt, system_prompt, temperature)
 
 def preparar_resumen(resultados: Dict) -> tuple:
     """Prepara un DataFrame resumen y estadísticas a partir de los resultados del análisis."""
